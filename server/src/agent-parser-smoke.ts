@@ -56,7 +56,7 @@ const allowed = onClaudeJson(
 );
 assert.equal(allowed.state.errorText, undefined);
 assert.equal(allowed.events[0]?.kind, 'raw');
-assert.match(allowed.events[0]?.content ?? '', /Claude quota \(allowed_warning\).*7 ngày/);
+assert.match(allowed.events[0]?.content ?? '', /Quota Claude sắp chạm hạn mức.*7 ngày/);
 const rejected = onClaudeJson(
   { type: 'rate_limit_event', rate_limit_info: { status: 'rejected', rateLimitType: 'seven_day' } },
   initialClaudeJsonState(),

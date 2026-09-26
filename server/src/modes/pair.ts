@@ -59,7 +59,7 @@ export async function runPair(ctx: RunContext) {
     throw new Error(`Pair mode needs a git repository so changes can be diffed and reverted. "${cwd}" is not one (run \`git init\` there first).`);
   }
   const base = await snapshotTree(cwd);
-  ctx.note('Baseline captured', `Snapshot of the working tree taken (tree ${base.slice(0, 10)}). The diff at the end shows only what the agents changed. Nothing will be committed.`);
+  ctx.note('Đã chụp trạng thái ban đầu', `Snapshot working tree (tree ${base.slice(0, 10)}). Diff cuối phiên chỉ gồm thay đổi của agent. Không có gì được commit.`);
 
   const testHint = testCommand
     ? `Run \`${testCommand}\` to verify.`
@@ -148,13 +148,13 @@ export async function runPair(ctx: RunContext) {
   const openIssues = (lastReview.issues ?? []).map((i) => `- **${i.severity ?? '?'}** ${i.file ? `\`${i.file}\` ` : ''}${i.description ?? ''}`).join('\n');
   const final = [
     approved
-      ? `## ✅ Approved by ${label(reviewer)} after ${rounds} review round(s)`
-      : `## ⚠️ Not approved after ${rounds} review round(s)`,
-    `- Coder: **${label(coder)}** · Reviewer/tester: **${label(reviewer)}**`,
-    `- Tests: **${lastReview.tests ?? 'unknown'}**`,
-    `- Files changed: **${(diff.match(/^diff --git/gm) ?? []).length}** (not committed — review the diff below, then commit yourself)`,
-    openIssues ? `\n### Remaining issues\n${openIssues}` : '',
-    `\n### Coder's last summary\n${summary}`,
+      ? `## ${label(reviewer)} đã approve sau ${rounds} vòng review`
+      : `## Chưa được approve sau ${rounds} vòng review`,
+    `- Code: **${label(coder)}** · Review/test: **${label(reviewer)}**`,
+    `- Test: **${lastReview.tests ?? 'không rõ'}**`,
+    `- File thay đổi: **${(diff.match(/^diff --git/gm) ?? []).length}** (chưa commit, xem diff rồi tự commit)`,
+    openIssues ? `\n### Vấn đề còn lại\n${openIssues}` : '',
+    `\n### Tóm tắt cuối của người code\n${summary}`,
   ].join('\n');
   ctx.update({ diff, final });
 }

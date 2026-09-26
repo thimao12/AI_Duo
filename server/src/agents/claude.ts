@@ -31,7 +31,7 @@ function toolResultText(content: any): string {
 
 const WINDOW_LABEL: Record<string, string> = { five_hour: '5 giờ', seven_day: '7 ngày' };
 
-/** e.g. "⚠ Claude quota: đã dùng 75% hạn mức 7 ngày, reset lúc 26/9 21:00" */
+/** e.g. "Quota Claude sắp chạm hạn mức: đã dùng 75% hạn mức 7 ngày, reset lúc 26/9 21:00" */
 export function describeRateLimit(status: string, info: any): string {
   const window = WINDOW_LABEL[info.rateLimitType] ?? info.rateLimitType ?? '';
   const pct = typeof info.utilization === 'number' ? `${Math.round(info.utilization * 100)}% ` : '';
@@ -39,7 +39,8 @@ export function describeRateLimit(status: string, info: any): string {
     typeof info.resetsAt === 'number'
       ? `, reset lúc ${new Date(info.resetsAt * 1000).toLocaleString('vi-VN', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}`
       : '';
-  return `⚠ Claude quota (${status}): đã dùng ${pct}hạn mức ${window}${reset}`.replace(/\s+/g, ' ');
+  const state = status === 'rejected' ? 'đã chạm hạn mức' : status === 'allowed_warning' ? 'sắp chạm hạn mức' : status;
+  return `Quota Claude ${state}: đã dùng ${pct}hạn mức ${window}${reset}`.replace(/\s+/g, ' ');
 }
 
 export interface ClaudeJsonState {

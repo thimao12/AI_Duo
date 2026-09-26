@@ -151,7 +151,7 @@ app.get('/api/runs', async (c) => {
   for (const ctx of active.values()) {
     if (!saved.some((s) => s.id === ctx.run.id)) {
       const r = ctx.run;
-      saved.unshift({ id: r.id, mode: r.config.mode, prompt: r.config.prompt.slice(0, 200), cwd: r.config.cwd, status: r.status, createdAt: r.createdAt });
+      saved.unshift({ id: r.id, mode: r.config.mode, prompt: r.config.prompt.slice(0, 2000), cwd: r.config.cwd, status: r.status, createdAt: r.createdAt });
     }
   }
   return c.json(saved.map((s) => (active.has(s.id) ? { ...s, status: 'running' } : s)));

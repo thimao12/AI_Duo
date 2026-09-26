@@ -81,7 +81,7 @@ export async function listRuns(): Promise<RunSummary[]> {
   const out: RunSummary[] = [];
   for (const n of names) {
     const run = await loadRun(n.slice(0, -5));
-    if (run) out.push({ id: run.id, mode: run.config.mode, prompt: run.config.prompt.slice(0, 200), cwd: run.config.cwd, status: run.status, createdAt: run.createdAt });
+    if (run) out.push({ id: run.id, mode: run.config.mode, prompt: run.config.prompt.slice(0, 2000), cwd: run.config.cwd, status: run.status, createdAt: run.createdAt });
   }
   return out.sort((a, b) => b.createdAt - a.createdAt);
 }

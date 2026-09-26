@@ -59,11 +59,11 @@ export async function runDebate(ctx: RunContext) {
 
     if (results.every((x) => x.verdict === 'AGREE')) {
       consensus = true;
-      ctx.note('Consensus reached', `Both agents agreed after round ${r}.`, 'critique', r);
+      ctx.note('Đã đồng thuận', `Cả hai agent đồng ý sau vòng ${r}.`, 'critique', r);
       break;
     }
   }
-  if (!consensus) ctx.note('No full consensus', `Stopped after ${rounds} round(s); the judge will resolve remaining differences.`, 'critique', rounds);
+  if (!consensus) ctx.note('Chưa đồng thuận hoàn toàn', `Dừng sau ${rounds} vòng; người chốt sẽ xử lý các điểm còn khác nhau.`, 'critique', rounds);
 
   const final = await ctx.turn({
     agent: judge,

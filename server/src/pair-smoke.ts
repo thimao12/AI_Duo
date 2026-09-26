@@ -109,7 +109,7 @@ try {
     return fencedReview('APPROVE', ',"issues":"x"');
   });
   await runPair(approval.ctx);
-  assert.match(String(approval.updates.at(-1)?.final), /Approved by Codex/);
+  assert.match(String(approval.updates.at(-1)?.final), /Codex đã approve/);
   assert.equal(approval.turns.find((turn) => turn.phase === 'review')?.verdict, 'APPROVE');
   assert.equal(approval.notes.some((note) => note.title === 'Reviewer không trả verdict hợp lệ'), false);
 
@@ -118,7 +118,7 @@ try {
     turn.phase === 'review' ? 'I would not APPROVE this' : 'Implemented.',
   );
   await runPair(invalid.ctx);
-  assert.match(String(invalid.updates.at(-1)?.final), /Not approved after 1 review round/);
+  assert.match(String(invalid.updates.at(-1)?.final), /Chưa được approve sau 1 vòng review/);
   assert.equal(invalid.turns.find((turn) => turn.phase === 'review')?.verdict, 'CHANGES_REQUESTED');
   assert.ok(invalid.notes.some(({ title, text }) => title === 'Reviewer không trả verdict hợp lệ' && text === '→ coi như CHANGES_REQUESTED'));
 
@@ -136,7 +136,7 @@ try {
     });
     await runPair(mutation.ctx);
     const final = String(mutation.updates.at(-1)?.final);
-    assert.match(final, /Not approved after 2 review round/);
+    assert.match(final, /Chưa được approve sau 2 vòng review/);
     assert.equal(reviewRound, 2);
     assert.ok(mutation.notes.some(({ title, text }) => title === 'Reviewer đã sửa tệp trong lượt đánh giá' && /git diff --stat/.test(text) && /reviewer\.txt/.test(text)));
     assert.ok(mutation.turns.filter((turn) => turn.phase === 'review').every((turn) => turn.verdict === 'CHANGES_REQUESTED'));
