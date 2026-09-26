@@ -76,14 +76,15 @@
         const detail = document.getElementById('startup-detail');
         const reload = document.getElementById('startup-reload');
         let ready = false;
+        let startupTimeout;
 
         window.aiDuoStartupReady = () => {
           ready = true;
           state.hidden = true;
+          window.clearTimeout(startupTimeout);
         };
         const fail = (reason) => {
-          if (ready) return;
-          title.textContent = 'Không thể mở giao diện AI Duo';
+          title.textContent = 'Giao diện AI Duo gặp lỗi';
           message.textContent = 'Hãy tải lại ứng dụng. Nếu lỗi vẫn còn, gửi dòng lỗi bên dưới để kiểm tra.';
           if (reason) {
             detail.textContent = String(reason).slice(0, 800);
@@ -95,14 +96,16 @@
 
         window.addEventListener('error', (event) => {
           const target = event.target;
-          if (target && target !== window) fail(`Không tải được tài nguyên: ${target.src || target.href || target.tagName}`);
+          if (target && target !== window) {
+            if (!ready) fail(`Không tải được tài nguyên: ${target.src || target.href || target.tagName}`);
+          }
           else fail(event.error?.stack || event.message || 'Lỗi JavaScript khi khởi chạy.');
         }, true);
         window.addEventListener('unhandledrejection', (event) => {
           fail(event.reason?.stack || event.reason || 'Lỗi khởi chạy không xác định.');
         });
         reload.addEventListener('click', () => window.location.reload());
-        window.setTimeout(() => fail('Giao diện không phản hồi sau 12 giây.'), 12000);
+        startupTimeout = window.setTimeout(() => fail('Giao diện không phản hồi sau 12 giây.'), 12000);
       })();
     </script>
     <div id="root"></div>
