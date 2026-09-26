@@ -107,9 +107,10 @@ export function onJson(ev: any, state: ClaudeJsonState): { state: ClaudeJsonStat
   } else if (ev.type === 'rate_limit_event') {
     const info = ev.rate_limit_info ?? {};
     const status = info.status ?? ev.status;
-    events.push({ kind: 'raw', content: '', rateLimit: {
+    // Only a reading with a utilization feeds the usage bar; a bare status would be an empty event.
+    if (typeof info.utilization === 'number') events.push({ kind: 'raw', content: '', rateLimit: {
       type: info.rateLimitType,
-      ...(typeof info.utilization === 'number' && { utilization: info.utilization }),
+      utilization: info.utilization,
       ...(typeof info.resetsAt === 'number' && { resetsAt: info.resetsAt }),
     } });
     if (info.isUsingOverage === true) {
