@@ -66,10 +66,13 @@ async function start() {
   });
 
   ipcMain.on('title-bar-colors', (_e, colors) => {
-    const hex = /^#[0-9a-f]{6}$/i;
-    if (!win || !hex.test(colors?.color) || !hex.test(colors?.symbolColor)) return;
-    win.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor, height: TITLE_BAR_HEIGHT });
-    win.setBackgroundColor(colors.color);
+    // The CSS minifier shortens tokens (#ffffff → #fff), so accept both hex forms.
+    const hex = (v) => (typeof v === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? (v.length === 4 ? `#${[...v.slice(1)].map((c) => c + c).join('')}` : v) : null);
+    const color = hex(colors?.color);
+    const symbolColor = hex(colors?.symbolColor);
+    if (!win || !color || !symbolColor) return;
+    win.setTitleBarOverlay({ color, symbolColor, height: TITLE_BAR_HEIGHT });
+    win.setBackgroundColor(color);
   });
 
   createWindow(url);
