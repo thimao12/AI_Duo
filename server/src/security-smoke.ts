@@ -36,6 +36,18 @@ try {
   });
   assert.equal(plainText.status, 415, 'plain text run creation must be rejected');
 
+  for (const images of [
+    [{ name: 'fake.png', dataUrl: 'data:image/png;base64,SGVsbG8=' }],
+    Array.from({ length: 5 }, () => ({ name: 'image.png', dataUrl: 'data:image/png;base64,SGVsbG8=' })),
+  ]) {
+    const invalidImage = await request('/api/runs', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ mode: 'plan', prompt: 'Inspect image', images }),
+    });
+    assert.equal(invalidImage.status, 400, 'invalid image uploads must be rejected');
+  }
+
   for (const origin of ['https://evil.com', 'http://localhost:3000']) {
     const rejectedOrigin = await request('/api/runs', {
       method: 'POST',

@@ -16,7 +16,8 @@ export function parseAgreeVerdict(text: string): Verdict | undefined {
  * 3. judge writes the final solution in a fresh session from the transcript
  */
 export async function runDebate(ctx: RunContext) {
-  const { prompt, cwd, maxRounds, judge } = ctx.run.config;
+  const { cwd, maxRounds, judge } = ctx.run.config;
+  const prompt = ctx.prompt;
   const both: AgentName[] = ['claude', 'codex'];
   const transcript: string[] = [];
 
@@ -68,6 +69,7 @@ export async function runDebate(ctx: RunContext) {
   const final = await ctx.turn({
     agent: judge,
     role: 'thinker',
+    sessionKey: 'synthesis',
     modelRole: 'judge',
     phase: 'synthesize',
     round: rounds + 1,

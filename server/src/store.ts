@@ -68,12 +68,14 @@ export async function loadRun(id: string): Promise<Run | undefined> {
 
 export interface RunSummary {
   id: string;
+  title?: string;
   mode: Run['config']['mode'];
   prompt: string;
   /** Working directory the run belongs to (groups runs by project). */
   cwd: string;
   status: Run['status'];
   createdAt: number;
+  claudeLimits?: Run['claudeLimits'];
 }
 
 export async function listRuns(): Promise<RunSummary[]> {
@@ -81,7 +83,14 @@ export async function listRuns(): Promise<RunSummary[]> {
   const out: RunSummary[] = [];
   for (const n of names) {
     const run = await loadRun(n.slice(0, -5));
-    if (run) out.push({ id: run.id, mode: run.config.mode, prompt: run.config.prompt.slice(0, 2000), cwd: run.config.cwd, status: run.status, createdAt: run.createdAt });
+    if (run) out.push({ id: run.id, title: run.title, mode: run.config.mode, prompt: run.config.prompt.slice(0, 2000), cwd: run.config.cwd, status: run.status, createdAt: run.createdAt, claudeLimits: run.claudeLimits });
   }
   return out.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function deleteRun(id: string): Promise<boolean> {
+  if (!/^[\w-]+$/.test(id) || !(await loadRun(id))) return false;
+  await rm(file(id));
+  await rm(path.join(DIR, 'images', id), { recursive: true, force: true });
+  return true;
 }

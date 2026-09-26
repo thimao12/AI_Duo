@@ -176,6 +176,14 @@ body {
   padding-right: max(1rem, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 0.5rem));
 }
 
+.composer-input:focus-visible {
+  outline: none;
+}
+
+.sidebar-search:focus-visible {
+  outline: none;
+}
+
 /* Thin palette scrollbars with no arrow buttons. The webkit pseudos are used on purpose:
    in Chromium ≥121 `scrollbar-width`/`scrollbar-color` would override them and bring back
    the Windows arrow buttons. */

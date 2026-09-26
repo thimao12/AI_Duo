@@ -18,10 +18,13 @@ export type AgentEventKind =
 export interface AgentEvent {
   kind: AgentEventKind;
   content: string;
+  /** Current account limit window, when the CLI reports one. */
+  rateLimit?: { type?: string; utilization?: number; resetsAt?: number };
 }
 
 export interface RunOptions {
   prompt: string;
+  images?: string[];
   cwd: string;
   role: Role;
   /** Continue an earlier conversation of the same agent. */

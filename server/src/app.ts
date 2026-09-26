@@ -1,5 +1,7 @@
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync, statSync } from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createAdaptorServer } from '@hono/node-server';
@@ -15,11 +17,38 @@ import { paths } from './paths.ts';
 import { autoRoute } from './router/index.ts';
 import { classifyByRules, CONFIDENT } from './router/rules.ts';
 import { active, RunContext } from './run.ts';
-import { listRuns, loadRun } from './store.ts';
+import { deleteRun, listRuns, loadRun, saveRun } from './store.ts';
 import type { RunConfig, RunEvent } from './types.ts';
 
 const app = new Hono();
 const activePairRepos = new Set<string>();
+const pendingFollowUps = new Set<string>();
+const IMAGE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+function parseImages(value: unknown): { images: NonNullable<RunConfig['images']>; buffers: Buffer[] } | string {
+  if (value === undefined) return { images: [], buffers: [] };
+  if (!Array.isArray(value) || value.length > 4) return 'Choose up to 4 images';
+  const images: NonNullable<RunConfig['images']> = [];
+  const buffers: Buffer[] = [];
+  for (const item of value) {
+    if (!item || typeof item.name !== 'string' || typeof item.dataUrl !== 'string') return 'Invalid image';
+    const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(item.dataUrl);
+    if (!match) return 'Use PNG, JPEG, WebP or GIF images';
+    if (match[2].length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 4) return 'Each image must be 5 MB or smaller';
+    const bytes = Buffer.from(match[2], 'base64');
+    if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) return 'Each image must be 5 MB or smaller';
+    const mimeType = match[1];
+    const valid = mimeType === 'image/png' ? bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))
+      : mimeType === 'image/jpeg' ? bytes.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex'))
+      : mimeType === 'image/gif' ? /^GIF8[79]a$/.test(bytes.subarray(0, 6).toString('ascii'))
+      : bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
+    if (!valid) return 'Image contents do not match the selected format';
+    images.push({ name: item.name.slice(0, 150), mimeType });
+    buffers.push(bytes);
+  }
+  return { images, buffers };
+}
 
 const defaultDevOrigins = 'http://localhost:5173,http://127.0.0.1:5173';
 
@@ -68,7 +97,7 @@ const clampRounds = (n: number) => Math.min(Math.max(n, 1), 8);
 
 /** `mode: "auto"` hands mode, agents, models and (unless given) rounds to the router. */
 async function parseConfig(body: any): Promise<{ cfg: RunConfig; routeUsage?: Usage } | string> {
-  if (body?.mode !== 'debate' && body?.mode !== 'pair' && body?.mode !== 'auto') return 'mode must be "auto", "debate" or "pair"';
+  if (body?.mode !== 'debate' && body?.mode !== 'pair' && body?.mode !== 'plan' && body?.mode !== 'auto') return 'mode must be "auto", "debate", "pair" or "plan"';
   const prompt = String(body.prompt ?? '').trim();
   if (!prompt) return 'prompt is required';
   for (const name of ['claude', 'codex'] as const) {
@@ -96,7 +125,7 @@ async function parseConfig(body: any): Promise<{ cfg: RunConfig; routeUsage?: Us
 }
 
 function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
-  const maxRounds = clampRounds(Number(body.maxRounds) || (body.mode === 'debate' ? 2 : 3));
+  const maxRounds = clampRounds(Number(body.maxRounds) || (body.mode === 'plan' ? 1 : body.mode === 'debate' ? 2 : 3));
   return {
     mode: body.mode,
     prompt,
@@ -164,15 +193,62 @@ app.get('/api/runs', async (c) => {
   for (const ctx of active.values()) {
     if (!saved.some((s) => s.id === ctx.run.id)) {
       const r = ctx.run;
-      saved.unshift({ id: r.id, mode: r.config.mode, prompt: r.config.prompt.slice(0, 2000), cwd: r.config.cwd, status: r.status, createdAt: r.createdAt });
+      saved.unshift({ id: r.id, title: r.title, mode: r.config.mode, prompt: r.config.prompt.slice(0, 2000), cwd: r.config.cwd, status: r.status, createdAt: r.createdAt, claudeLimits: r.claudeLimits });
     }
   }
-  return c.json(saved.map((s) => (active.has(s.id) ? { ...s, status: 'running' } : s)));
+  return c.json(saved.map((s) => (active.has(s.id) ? { ...s, title: active.get(s.id)!.run.title, status: 'running' } : s)));
 });
 
 app.get('/api/runs/:id', async (c) => {
   const run = active.get(c.req.param('id'))?.run ?? (await loadRun(c.req.param('id')));
   return run ? c.json(run) : c.json({ error: 'not found' }, 404);
+});
+
+app.patch('/api/runs/:id', async (c) => {
+  const id = c.req.param('id');
+  const body = await c.req.json().catch(() => null);
+  if (typeof body?.title !== 'string' || !body.title.trim() || body.title.trim().length > 120) return c.json({ error: 'Title must be 1–120 characters' }, 400);
+  const run = active.get(id)?.run ?? (await loadRun(id));
+  if (!run) return c.json({ error: 'not found' }, 404);
+  run.title = body.title.trim();
+  await saveRun(run);
+  return c.json({ title: run.title });
+});
+
+app.delete('/api/runs/:id', async (c) => {
+  const id = c.req.param('id');
+  if (active.has(id)) return c.json({ error: 'Dừng phiên đang chạy trước khi xóa.' }, 409);
+  return (await deleteRun(id)) ? c.json({ ok: true }) : c.json({ error: 'not found' }, 404);
+});
+
+app.get('/api/runs/:id/images/:index', async (c) => {
+  const id = c.req.param('id');
+  const index = Number(c.req.param('index'));
+  if (!/^[\w-]+$/.test(id) || !Number.isSafeInteger(index) || index < 0) return c.json({ error: 'not found' }, 404);
+  const run = active.get(id)?.run ?? (await loadRun(id));
+  const image = run?.config.images?.[index];
+  if (!image || !IMAGE_TYPES[image.mimeType]) return c.json({ error: 'not found' }, 404);
+  try {
+    const bytes = await readFile(path.join(paths.dataDir, 'images', id, `${index}.${IMAGE_TYPES[image.mimeType]}`));
+    return c.body(bytes, 200, { 'content-type': image.mimeType, 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' });
+  } catch {
+    return c.json({ error: 'not found' }, 404);
+  }
+});
+
+app.get('/api/runs/:id/messages/:messageId/images/:index', async (c) => {
+  const { id, messageId } = c.req.param();
+  const index = Number(c.req.param('index'));
+  if (!/^[\w-]+$/.test(id) || !/^[\w-]+$/.test(messageId) || !Number.isSafeInteger(index) || index < 0) return c.json({ error: 'not found' }, 404);
+  const run = active.get(id)?.run ?? (await loadRun(id));
+  const image = run?.messages.find((m) => m.id === messageId && m.agent === 'user')?.images?.[index];
+  if (!image || !IMAGE_TYPES[image.mimeType]) return c.json({ error: 'not found' }, 404);
+  try {
+    const bytes = await readFile(path.join(paths.dataDir, 'images', id, `${messageId}-${index}.${IMAGE_TYPES[image.mimeType]}`));
+    return c.body(bytes, 200, { 'content-type': image.mimeType, 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' });
+  } catch {
+    return c.json({ error: 'not found' }, 404);
+  }
 });
 
 /** Rules-only preview for the form: free and instant; says whether Haiku would be asked. */
@@ -183,36 +259,25 @@ app.post('/api/route/preview', async (c) => {
   return c.json({ mode, coder, judge, maxRounds, route, askHaiku: classifyByRules(prompt).confidence < CONFIDENT });
 });
 
-app.post('/api/runs', async (c) => {
-  const parsed = await parseConfig(await c.req.json().catch(() => null));
-  if (typeof parsed === 'string') return c.json({ error: parsed }, 400);
-  const { cfg, routeUsage } = parsed;
-
-  let pairRepoKey: string | undefined;
-  if (cfg.mode === 'pair') {
-    let repo: string;
-    try {
-      repo = realpathSync.native(cfg.cwd);
-    } catch (err) {
-      return c.json({ error: `Cannot resolve working directory: ${(err as Error).message}` }, 400);
-    }
-    pairRepoKey = process.platform === 'win32' ? repo.toLowerCase() : repo;
-    if (activePairRepos.has(pairRepoKey)) return c.json({ error: 'A pair run is already active for this repository' }, 409);
-    activePairRepos.add(pairRepoKey);
-  }
-
-  const ctx = new RunContext(cfg);
+function launchRun(ctx: RunContext, pairRepoKey?: string) {
+  const cfg = ctx.run.config;
   active.set(ctx.run.id, ctx);
-  if (cfg.route) {
-    const manual = Object.entries(cfg.models ?? {}).filter(([, m]) => m);
-    const override = manual.length ? `\nModel đặt tay (ưu tiên hơn router): ${manual.map(([a, m]) => `${a}=${m}`).join(', ')}` : '';
-    ctx.note('Định tuyến tự động', cfg.route.reason + override, 'info', 0, routeUsage);
-  }
   (async () => {
     let status: 'done' | 'error' | 'cancelled' = 'done';
     let error: string | undefined;
     try {
-      await (cfg.mode === 'debate' ? runDebate(ctx) : runPair(ctx));
+      if (cfg.mode === 'debate') await runDebate(ctx);
+      else if (cfg.mode === 'pair') await runPair(ctx);
+      else {
+        const agent = isAgent(cfg.coder) ? cfg.coder : 'codex';
+        const result = await ctx.turn({
+          agent, role: 'thinker', phase: 'plan', round: 1,
+          title: `${agent === 'claude' ? 'Claude' : 'Codex'} lập kế hoạch`,
+          sessionKey: 'plan',
+          prompt: `You are a software architect working in read-only planning mode. Inspect the repository at ${cfg.cwd} as needed. Do not edit files or run commands that modify data. Create a concrete implementation plan for this task:\n\n${ctx.prompt}\n\nReturn a concise plan with: current context and relevant files, ordered implementation steps, edge cases or risks, and how to verify the work. Do not implement the changes.`,
+        });
+        ctx.update({ final: result.text });
+      }
     } catch (err) {
       status = ctx.cancelled ? 'cancelled' : 'error';
       error = status === 'error' ? (err as Error).message : undefined;
@@ -228,7 +293,93 @@ app.post('/api/runs', async (c) => {
       if (pairRepoKey) activePairRepos.delete(pairRepoKey);
     }
   })();
+}
+
+app.post('/api/runs', async (c) => {
+  const body = await c.req.json().catch(() => null);
+  const parsedImages = parseImages(body?.images);
+  if (typeof parsedImages === 'string') return c.json({ error: parsedImages }, 400);
+  const parsed = await parseConfig(parsedImages.images.length && !String(body?.prompt ?? '').trim() ? { ...body, prompt: 'Hãy phân tích ảnh đính kèm.' } : body);
+  if (typeof parsed === 'string') return c.json({ error: parsed }, 400);
+  const { cfg, routeUsage } = parsed;
+  if (parsedImages.images.length) cfg.images = parsedImages.images;
+
+  let pairRepoKey: string | undefined;
+  if (cfg.mode === 'pair') {
+    let repo: string;
+    try {
+      repo = realpathSync.native(cfg.cwd);
+    } catch (err) {
+      return c.json({ error: `Cannot resolve working directory: ${(err as Error).message}` }, 400);
+    }
+    pairRepoKey = process.platform === 'win32' ? repo.toLowerCase() : repo;
+    if (activePairRepos.has(pairRepoKey)) return c.json({ error: 'A pair run is already active for this repository' }, 409);
+    activePairRepos.add(pairRepoKey);
+  }
+
+  const ctx = new RunContext(cfg);
+  if (parsedImages.buffers.length) {
+    const dir = path.join(paths.dataDir, 'images', ctx.run.id);
+    try {
+      await mkdir(dir, { recursive: true });
+      await Promise.all(parsedImages.buffers.map((bytes, index) => writeFile(path.join(dir, `${index}.${IMAGE_TYPES[parsedImages.images[index].mimeType]}`), bytes)));
+    } catch (err) {
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+      if (pairRepoKey) activePairRepos.delete(pairRepoKey);
+      return c.json({ error: `Could not save images: ${(err as Error).message}` }, 500);
+    }
+  }
+  if (cfg.route) {
+    const manual = Object.entries(cfg.models ?? {}).filter(([, m]) => m);
+    const override = manual.length ? `\nModel đặt tay (ưu tiên hơn router): ${manual.map(([a, m]) => `${a}=${m}`).join(', ')}` : '';
+    ctx.note('Định tuyến tự động', cfg.route.reason + override, 'info', 0, routeUsage);
+  }
+  launchRun(ctx, pairRepoKey);
   return c.json({ id: ctx.run.id });
+});
+
+app.post('/api/runs/:id/messages', async (c) => {
+  const id = c.req.param('id');
+  if (!/^[\w-]+$/.test(id)) return c.json({ error: 'not found' }, 404);
+  if (active.has(id) || pendingFollowUps.has(id)) return c.json({ error: 'Phiên đang chạy, hãy đợi hoàn tất.' }, 409);
+  pendingFollowUps.add(id);
+  let pairRepoKey: string | undefined;
+  try {
+    const body = await c.req.json().catch(() => null);
+    const parsedImages = parseImages(body?.images);
+    if (typeof parsedImages === 'string') return c.json({ error: parsedImages }, 400);
+    const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
+    if (!prompt && !parsedImages.images.length) return c.json({ error: 'prompt is required' }, 400);
+    const run = await loadRun(id);
+    if (!run) return c.json({ error: 'not found' }, 404);
+    if (active.has(id)) return c.json({ error: 'Phiên đang chạy, hãy đợi hoàn tất.' }, 409);
+    if (run.config.mode === 'pair') {
+      const repo = realpathSync.native(run.config.cwd);
+      pairRepoKey = process.platform === 'win32' ? repo.toLowerCase() : repo;
+      if (activePairRepos.has(pairRepoKey)) return c.json({ error: 'A pair run is already active for this repository' }, 409);
+      activePairRepos.add(pairRepoKey);
+    }
+    const messageId = randomUUID();
+    if (parsedImages.buffers.length) {
+      const dir = path.join(paths.dataDir, 'images', id);
+      await mkdir(dir, { recursive: true });
+      try {
+        await Promise.all(parsedImages.buffers.map((bytes, index) => writeFile(path.join(dir, `${messageId}-${index}.${IMAGE_TYPES[parsedImages.images[index].mimeType]}`), bytes)));
+      } catch (err) {
+        await Promise.all(parsedImages.buffers.map((_, index) => rm(path.join(dir, `${messageId}-${index}.${IMAGE_TYPES[parsedImages.images[index].mimeType]}`), { force: true }).catch(() => {})));
+        throw err;
+      }
+    }
+    const ctx = new RunContext(run.config, run);
+    ctx.followUp(prompt || 'Hãy phân tích ảnh đính kèm.', parsedImages.images, messageId);
+    launchRun(ctx, pairRepoKey);
+    return c.json({ id });
+  } catch (err) {
+    if (pairRepoKey) activePairRepos.delete(pairRepoKey);
+    return c.json({ error: `Could not continue run: ${(err as Error).message}` }, 500);
+  } finally {
+    pendingFollowUps.delete(id);
+  }
 });
 
 app.post('/api/runs/:id/cancel', (c) => {

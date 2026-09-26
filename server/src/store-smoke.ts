@@ -3,7 +3,7 @@
  *   pnpm --filter server test:store
  */
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Run } from './types.ts';
@@ -11,7 +11,7 @@ import type { Run } from './types.ts';
 const dataDir = await mkdtemp(path.join(tmpdir(), 'ai-duo-store-runs-'));
 process.env.AI_DUO_DATA_DIR = dataDir;
 
-const [{ loadRun, saveRun }, { RunContext }] = await Promise.all([import('./store.ts'), import('./run.ts')]);
+const [{ deleteRun, listRuns, loadRun, saveRun }, { RunContext }, { startServer }] = await Promise.all([import('./store.ts'), import('./run.ts'), import('./app.ts')]);
 
 const makeRun = (id: string): Run => ({
   id,
@@ -52,6 +52,30 @@ try {
   const saved = JSON.parse(await readFile(path.join(dataDir, `${parallelRun.id}.json`), 'utf8')) as Run;
   assert.equal(saved.final, 'snapshot-99');
   assert.deepEqual((await readdir(dataDir)).filter((name) => name.endsWith('.tmp')), []);
+
+  const named = makeRun('named-session-smoke');
+  named.status = 'done';
+  named.title = 'Custom session title';
+  await saveRun(named);
+  assert.equal((await listRuns()).find((run) => run.id === named.id)?.title, named.title);
+  const imageDir = path.join(dataDir, 'images', named.id);
+  await mkdir(imageDir, { recursive: true });
+  await writeFile(path.join(imageDir, '0.png'), 'image');
+  const server = await startServer({ port: 0 });
+  try {
+    const rename = await fetch(`${server.url}/api/runs/${named.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Renamed via API' }) });
+    assert.equal(rename.status, 200);
+    assert.equal((await loadRun(named.id))?.title, 'Renamed via API');
+    assert.equal((await (await fetch(`${server.url}/api/runs`)).json()).find((run: { id: string }) => run.id === named.id)?.title, 'Renamed via API');
+    const deleted = await fetch(`${server.url}/api/runs/${named.id}`, { method: 'DELETE' });
+    assert.equal(deleted.status, 200);
+    assert.equal((await fetch(`${server.url}/api/runs/${named.id}`)).status, 404);
+  } finally {
+    await server.close();
+  }
+  assert.equal(await loadRun(named.id), undefined);
+  assert.equal((await readdir(path.join(dataDir, 'images'))).includes(named.id), false);
+  assert.equal(await deleteRun('../outside'), false);
 
   const ctx = new RunContext(makeRun('unused').config);
   const initial = await waitForFile(ctx.run.id, (run) => run.status === 'running');

@@ -1,11 +1,14 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowUp, CircleAlert, Folder, FolderOpen, GitMerge, MessagesSquare, SlidersHorizontal, Sparkles, Waypoints } from 'lucide-react';
+import { ArrowUp, CircleAlert, Folder, FolderOpen, GitMerge, ImagePlus, ListTodo, MessagesSquare, SlidersHorizontal, Sparkles, Waypoints, X } from 'lucide-react';
 import { api, type AgentName, type AgentStatus, type ModelCatalog, type NewRunRequest, type RoutePreview, type RunConfig } from '../api.ts';
 import ModelPicker from './ModelPicker.tsx';
 import { AgentDot, AGENT_LABEL, basename, MenuItem, MenuLabel, MODE_LABEL, Popover, Spinner } from './ui.tsx';
 
 type Mode = NewRunRequest['mode'];
-type Form = Omit<RunConfig, 'models' | 'efforts' | 'mode' | 'route'> & { mode: Mode; models: Record<AgentName, string>; efforts: Record<AgentName, string> };
+type Form = Omit<RunConfig, 'models' | 'efforts' | 'mode' | 'route' | 'images'> & { mode: Mode; models: Record<AgentName, string>; efforts: Record<AgentName, string> };
+type DraftImage = { name: string; dataUrl: string };
+const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
 const STORAGE_KEY = 'ai-duo:new-run';
 
@@ -38,17 +41,19 @@ export const MODES: { id: Mode; icon: typeof Sparkles; hint: string }[] = [
   { id: 'auto', icon: Sparkles, hint: 'Router chọn chế độ, AI nào code và model theo độ khó, ưu tiên ít token.' },
   { id: 'debate', icon: MessagesSquare, hint: 'Cả hai đề xuất, review chéo, rồi chốt một giải pháp. Chỉ đọc repo.' },
   { id: 'pair', icon: GitMerge, hint: 'Một con code trong repo, con kia review diff và chạy test tới khi approve.' },
+  { id: 'plan', icon: ListTodo, hint: 'Một agent khảo sát repo ở chế độ chỉ đọc và lập kế hoạch triển khai, không sửa file.' },
 ];
 export const MODE_ICON = Object.fromEntries(MODES.map((m) => [m.id, m.icon])) as Record<Mode, typeof Sparkles>;
 
 /** The new-run form: persisted settings, router preview, CLI status and submit. */
-function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string) {
+function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, threadId?: string, onContinue?: () => void) {
   const [form, setForm] = useState<Form>(loadForm);
   const [agents, setAgents] = useState<AgentStatus | null>(null);
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [preview, setPreview] = useState<RoutePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [images, setImages] = useState<DraftImage[]>([]);
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
   const auto = form.mode === 'auto';
 
@@ -88,15 +93,19 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string) {
   }, [form]);
 
   const submit = async () => {
-    if (busy || !form.prompt.trim()) return;
+    if (busy || (!form.prompt.trim() && !images.length)) return;
     setBusy(true);
     setError(null);
     try {
       // Auto: the router picks mode, agents and rounds; sending them would override it.
       const { maxRounds: _r, judge: _j, coder: _c, ...rest } = form;
-      const { id } = await api.create(auto ? rest : form);
+      const { id } = threadId
+        ? await api.continue(threadId, form.prompt, images)
+        : await api.create({ ...(auto ? rest : form), images });
       setForm((f) => ({ ...f, prompt: '' }));
-      onCreated(id);
+      setImages([]);
+      if (threadId) onContinue?.();
+      else onCreated(id);
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -104,7 +113,24 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string) {
     }
   };
 
-  return { form, set, setForm, agents, catalog, preview, error, busy, submit, auto };
+  const addImages = async (files: File[]) => {
+    setError(null);
+    if (images.length + files.length > 4) return setError('Chỉ thêm tối đa 4 ảnh.');
+    if (files.some((file) => !IMAGE_TYPES.has(file.type) || file.size > MAX_IMAGE_BYTES)) return setError('Chọn ảnh PNG, JPEG, WebP hoặc GIF, tối đa 5 MB mỗi ảnh.');
+    try {
+      const added = await Promise.all(files.map((file) => new Promise<DraftImage>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve({ name: file.name, dataUrl: String(reader.result) });
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      })));
+      setImages((current) => current.length + added.length <= 4 ? [...current, ...added] : current);
+    } catch {
+      setError('Không đọc được ảnh.');
+    }
+  };
+
+  return { form, set, setForm, agents, catalog, preview, error, busy, submit, auto, images, setImages, addImages };
 }
 
 export interface ComposerSeed {
@@ -119,6 +145,8 @@ interface ComposerProps {
   projects: string[];
   onCreated: (id: string) => void;
   threadCwd?: string;
+  threadId?: string;
+  onContinue?: () => void;
   seed?: ComposerSeed;
   onAgents?: (a: AgentStatus | null) => void;
 }
@@ -126,9 +154,10 @@ interface ComposerProps {
 const field =
   'w-full rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[13px] text-fg placeholder:text-faint transition-colors hover:border-line-strong focus:border-focus focus:outline-none placeholder:font-sans';
 
-export default function Composer({ variant, projects, onCreated, threadCwd, seed, onAgents }: ComposerProps) {
-  const { form, set, setForm, agents, catalog, preview, error, busy, submit, auto } = useNewRunForm(onCreated, threadCwd);
+export default function Composer({ variant, projects, onCreated, threadCwd, threadId, onContinue, seed, onAgents }: ComposerProps) {
+  const { form, set, setForm, agents, catalog, preview, error, busy, submit, auto, images, setImages, addImages } = useNewRunForm(onCreated, threadCwd, threadId, onContinue);
   const text = useRef<HTMLTextAreaElement>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
   const [typingPath, setTypingPath] = useState(false);
   const hero = variant === 'hero';
   const side = hero ? 'bottom' : 'top';
@@ -152,7 +181,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, seed
   const reviewer: AgentName = form.coder === 'claude' ? 'codex' : 'claude';
   const ModeIcon = MODE_ICON[form.mode];
   const recent = [...new Set([form.cwd, ...projects].filter(Boolean))].slice(0, 8);
-  const canSend = !!form.prompt.trim() && !busy;
+  const canSend = (!!form.prompt.trim() || images.length > 0) && !busy;
 
   const pick = async (close: () => void) => {
     const dir = await desktop?.pickFolder(form.cwd);
@@ -162,12 +191,24 @@ export default function Composer({ variant, projects, onCreated, threadCwd, seed
 
   return (
     <div className={hero ? '' : 'pb-4'}>
+      {images.length > 0 && (
+        <div className="mb-2 flex flex-wrap gap-2 px-1" aria-label="Ảnh đính kèm">
+          {images.map((image, index) => (
+            <div key={`${image.name}-${index}`} className="relative size-16 overflow-hidden rounded-lg border border-line bg-surface" title={image.name}>
+              <img src={image.dataUrl} alt={image.name} className="size-full object-cover" />
+              <button type="button" onClick={() => setImages((current) => current.filter((_, i) => i !== index))} aria-label={`Xóa ảnh ${image.name}`} className="absolute top-0 right-0 rounded-bl bg-bg/90 p-0.5 text-fg">
+                <X aria-hidden className="size-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       <form
         onSubmit={(e) => {
           e.preventDefault();
           void submit();
         }}
-        className="rounded-[20px] border border-line bg-bg shadow-card transition-colors focus-within:border-line-strong"
+        className="rounded-[20px] border border-line bg-bg shadow-card"
       >
         <label htmlFor="composer-input" className="sr-only">
           Task cho Claude và Codex
@@ -179,6 +220,13 @@ export default function Composer({ variant, projects, onCreated, threadCwd, seed
           value={form.prompt}
           autoFocus={hero}
           onChange={(e) => set('prompt', e.target.value)}
+          onPaste={(e) => {
+            const files = Array.from(e.clipboardData.files).filter((file) => file.type.startsWith('image/'));
+            if (files.length) {
+              e.preventDefault();
+              void addImages(files);
+            }
+          }}
           onKeyDown={(e) => {
             // Enter sends, Shift+Enter breaks the line; never while an IME (Telex/VNI) is composing.
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
@@ -189,12 +237,12 @@ export default function Composer({ variant, projects, onCreated, threadCwd, seed
           placeholder={
             hero
               ? 'Mô tả vấn đề hoặc task. Ví dụ: sửa lỗi upload file rỗng, viết test cho nó'
-              : `Task mới trong ${basename(form.cwd || '…')}. Sẽ tạo phiên mới.`
+              : threadId ? 'Nhắn tiếp trong phiên này…' : `Task mới trong ${basename(form.cwd || '…')}. Sẽ tạo phiên mới.`
           }
-          className={`block w-full resize-none bg-transparent px-4 text-[14.5px] leading-relaxed text-fg placeholder:text-faint focus:outline-none ${hero ? 'min-h-24 pt-4 pb-2' : 'min-h-11 pt-3 pb-1'}`}
+          className={`composer-input block w-full resize-none bg-transparent px-4 text-[14.5px] leading-relaxed text-fg placeholder:text-faint focus:outline-none ${hero ? 'min-h-24 pt-4 pb-2' : 'min-h-11 pt-3 pb-1'}`}
         />
 
-        {auto && preview && (
+        {!threadId && auto && preview && (
           <p className="flex items-start gap-1.5 px-4 pb-1 text-[12px] leading-snug text-faint">
             <Waypoints aria-hidden className="mt-px size-3.5 shrink-0" />
             <span className="line-clamp-2">
@@ -206,6 +254,11 @@ export default function Composer({ variant, projects, onCreated, threadCwd, seed
 
         <div className="flex items-center gap-0.5 px-2 pt-1 pb-2">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5">
+            <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple className="sr-only" aria-label="Chọn ảnh" onChange={(e) => { void addImages(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
+            <button type="button" onClick={() => imageInput.current?.click()} aria-label="Thêm ảnh" title="Thêm ảnh" className="grid size-8 shrink-0 place-items-center rounded-lg text-muted hover:bg-surface hover:text-fg">
+              <ImagePlus aria-hidden className="size-4" />
+            </button>
+            {!threadId && <>
             <Popover
               side={side}
               width="w-80"
@@ -299,22 +352,22 @@ export default function Composer({ variant, projects, onCreated, threadCwd, seed
                 label={
                   <>
                     <AgentDot agent={form.mode === 'pair' ? form.coder : form.judge} />
-                    {form.mode === 'pair' ? `${AGENT_LABEL[form.coder]} code` : `${AGENT_LABEL[form.judge]} chốt`}
+                    {form.mode === 'pair' ? `${AGENT_LABEL[form.coder]} code` : form.mode === 'plan' ? `${AGENT_LABEL[form.coder]} lập kế hoạch` : `${AGENT_LABEL[form.judge]} chốt`}
                   </>
                 }
               >
                 {(close) => (
                   <>
-                    <MenuLabel>{form.mode === 'pair' ? 'Ai viết code?' : 'Ai viết giải pháp cuối?'}</MenuLabel>
+                    <MenuLabel>{form.mode === 'pair' ? 'Ai viết code?' : form.mode === 'plan' ? 'Agent lập kế hoạch' : 'Ai viết giải pháp cuối?'}</MenuLabel>
                     {(['claude', 'codex'] as const).map((a) => (
                       <MenuItem
                         key={a}
-                        selected={(form.mode === 'pair' ? form.coder : form.judge) === a}
+                        selected={(form.mode === 'pair' || form.mode === 'plan' ? form.coder : form.judge) === a}
                         icon={<AgentDot agent={a} className="mt-1" />}
                         label={AGENT_LABEL[a]}
                         hint={form.mode === 'pair' ? `${AGENT_LABEL[a === 'claude' ? 'codex' : 'claude']} sẽ review và chạy test` : undefined}
                         onSelect={() => {
-                          set(form.mode === 'pair' ? 'coder' : 'judge', a);
+                          set(form.mode === 'pair' || form.mode === 'plan' ? 'coder' : 'judge', a);
                           close();
                         }}
                       />
@@ -324,7 +377,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, seed
               </Popover>
             )}
 
-            {!auto && (
+            {!auto && form.mode !== 'plan' && (
               <Popover side={side} width="w-44" label={`${form.maxRounds} vòng`}>
                 {(close) => (
                   <>
@@ -395,6 +448,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, seed
                 </div>
               )}
             </Popover>
+            </>}
           </div>
 
           <button
@@ -425,4 +479,3 @@ export default function Composer({ variant, projects, onCreated, threadCwd, seed
     </div>
   );
 }
-

@@ -9,7 +9,7 @@ export type { AgentName, Usage } from '../../server/src/agents/types.ts';
 export type { ModelCatalog, ModelInfo } from '../../server/src/types.ts';
 
 /** What the form sends: a concrete mode, or 'auto' to let the router decide. */
-export type NewRunRequest = Omit<Partial<RunConfig>, 'mode'> & { mode: RunConfig['mode'] | 'auto' };
+export type NewRunRequest = Omit<Partial<RunConfig>, 'mode' | 'images'> & { mode: RunConfig['mode'] | 'auto'; images?: { name: string; dataUrl: string }[] };
 
 export interface RoutePreview {
   mode: RunConfig['mode'];
@@ -23,11 +23,13 @@ export interface RoutePreview {
 
 export interface RunSummary {
   id: string;
-  mode: 'debate' | 'pair';
+  title?: string;
+  mode: 'debate' | 'pair' | 'plan';
   prompt: string;
   cwd: string;
   status: Run['status'];
   createdAt: number;
+  claudeLimits?: Record<string, { utilization: number; resetsAt?: number }>;
 }
 
 export interface AgentStatus {
@@ -50,6 +52,8 @@ export const api = {
   agents: () => fetch('/api/agents').then((r) => json<AgentStatus>(r)),
   models: () => fetch('/api/models').then((r) => json<ModelCatalog>(r)),
   list: () => fetch('/api/runs').then((r) => json<RunSummary[]>(r)),
+  rename: (id: string, title: string) => fetch(`/api/runs/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) }).then((r) => json<{ title: string }>(r)),
+  delete: (id: string) => fetch(`/api/runs/${id}`, { method: 'DELETE' }).then((r) => json<{ ok: boolean }>(r)),
   getRun: async (id: string) => {
     const res = await fetch(`/api/runs/${id}`, { cache: 'no-store' });
     if (res.status === 404) return null;
@@ -59,6 +63,8 @@ export const api = {
     fetch('/api/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }).then((r) =>
       json<{ id: string }>(r),
     ),
+  continue: (id: string, prompt: string, images: NonNullable<NewRunRequest['images']>) =>
+    fetch(`/api/runs/${id}/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, images }) }).then((r) => json<{ id: string }>(r)),
   previewRoute: (prompt: string, signal?: AbortSignal) =>
     fetch('/api/route/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }), signal }).then((r) =>
       json<RoutePreview>(r),
@@ -70,7 +76,7 @@ export const api = {
 };
 
 /** Live view of a run: snapshot + streamed events over SSE. */
-export function useRun(id: string) {
+export function useRun(id: string, revision = 0) {
   const [run, setRun] = useState<Run | null>(null);
   const [reconnecting, setReconnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,7 +91,7 @@ export function useRun(id: string) {
       onReconnecting: setReconnecting,
       onError: setError,
     });
-  }, [id]);
+  }, [id, revision]);
 
   return { run, reconnecting, error };
 }

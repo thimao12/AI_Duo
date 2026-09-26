@@ -96,6 +96,7 @@ export const codex: AgentAdapter = {
       : ['exec', '--json', '--skip-git-repo-check', '-C', o.cwd, '-s', sandbox, '-o', lastFile];
     if (o.model) args.push('-m', o.model);
     if (o.effort) args.push('-c', `model_reasoning_effort="${o.effort}"`);
+    for (const image of o.images ?? []) args.push('--image', image);
     if (o.sessionId) args.push(o.sessionId);
     args.push('-'); // prompt from stdin
 

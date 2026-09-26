@@ -19,7 +19,7 @@ function phaseTitle(m: Message, run: Run): string {
 
 /** "Review & test · vòng 2/3", from the latest agent turn. */
 function progressOf(run: Run): string | null {
-  const last = [...run.messages].reverse().find((m) => m.agent !== 'system');
+  const last = [...run.messages].reverse().find((m) => m.agent === 'claude' || m.agent === 'codex');
   return last ? phaseTitle(last, run) : null;
 }
 
@@ -31,14 +31,22 @@ function keepLineBreaks(text: string): string {
     .join('');
 }
 
-function PromptBubble({ prompt, cwd, createdAt }: { prompt: string; cwd: string; createdAt: number }) {
+function PromptBubble({ run, message }: { run: Run; message?: Message }) {
+  const { cwd } = run.config;
+  const prompt = message?.parts[0]?.content ?? run.config.prompt;
+  const images = message?.images ?? run.config.images;
+  const createdAt = message?.startedAt ?? run.createdAt;
   const long = prompt.length > 700 || prompt.split('\n').length > 12;
   const [expanded, setExpanded] = useState(false);
   return (
     <div className="flex flex-col items-end">
       <div className="max-w-[88%] rounded-2xl bg-surface px-4 py-2.5 text-[14px] leading-relaxed">
+        {!!images?.length && <div className="mb-2 flex flex-wrap gap-2">{images.map((image, index) => {
+          const url = message ? `/api/runs/${run.id}/messages/${message.id}/images/${index}` : `/api/runs/${run.id}/images/${index}`;
+          return <a key={index} href={url} target="_blank" rel="noreferrer"><img src={url} alt={image.name} className="max-h-40 max-w-40 rounded-lg object-contain" /></a>;
+        })}</div>}
         <div className={`prompt-md ${long && !expanded ? 'max-h-64 overflow-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]' : ''}`}>
-          <Markdown>{keepLineBreaks(prompt)}</Markdown>
+          {prompt && <Markdown>{keepLineBreaks(prompt)}</Markdown>}
         </div>
         {long && (
           <button type="button" onClick={() => setExpanded((e) => !e)} className="mt-1 text-[12.5px] font-medium text-muted hover:text-fg">
@@ -58,7 +66,7 @@ function FinalBlock({ run, files, onShowChanges }: { run: Run; files: number; on
   return (
     <section aria-label="Kết quả" className="mt-10">
       <div className="mb-2 flex items-center gap-2">
-        <h2 className="text-[13.5px] font-semibold">{run.config.mode === 'debate' ? 'Giải pháp cuối' : 'Kết quả'}</h2>
+        <h2 className="text-[13.5px] font-semibold">{run.config.mode === 'debate' ? 'Giải pháp cuối' : run.config.mode === 'plan' ? 'Kế hoạch' : 'Kết quả'}</h2>
         {files > 0 && (
           <button type="button" onClick={onShowChanges} className="text-[12.5px] text-muted underline-offset-2 hover:text-fg hover:underline">
             Xem thay đổi ({files} file)
@@ -87,13 +95,15 @@ function FinalBlock({ run, files, onShowChanges }: { run: Run; files: number; on
 
 interface ThreadProps {
   id: string;
+  title?: string;
   projects: string[];
   onCreated: (id: string) => void;
   onMenu: () => void;
 }
 
-export default function Thread({ id, projects, onCreated, onMenu }: ThreadProps) {
-  const { run, reconnecting, error } = useRun(id);
+export default function Thread({ id, title, projects, onCreated, onMenu }: ThreadProps) {
+  const [revision, setRevision] = useState(0);
+  const { run, reconnecting, error } = useRun(id, revision);
   const [compact, setCompact] = useState(false);
   const [panel, setPanel] = useState<boolean | null>(null);
   const [atBottom, setAtBottom] = useState(true);
@@ -154,7 +164,7 @@ export default function Thread({ id, projects, onCreated, onMenu }: ThreadProps)
             <span className="sr-only">Mở danh sách phiên</span>
           </button>
           <div className="flex min-w-0 flex-1 items-baseline gap-2">
-            <h1 className="min-w-0 truncate text-[13.5px] font-semibold">{run ? titleOf(run.config.prompt) : 'Đang tải…'}</h1>
+            <h1 className="min-w-0 truncate text-[13.5px] font-semibold">{run ? title || run.title || titleOf(run.config.prompt) : 'Đang tải…'}</h1>
             {run && <span className="hidden shrink-0 text-[12.5px] text-faint sm:inline">{basename(run.config.cwd)}</span>}
           </div>
           {run && (
@@ -239,9 +249,10 @@ export default function Thread({ id, projects, onCreated, onMenu }: ThreadProps)
             </div>
           ) : (
             <div className="mx-auto max-w-[760px] px-5 pt-8 pb-12">
-              <PromptBubble prompt={run.config.prompt} cwd={run.config.cwd} createdAt={run.createdAt} />
+              <PromptBubble run={run} />
               <div className="mt-8 space-y-5">
                 {run.messages.map((m, i) => {
+                  if (m.agent === 'user') return <div key={m.id} className="mt-8"><PromptBubble run={run} message={m} /></div>;
                   const prev = run.messages[i - 1];
                   const divider = m.agent !== 'system' && m.phase !== 'info' && (!prev || prev.phase !== m.phase || prev.round !== m.round);
                   return (
@@ -253,7 +264,12 @@ export default function Thread({ id, projects, onCreated, onMenu }: ThreadProps)
                           <span className="h-px flex-1 bg-line" />
                         </div>
                       )}
-                      {m.agent === 'system' ? <SystemNote message={m} /> : <Turn message={m} compact={compact} />}
+                      {m.agent === 'system' ? m.phase === 'result' ? (
+                        <section className="rounded-2xl border border-line bg-surface/60 px-5 py-4">
+                          <h2 className="mb-2 text-[13.5px] font-semibold">Kết quả lượt trước</h2>
+                          <Markdown>{m.parts.map((part) => part.content).join('\n')}</Markdown>
+                        </section>
+                      ) : <SystemNote message={m} /> : <Turn message={m} compact={compact} />}
                     </Fragment>
                   );
                 })}
@@ -283,7 +299,7 @@ export default function Thread({ id, projects, onCreated, onMenu }: ThreadProps)
             </button>
           )}
           <div className="mx-auto max-w-[760px]">
-            <Composer variant="dock" projects={projects} onCreated={onCreated} threadCwd={run?.config.cwd} />
+            <Composer variant="dock" projects={projects} onCreated={onCreated} threadCwd={run?.config.cwd} threadId={id} onContinue={() => { positioned.current = false; setAtBottom(true); setRevision((n) => n + 1); }} />
           </div>
         </div>
       </div>

@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { agents, type AgentName, type Role, type Usage } from './agents/index.ts';
 import { AbortedError } from './agents/process.ts';
 import { saveRun } from './store.ts';
+import { paths } from './paths.ts';
 import { addUsage, applyAgentEvent, type Message, type ModelRole, type Run, type RunConfig, type RunEvent, type Speaker, type Verdict } from './types.ts';
 
 export interface TurnOptions {
@@ -47,19 +49,41 @@ export class RunContext {
   private finished = false;
   private listeners = new Set<(e: RunEvent) => void>();
   private inflightTurns = new Set<Promise<unknown>>();
-  private sessions = new Map<string, string>();
+  private sessions: Map<string, string>;
+  private currentImages?: string[];
   private saveTimer?: NodeJS.Timeout;
   private saveInFlight?: Promise<void>;
 
-  constructor(config: RunConfig) {
-    this.run = {
+  constructor(config: RunConfig, existing?: Run) {
+    this.run = existing ?? {
       id: `${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}-${randomUUID().slice(0, 6)}`,
       config,
       status: 'running',
       createdAt: Date.now(),
       messages: [],
     };
+    this.sessions = new Map(Object.entries(this.run.sessions ?? {}));
+    if (!existing) this.checkpoint();
+  }
+
+  get prompt() {
+    return [...this.run.messages].reverse().find((m) => m.agent === 'user')?.parts[0]?.content ?? this.run.config.prompt;
+  }
+
+  followUp(prompt: string, images: NonNullable<Message['images']> = [], messageId = randomUUID()) {
+    if (this.run.final) {
+      this.run.messages.push({ id: randomUUID(), agent: 'system', phase: 'result', round: 0, title: 'Kết quả lượt trước', parts: [{ kind: 'text', content: this.run.final }], status: 'done', startedAt: Date.now(), endedAt: Date.now() });
+    }
+    this.run.status = 'running';
+    this.run.endedAt = undefined;
+    this.run.error = undefined;
+    this.run.final = undefined;
+    this.run.diff = undefined;
+    const m: Message = { id: messageId, agent: 'user', phase: 'prompt', round: 0, title: 'Bạn', parts: [{ kind: 'text', content: prompt }], images, status: 'done', startedAt: Date.now(), endedAt: Date.now() };
+    this.run.messages.push(m);
+    this.currentImages = images.map((image, index) => path.join(paths.dataDir, 'images', this.run.id, `${m.id}-${index}.${image.mimeType.split('/')[1] === 'jpeg' ? 'jpg' : image.mimeType.split('/')[1]}`));
     this.checkpoint();
+    return m;
   }
 
   private checkpoint() {
@@ -124,6 +148,14 @@ export class RunContext {
 
   private pushEvent(m: Message, event: Parameters<typeof applyAgentEvent>[1]) {
     if (this.finished) return;
+    if (m.agent === 'claude' && event.rateLimit?.type && typeof event.rateLimit.utilization === 'number') {
+      this.run.claudeLimits ??= {};
+      this.run.claudeLimits[event.rateLimit.type] = {
+        utilization: event.rateLimit.utilization,
+        ...(event.rateLimit.resetsAt !== undefined && { resetsAt: event.rateLimit.resetsAt }),
+      };
+      this.emit({ type: 'run.update', patch: { claudeLimits: this.run.claudeLimits } });
+    }
     applyAgentEvent(m.parts, event);
     this.emit({ type: 'message.event', id: m.id, event });
   }
@@ -161,6 +193,7 @@ export class RunContext {
     try {
       const res = await agents[t.agent].run({
         prompt: t.prompt,
+        images: this.currentImages ?? this.run.config.images?.map((image, index) => path.join(paths.dataDir, 'images', this.run.id, `${index}.${image.mimeType.split('/')[1] === 'jpeg' ? 'jpg' : image.mimeType.split('/')[1]}`)),
         cwd: this.run.config.cwd,
         role: t.role,
         sessionId: key ? this.sessions.get(key) : undefined,
@@ -171,7 +204,10 @@ export class RunContext {
         onEvent: (e) => this.pushEvent(m, e),
       });
       validateTurnOutput(t.agent, t.role, res.finalText);
-      if (key && res.sessionId) this.sessions.set(key, res.sessionId);
+      if (key && res.sessionId) {
+        this.sessions.set(key, res.sessionId);
+        this.run.sessions = Object.fromEntries(this.sessions);
+      }
       // Codex delivers whole messages; if nothing streamed, make sure the final text is shown.
       if (!m.parts.some((p) => p.kind === 'text') && res.finalText) this.pushEvent(m, { kind: 'text', content: res.finalText });
       const verdict = await t.parseVerdict?.(res.finalText);

@@ -12,7 +12,7 @@ const other = (a: AgentName): AgentName => (a === 'claude' ? 'codex' : 'claude')
 
 /** What this turn is, in the user's language (the server's titles are English and verbose). */
 export function turnLabel(m: Message): string {
-  const a = m.agent === 'system' ? null : m.agent;
+  const a = m.agent === 'system' || m.agent === 'user' ? null : m.agent;
   switch (m.phase) {
     case 'propose':
       return 'Đề xuất';

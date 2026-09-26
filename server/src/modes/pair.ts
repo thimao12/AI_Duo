@@ -52,7 +52,8 @@ function formatDiff(diff: string) {
  * Nothing is committed; the final diff is shown to the user.
  */
 export async function runPair(ctx: RunContext) {
-  const { prompt, cwd, maxRounds, coder, testCommand } = ctx.run.config;
+  const { cwd, maxRounds, coder, testCommand } = ctx.run.config;
+  const prompt = ctx.prompt;
   const reviewer = other(coder);
 
   if (!(await isGitRepo(cwd))) {

@@ -58,13 +58,15 @@ export default function App() {
     open(id);
     void refresh();
   };
+  const rename = async (id: string, title: string) => { await api.rename(id, title); await refresh(); };
+  const remove = async (id: string) => { await api.delete(id); if (runId === id) open(null); await refresh(); };
 
   return (
     <div className="flex h-dvh overflow-hidden bg-bg text-fg">
-      <Sidebar runs={runs} activeId={runId} onOpen={open} theme={theme} open={menuOpen} onClose={() => setMenuOpen(false)} />
+      <Sidebar runs={runs} activeId={runId} onOpen={open} onRename={rename} onDelete={remove} theme={theme} open={menuOpen} onClose={() => setMenuOpen(false)} />
       <main className="min-w-0 flex-1">
         {runId ? (
-          <Thread key={runId} id={runId} projects={projects} onCreated={onCreated} onMenu={() => setMenuOpen(true)} />
+          <Thread key={runId} id={runId} title={runs.find((r) => r.id === runId)?.title} projects={projects} onCreated={onCreated} onMenu={() => setMenuOpen(true)} />
         ) : (
           <EmptyState projects={projects} onCreated={onCreated} onMenu={() => setMenuOpen(true)} />
         )}

@@ -1,6 +1,6 @@
 import type { AgentEvent, AgentName, Role, Usage } from './agents/types.ts';
 
-export type Mode = 'debate' | 'pair';
+export type Mode = 'debate' | 'pair' | 'plan';
 
 /** Which model a turn uses: its role, plus 'judge' for the debate synthesis. */
 export type ModelRole = Role | 'judge';
@@ -23,11 +23,12 @@ export interface RoutePlan {
   models: Partial<Record<AgentName, Partial<Record<ModelRole, ModelChoice>>>>;
 }
 export type RunStatus = 'running' | 'done' | 'error' | 'cancelled';
-export type Speaker = AgentName | 'system';
+export type Speaker = AgentName | 'system' | 'user';
 
 export interface RunConfig {
   mode: Mode;
   prompt: string;
+  images?: { name: string; mimeType: string }[];
   cwd: string;
   maxRounds: number;
   /** debate: who writes the final synthesis */
@@ -59,6 +60,7 @@ export interface Message {
   round: number;
   title: string;
   parts: Part[];
+  images?: { name: string; mimeType: string }[];
   status: 'running' | 'done' | 'error';
   verdict?: Verdict;
   /** Model the turn ran on, when known. */
@@ -70,16 +72,22 @@ export interface Message {
 
 export interface Run {
   id: string;
+  /** User-assigned name; the prompt remains the original task. */
+  title?: string;
   config: RunConfig;
   status: RunStatus;
   createdAt: number;
   endedAt?: number;
   messages: Message[];
+  /** CLI conversations used by agent turns, retained across follow-ups. */
+  sessions?: Record<string, string>;
   final?: string;
   diff?: string;
   error?: string;
   /** Sum over all turns that reported usage. */
   usage?: Usage;
+  /** Most recently observed Claude account limit windows. */
+  claudeLimits?: Record<string, { utilization: number; resetsAt?: number }>;
 }
 
 export type RunEvent =
@@ -87,7 +95,7 @@ export type RunEvent =
   | { type: 'message.start'; message: Message }
   | { type: 'message.event'; id: string; event: AgentEvent }
   | { type: 'message.end'; id: string; status: Message['status']; verdict?: Verdict; usage?: Usage; endedAt: number }
-  | { type: 'run.update'; patch: Partial<Pick<Run, 'status' | 'final' | 'diff' | 'error' | 'endedAt' | 'usage'>> };
+  | { type: 'run.update'; patch: Partial<Pick<Run, 'status' | 'final' | 'diff' | 'error' | 'endedAt' | 'usage' | 'claudeLimits'>> };
 
 export function addUsage(a: Usage | undefined, b: Usage): Usage {
   const costUsd = a?.costUsd !== undefined || b.costUsd !== undefined ? (a?.costUsd ?? 0) + (b.costUsd ?? 0) : undefined;

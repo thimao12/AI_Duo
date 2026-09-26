@@ -44,6 +44,28 @@ async function waitForRun(id: string) {
 }
 
 try {
+  // A follow-up stays in the same run and resumes the same CLI conversation.
+  const sessionIds: (string | undefined)[] = [];
+  agents.codex.run = async (options) => {
+    sessionIds.push(options.sessionId);
+    return { finalText: `answer ${sessionIds.length}`, sessionId: 'codex-session-smoke' };
+  };
+  const firstResponse = await postRun({ mode: 'plan', cwd: dataDir, prompt: 'first question' });
+  assert.equal(firstResponse.status, 200);
+  const { id: threadId } = await firstResponse.json();
+  await waitForRun(threadId);
+  const image = { name: 'tiny.png', dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlOxKcAAAAASUVORK5CYII=' };
+  const followResponse = await request(`/api/runs/${threadId}/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'second question', images: [image] }) });
+  assert.equal(followResponse.status, 200);
+  assert.equal((await followResponse.json()).id, threadId);
+  const followed = await waitForRun(threadId);
+  assert.deepEqual(sessionIds, [undefined, 'codex-session-smoke']);
+  assert.equal(followed.config.prompt, 'first question');
+  const userMessage = followed.messages.find((message: { agent: string }) => message.agent === 'user');
+  assert.equal(userMessage.parts[0].content, 'second question');
+  assert.equal((await request(`/api/runs/${threadId}/messages/${userMessage.id}/images/0`)).status, 200);
+  assert.equal(followed.final, 'answer 2');
+
   // A failed agent aborts and waits for its sibling before the final run is saved.
   agents.claude.run = ({ signal }) =>
     new Promise((_, reject) => {

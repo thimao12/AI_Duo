@@ -104,6 +104,11 @@ export function onJson(ev: any, state: ClaudeJsonState): { state: ClaudeJsonStat
   } else if (ev.type === 'rate_limit_event') {
     const info = ev.rate_limit_info ?? {};
     const status = info.status ?? ev.status;
+    events.push({ kind: 'raw', content: '', rateLimit: {
+      type: info.rateLimitType,
+      ...(typeof info.utilization === 'number' && { utilization: info.utilization }),
+      ...(typeof info.resetsAt === 'number' && { resetsAt: info.resetsAt }),
+    } });
     if (status === 'rejected') next.errorText = `Claude rate limit rejected: ${JSON.stringify(info)}`;
     // 'allowed' arrives on nearly every turn; only surface warnings.
     else if (status !== 'allowed') events.push({ kind: 'raw', content: describeRateLimit(status, info) });
@@ -124,7 +129,7 @@ export const claude: AgentAdapter = {
     const bin = resolveBin('claude');
     const { code, stderr } = await spawnJsonl(bin.cmd, [...bin.prefixArgs, ...args], {
       cwd: o.cwd,
-      stdin: o.prompt,
+      stdin: o.images?.length ? `${o.prompt}\n\nAttached images (use the Read tool to inspect them):\n${o.images.join('\n')}` : o.prompt,
       signal: o.signal,
       timeoutMs: o.timeoutMs ?? 10 * 60_000,
       env: bin.env ? { ...process.env, ...bin.env } : undefined,
