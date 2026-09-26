@@ -5,3 +5,4 @@ data/runs/*.json
 .impeccable/hook.cache.json
 .impeccable/config.json
 .impeccable/review/
+.debug-user-data/
