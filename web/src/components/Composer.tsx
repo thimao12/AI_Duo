@@ -1,10 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, CircleAlert, Folder, FolderOpen, GitMerge, MessagesSquare, SlidersHorizontal, Sparkles, Waypoints } from 'lucide-react';
-import { api, type AgentName, type AgentStatus, type NewRunRequest, type RoutePreview, type RunConfig } from '../api.ts';
+import { api, type AgentName, type AgentStatus, type ModelCatalog, type NewRunRequest, type RoutePreview, type RunConfig } from '../api.ts';
+import ModelPicker from './ModelPicker.tsx';
 import { AgentDot, AGENT_LABEL, basename, MenuItem, MenuLabel, MODE_LABEL, Popover, Spinner } from './ui.tsx';
 
 type Mode = NewRunRequest['mode'];
-type Form = Omit<RunConfig, 'models' | 'mode' | 'route'> & { mode: Mode; models: Record<AgentName, string> };
+type Form = Omit<RunConfig, 'models' | 'efforts' | 'mode' | 'route'> & { mode: Mode; models: Record<AgentName, string>; efforts: Record<AgentName, string> };
 
 const STORAGE_KEY = 'ai-duo:new-run';
 
@@ -21,12 +22,13 @@ const DEFAULTS: Form = {
   testCommand: '',
   turnTimeoutMin: 30,
   models: { claude: '', codex: '' },
+  efforts: { claude: '', codex: '' },
 };
 
 function loadForm(): Form {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    return { ...DEFAULTS, ...saved, prompt: '', models: { ...DEFAULTS.models, ...saved.models } };
+    return { ...DEFAULTS, ...saved, prompt: '', models: { ...DEFAULTS.models, ...saved.models }, efforts: { ...DEFAULTS.efforts, ...saved.efforts } };
   } catch {
     return DEFAULTS;
   }
@@ -43,6 +45,7 @@ export const MODE_ICON = Object.fromEntries(MODES.map((m) => [m.id, m.icon])) as
 function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string) {
   const [form, setForm] = useState<Form>(loadForm);
   const [agents, setAgents] = useState<AgentStatus | null>(null);
+  const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [preview, setPreview] = useState<RoutePreview | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -74,6 +77,7 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string) {
         setForm((f) => (f.cwd ? f : { ...f, cwd: a.defaultCwd }));
       })
       .catch(() => setAgents(null));
+    api.models().then(setCatalog, () => setCatalog(null));
   }, []);
 
   useEffect(() => {
@@ -100,7 +104,7 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string) {
     }
   };
 
-  return { form, set, setForm, agents, preview, error, busy, submit, auto };
+  return { form, set, setForm, agents, catalog, preview, error, busy, submit, auto };
 }
 
 export interface ComposerSeed {
@@ -123,7 +127,7 @@ const field =
   'w-full rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[13px] text-fg placeholder:text-faint transition-colors hover:border-line-strong focus:border-focus focus:outline-none placeholder:font-sans';
 
 export default function Composer({ variant, projects, onCreated, threadCwd, seed, onAgents }: ComposerProps) {
-  const { form, set, setForm, agents, preview, error, busy, submit, auto } = useNewRunForm(onCreated, threadCwd);
+  const { form, set, setForm, agents, catalog, preview, error, busy, submit, auto } = useNewRunForm(onCreated, threadCwd);
   const text = useRef<HTMLTextAreaElement>(null);
   const [typingPath, setTypingPath] = useState(false);
   const hero = variant === 'hero';
@@ -321,7 +325,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, seed
             )}
 
             {!auto && (
-              <Popover side={side} width="w-44" label={`Tối đa ${form.maxRounds} vòng`}>
+              <Popover side={side} width="w-44" label={`${form.maxRounds} vòng`}>
                 {(close) => (
                   <>
                     <MenuLabel>{form.mode === 'pair' ? 'Số vòng review' : 'Số vòng review chéo'}</MenuLabel>
@@ -340,6 +344,21 @@ export default function Composer({ variant, projects, onCreated, threadCwd, seed
                 )}
               </Popover>
             )}
+
+            {(['codex', 'claude'] as const).map((a) => (
+              <ModelPicker
+                key={a}
+                agent={a}
+                catalog={catalog}
+                model={form.models[a]}
+                effort={form.efforts[a]}
+                auto={auto}
+                side={side}
+                onChange={({ model, effort }) =>
+                  setForm((f) => ({ ...f, models: { ...f.models, [a]: model }, efforts: { ...f.efforts, [a]: effort } }))
+                }
+              />
+            ))}
 
             <Popover
               side={side}
@@ -373,19 +392,6 @@ export default function Composer({ variant, projects, onCreated, threadCwd, seed
                       onChange={(e) => set('turnTimeoutMin', Number(e.target.value))}
                     />
                   </label>
-                  {(['claude', 'codex'] as const).map((a) => (
-                    <label key={a} className="block space-y-1">
-                      <span className="flex items-center gap-1.5 text-[12.5px] text-muted">
-                        <AgentDot agent={a} /> Model {AGENT_LABEL[a]}
-                      </span>
-                      <input
-                        className={`${field} font-mono`}
-                        value={form.models[a]}
-                        onChange={(e) => set('models', { ...form.models, [a]: e.target.value })}
-                        placeholder={auto ? 'Trống = router tự chọn' : a === 'claude' ? 'vd. opus, sonnet' : 'Trống = mặc định'}
-                      />
-                    </label>
-                  ))}
                 </div>
               )}
             </Popover>

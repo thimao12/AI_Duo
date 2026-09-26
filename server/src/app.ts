@@ -10,6 +10,7 @@ import type { AgentName, Usage } from './agents/index.ts';
 import { runDebate } from './modes/debate.ts';
 import { runPair } from './modes/pair.ts';
 import { resolveBin, type ResolvedBin } from './agents/bins.ts';
+import { EFFORT, listModels } from './models.ts';
 import { paths } from './paths.ts';
 import { autoRoute } from './router/index.ts';
 import { classifyByRules, CONFIDENT } from './router/rules.ts';
@@ -79,6 +80,11 @@ async function parseConfig(body: any): Promise<{ cfg: RunConfig; routeUsage?: Us
       return `Invalid models.${name}: use 1-64 letters, numbers, or . : / _ - and do not start with -`;
     }
   }
+  for (const name of ['claude', 'codex'] as const) {
+    const value = body.efforts?.[name];
+    if (value === undefined || value === null || value === '') continue;
+    if (typeof value !== 'string' || !EFFORT.test(value)) return `Invalid efforts.${name}: use a level like low, medium or high`;
+  }
   const cwd = path.resolve(String(body.cwd ?? '').trim() || paths.defaultCwd);
   if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return `Working directory not found: ${cwd}`;
   if (body.mode === 'auto') {
@@ -103,6 +109,10 @@ function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
     models: {
       claude: String(body.models?.claude ?? '').trim() || undefined,
       codex: String(body.models?.codex ?? '').trim() || undefined,
+    },
+    efforts: {
+      claude: String(body.efforts?.claude ?? '').trim() || undefined,
+      codex: String(body.efforts?.codex ?? '').trim() || undefined,
     },
   };
 }
@@ -131,6 +141,9 @@ async function agentInfo(name: AgentName) {
     return { version: null, path: null, error: (err as Error).message };
   }
 }
+
+// Models and reasoning levels for the composer's pickers (read fresh: the Codex cache updates itself).
+app.get('/api/models', (c) => c.json(listModels()));
 
 app.get('/api/agents', async (c) => {
   const [claude, codex] = await Promise.all([agentInfo('claude'), agentInfo('codex')]);

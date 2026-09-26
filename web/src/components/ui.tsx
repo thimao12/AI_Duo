@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Check, ChevronDown, LoaderCircle } from 'lucide-react';
@@ -194,11 +194,32 @@ export function Popover({ label, title, side = 'top', align = 'start', width = '
   const panel = useRef<HTMLDivElement>(null);
   const close = () => setOpen(false);
   useDismiss(open, close, root, trigger);
+  // Where the panel actually fits: flipped side, height cap and a horizontal nudge.
+  const [fit, setFit] = useState<{ side: 'top' | 'bottom'; maxHeight: number; shift: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open || !trigger.current || !panel.current) return setFit(null);
+    const t = trigger.current.getBoundingClientRect();
+    const margin = 12;
+    const above = t.top - margin - 8;
+    const below = window.innerHeight - t.bottom - margin - 8;
+    const need = panel.current.scrollHeight;
+    const preferred = side === 'top' ? above : below;
+    const flipped = need > preferred && (side === 'top' ? below : above) > preferred;
+    const finalSide = flipped ? (side === 'top' ? 'bottom' : 'top') : side;
+    const space = finalSide === 'top' ? above : below;
+    // Keep the panel inside the window horizontally.
+    const p = panel.current.getBoundingClientRect();
+    const shift = Math.max(margin - p.left, Math.min(0, window.innerWidth - margin - p.right));
+    setFit({ side: finalSide, maxHeight: Math.max(160, space), shift });
+  }, [open, side]);
 
   // Move focus into the panel so keyboard users land on the first option.
   useEffect(() => {
     if (open) panel.current?.querySelector<HTMLElement>('button, input, [tabindex]')?.focus();
   }, [open]);
+
+  const shownSide = fit?.side ?? side;
 
   return (
     <div ref={root} className="relative min-w-0">
@@ -219,7 +240,8 @@ export function Popover({ label, title, side = 'top', align = 'start', width = '
             const i = items.indexOf(document.activeElement as HTMLElement);
             items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
           }}
-          className={`absolute z-40 ${width} rounded-xl border border-line bg-bg p-1 shadow-pop ${side === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'} ${align === 'end' ? 'right-0' : 'left-0'}`}
+          style={fit ? { maxHeight: fit.maxHeight, transform: fit.shift ? `translateX(${fit.shift}px)` : undefined } : { visibility: 'hidden' }}
+          className={`absolute z-40 ${width} max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-line bg-bg p-1 shadow-pop ${shownSide === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'} ${align === 'end' ? 'right-0' : 'left-0'}`}
         >
           {children(close)}
         </div>

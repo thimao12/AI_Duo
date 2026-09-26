@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { AgentName } from '../../server/src/agents/types.ts';
 import type { Run, RunConfig, RoutePlan } from '../../server/src/types.ts';
+import type { ModelCatalog } from '../../server/src/types.ts';
 import { startRunStream } from './run-events.ts';
 
 export type { Message, ModelChoice, Part, RoutePlan, Run, RunConfig, Verdict, Speaker } from '../../server/src/types.ts';
 export type { AgentName, Usage } from '../../server/src/agents/types.ts';
+export type { ModelCatalog, ModelInfo } from '../../server/src/types.ts';
 
 /** What the form sends: a concrete mode, or 'auto' to let the router decide. */
 export type NewRunRequest = Omit<Partial<RunConfig>, 'mode'> & { mode: RunConfig['mode'] | 'auto' };
@@ -46,6 +48,7 @@ async function json<T>(res: Response): Promise<T> {
 
 export const api = {
   agents: () => fetch('/api/agents').then((r) => json<AgentStatus>(r)),
+  models: () => fetch('/api/models').then((r) => json<ModelCatalog>(r)),
   list: () => fetch('/api/runs').then((r) => json<RunSummary[]>(r)),
   getRun: async (id: string) => {
     const res = await fetch(`/api/runs/${id}`, { cache: 'no-store' });

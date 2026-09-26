@@ -101,12 +101,17 @@ export class RunContext {
     this.endMessage(m, 'done', undefined, usage);
   }
 
-  /** A manual model for the agent wins; otherwise the router's pick for this role, if any. */
+  /**
+   * Manual choices win over the router's pick for this role. A manual model drops the routed
+   * effort (it was chosen for the routed model); a manual effort applies to whichever model runs.
+   */
   modelFor(agent: AgentName, role: ModelRole): { model?: string; effort?: string } {
-    const manual = this.run.config.models?.[agent];
-    if (manual) return { model: manual };
+    const manualModel = this.run.config.models?.[agent];
+    const manualEffort = this.run.config.efforts?.[agent];
     const routed = this.run.config.route?.models[agent]?.[role];
-    return { model: routed?.model, effort: routed?.effort };
+    // Same shapes the router relies on: `{ model }` for a manual model, both keys otherwise.
+    if (manualModel) return manualEffort ? { model: manualModel, effort: manualEffort } : { model: manualModel };
+    return { model: routed?.model, effort: manualEffort || routed?.effort };
   }
 
   private startMessage(agent: Speaker, phase: string, round: number, title: string, model?: string): Message {

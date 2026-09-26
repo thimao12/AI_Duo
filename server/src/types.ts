@@ -39,6 +39,8 @@ export interface RunConfig {
   turnTimeoutMin: number;
   /** Manual per-agent model; overrides the router when set. */
   models?: Partial<Record<AgentName, string>>;
+  /** Manual reasoning effort per agent (low, medium, high, …); overrides the router's. */
+  efforts?: Partial<Record<AgentName, string>>;
   /** Set when mode/agents/models were picked by the auto-router. */
   route?: RoutePlan;
 }
@@ -109,3 +111,22 @@ export function applyAgentEvent(parts: Part[], e: AgentEvent) {
     parts.push({ kind: e.kind === 'text' ? 'text' : e.kind, content: e.content });
   }
 }
+
+/* ---- Model catalog (shared with the web UI) ---- */
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  description?: string;
+  /** Reasoning levels this model accepts, weakest first. */
+  efforts: string[];
+  defaultEffort?: string;
+}
+
+export interface AgentModels {
+  models: ModelInfo[];
+  /** What the CLI uses when AI Duo passes no model/effort. */
+  default: { model?: string; effort?: string };
+}
+
+export type ModelCatalog = Record<'claude' | 'codex', AgentModels>;
