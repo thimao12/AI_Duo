@@ -26,7 +26,7 @@ function group(messages: Message[]) {
 }
 
 export default function RunView({ id }: { id: string }) {
-  const { run, error } = useRun(id);
+  const { run, reconnecting, error } = useRun(id);
   const [tab, setTab] = useState<'final' | 'diff'>('final');
   const [follow, setFollow] = useState(true);
   const bottom = useRef<HTMLDivElement>(null);
@@ -38,13 +38,20 @@ export default function RunView({ id }: { id: string }) {
   }, [follow, running, run?.messages.length, lastLen]);
 
   if (error) return <p className="p-8 text-sm text-red-400">{error}</p>;
-  if (!run) return <p className="p-8 text-sm text-zinc-500">Đang tải…</p>;
+  if (!run)
+    return (
+      <div className="p-8">
+        {reconnecting && <ConnectionBanner />}
+        <p className="text-sm text-zinc-500">Đang tải…</p>
+      </div>
+    );
 
   const { config } = run;
 
   return (
     <div className="mx-auto max-w-6xl px-4 pb-24 sm:px-8">
       <header className="sticky top-0 z-10 -mx-4 border-b border-zinc-800 bg-zinc-950/95 px-4 py-4 backdrop-blur sm:-mx-8 sm:px-8">
+        {reconnecting && <ConnectionBanner />}
         <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
           {config.route && (
             <span className="rounded bg-zinc-800/60 px-1.5 py-0.5 font-medium tracking-wide text-zinc-400 uppercase" title={config.route.reason}>
@@ -136,6 +143,14 @@ export default function RunView({ id }: { id: string }) {
         <div ref={bottom} />
       </div>
     </div>
+  );
+}
+
+function ConnectionBanner() {
+  return (
+    <p role="status" className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+      Mất kết nối, đang kết nối lại…
+    </p>
   );
 }
 

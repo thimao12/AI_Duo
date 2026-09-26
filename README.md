@@ -44,6 +44,8 @@ Kiểm tra parser JSONL, trạng thái adapter và thông báo lỗi: `pnpm --fi
 
 Kiểm tra cách mở link file trong desktop: `pnpm --filter server test:desktop-links`
 
+View phiên tự kết nối lại khi mất SSE; banner sẽ hiện trong lúc chờ server trả snapshot mới. Nếu phiên không tồn tại, app sẽ báo không tìm thấy thay vì tiếp tục thử kết nối.
+
 ## Quyền của agent
 
 | Vai | Claude | Codex |
