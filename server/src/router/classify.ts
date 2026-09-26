@@ -50,11 +50,13 @@ export const classifyWithHaiku: Classifier = async (prompt, signal) => {
   const clipped = prompt.length > MAX_PROMPT_CHARS ? `${prompt.slice(0, MAX_PROMPT_CHARS)}\n…(truncated)` : prompt;
   let result: any;
   try {
-    await spawnJsonl(resolveBin('claude'), HAIKU_ARGS, {
+    const bin = resolveBin('claude');
+    await spawnJsonl(bin.cmd, [...bin.prefixArgs, ...HAIKU_ARGS], {
       cwd: tmpdir(),
       stdin: render('route', { prompt: clipped }),
       signal: signal ?? new AbortController().signal,
       timeoutMs: 60_000,
+      env: bin.env ? { ...process.env, ...bin.env } : undefined,
       onJson: (ev) => {
         if (ev?.type === 'result') result = ev;
       },

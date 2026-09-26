@@ -120,11 +120,13 @@ export const claude: AgentAdapter = {
 
     let state = initialClaudeJsonState(o.sessionId);
 
-    const { code, stderr } = await spawnJsonl(resolveBin('claude'), args, {
+    const bin = resolveBin('claude');
+    const { code, stderr } = await spawnJsonl(bin.cmd, [...bin.prefixArgs, ...args], {
       cwd: o.cwd,
       stdin: o.prompt,
       signal: o.signal,
       timeoutMs: o.timeoutMs ?? 10 * 60_000,
+      env: bin.env ? { ...process.env, ...bin.env } : undefined,
       onRawLine: (line) => o.onEvent({ kind: 'raw', content: line }),
       onJson: (ev) => {
         const result = onJson(ev, state);

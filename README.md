@@ -34,7 +34,7 @@ pnpm dev            # server :8787 + web :5173 → mở http://localhost:5173
 
 API chỉ nhận request có `Host` là `localhost` hoặc `127.0.0.1`; request có `Origin` phải cùng origin với server hoặc thuộc `AI_DUO_DEV_ORIGINS` (mặc định `http://localhost:5173,http://127.0.0.1:5173`). `POST /api/runs` yêu cầu `Content-Type: application/json`.
 
-Yêu cầu: `claude` và `codex` có trong PATH và đã đăng nhập. Có thể đặt đường dẫn khác qua `CLAUDE_BIN` / `CODEX_BIN`.
+Yêu cầu: `claude` và `codex` có trong PATH và đã đăng nhập. Bản cài npm dùng shim `.cmd` được chạy trực tiếp bằng Node, không qua `cmd.exe`; nếu không tìm thấy Node trên PATH, bản desktop dùng Electron làm Node runtime. Có thể đặt đường dẫn khác qua `CLAUDE_BIN` / `CODEX_BIN`. Nếu shim `.cmd` không trỏ được tới file JavaScript, app sẽ báo đường dẫn shim và yêu cầu đặt biến tương ứng.
 
 Lượt của vai thinker/reviewer có câu trả lời rỗng sẽ báo lỗi. Dòng JSONL dài hơn 64 MB sẽ dừng lượt; cảnh báo giới hạn Claude vẫn được hiển thị.
 

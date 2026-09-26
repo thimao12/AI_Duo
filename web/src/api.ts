@@ -26,6 +26,16 @@ export interface RunSummary {
   createdAt: number;
 }
 
+export interface AgentStatus {
+  claude: string | null;
+  codex: string | null;
+  claudePath: string | null;
+  codexPath: string | null;
+  claudeError: string | null;
+  codexError: string | null;
+  defaultCwd: string;
+}
+
 async function json<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || res.statusText);
@@ -33,7 +43,7 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
-  agents: () => fetch('/api/agents').then((r) => json<{ claude: string | null; codex: string | null; defaultCwd: string }>(r)),
+  agents: () => fetch('/api/agents').then((r) => json<AgentStatus>(r)),
   list: () => fetch('/api/runs').then((r) => json<RunSummary[]>(r)),
   create: (cfg: NewRunRequest) =>
     fetch('/api/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }).then((r) =>

@@ -9,7 +9,7 @@ import { streamSSE } from 'hono/streaming';
 import type { AgentName, Usage } from './agents/index.ts';
 import { runDebate } from './modes/debate.ts';
 import { runPair } from './modes/pair.ts';
-import { resolveBin } from './agents/bins.ts';
+import { resolveBin, type ResolvedBin } from './agents/bins.ts';
 import { paths } from './paths.ts';
 import { autoRoute } from './router/index.ts';
 import { classifyByRules, CONFIDENT } from './router/rules.ts';
@@ -70,6 +70,15 @@ async function parseConfig(body: any): Promise<{ cfg: RunConfig; routeUsage?: Us
   if (body?.mode !== 'debate' && body?.mode !== 'pair' && body?.mode !== 'auto') return 'mode must be "auto", "debate" or "pair"';
   const prompt = String(body.prompt ?? '').trim();
   if (!prompt) return 'prompt is required';
+  for (const name of ['claude', 'codex'] as const) {
+    const value = body.models?.[name];
+    if (value === undefined || value === null) continue;
+    if (typeof value !== 'string') return `models.${name} must be a valid model name`;
+    const model = value.trim();
+    if (model && (!/^[\w.:\/-]{1,64}$/.test(model) || model.startsWith('-'))) {
+      return `Invalid models.${name}: use 1-64 letters, numbers, or . : / _ - and do not start with -`;
+    }
+  }
   const cwd = path.resolve(String(body.cwd ?? '').trim() || paths.defaultCwd);
   if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return `Working directory not found: ${cwd}`;
   if (body.mode === 'auto') {
@@ -98,15 +107,42 @@ function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
   };
 }
 
-function version(bin: string): Promise<string | null> {
+function version(bin: ResolvedBin): Promise<string | null> {
   return new Promise((resolve) =>
-    execFile(bin, ['--version'], { timeout: 15000, windowsHide: true }, (err, out) => resolve(err ? null : out.trim())),
+    execFile(
+      bin.cmd,
+      [...bin.prefixArgs, '--version'],
+      {
+        timeout: 15000,
+        windowsHide: true,
+        shell: false,
+        env: bin.env ? { ...process.env, ...bin.env } : process.env,
+      },
+      (err, out) => resolve(err ? null : out.trim()),
+    ),
   );
 }
 
+async function agentInfo(name: AgentName) {
+  try {
+    const bin = resolveBin(name);
+    return { version: await version(bin), path: bin.resolvedFrom, error: null };
+  } catch (err) {
+    return { version: null, path: null, error: (err as Error).message };
+  }
+}
+
 app.get('/api/agents', async (c) => {
-  const [claude, codex] = await Promise.all([version(resolveBin('claude')), version(resolveBin('codex'))]);
-  return c.json({ claude, codex, defaultCwd: paths.defaultCwd });
+  const [claude, codex] = await Promise.all([agentInfo('claude'), agentInfo('codex')]);
+  return c.json({
+    claude: claude.version,
+    codex: codex.version,
+    claudePath: claude.path,
+    codexPath: codex.path,
+    claudeError: claude.error,
+    codexError: codex.error,
+    defaultCwd: paths.defaultCwd,
+  });
 });
 
 app.get('/api/runs', async (c) => {

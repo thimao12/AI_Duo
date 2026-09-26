@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   api,
   type AgentName,
+  type AgentStatus,
   type NewRunRequest,
   type RoutePreview,
   type RunConfig,
@@ -122,10 +123,7 @@ export default function NewRun({
   onCreated: (id: string) => void;
 }) {
   const [form, setForm] = useState<Form>(loadForm);
-  const [agents, setAgents] = useState<{
-    claude: string | null;
-    codex: string | null;
-  } | null>(null);
+  const [agents, setAgents] = useState<AgentStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<RoutePreview | null>(null);
@@ -155,7 +153,7 @@ export default function NewRun({
         setAgents(a);
         setForm((f) => (f.cwd ? f : { ...f, cwd: a.defaultCwd }));
       })
-      .catch(() => setAgents({ claude: null, codex: null }));
+      .catch(() => setAgents(null));
   }, []);
 
   useEffect(() => {
@@ -196,12 +194,8 @@ export default function NewRun({
         </p>
         {agents && (
           <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-mono text-xs">
-            <span className={agents.claude ? "text-zinc-500" : "text-red-400"}>
-              claude: {agents.claude ?? "not found in PATH"}
-            </span>
-            <span className={agents.codex ? "text-zinc-500" : "text-red-400"}>
-              codex: {agents.codex ?? "not found in PATH"}
-            </span>
+            <AgentStatusLine name="claude" version={agents.claude} path={agents.claudePath} error={agents.claudeError} />
+            <AgentStatusLine name="codex" version={agents.codex} path={agents.codexPath} error={agents.codexError} />
           </p>
         )}
       </div>
@@ -423,6 +417,24 @@ export default function NewRun({
         <span className="text-xs text-zinc-600">Ctrl + Enter</span>
       </div>
     </form>
+  );
+}
+
+function AgentStatusLine({
+  name,
+  version,
+  path,
+  error,
+}: {
+  name: AgentName;
+  version: string | null;
+  path: string | null;
+  error: string | null;
+}) {
+  return (
+    <span title={path ?? undefined} className={version ? "text-zinc-500" : "text-red-400"}>
+      {name}: {version ?? error ?? "not found in PATH"}
+    </span>
   );
 }
 

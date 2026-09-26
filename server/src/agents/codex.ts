@@ -102,11 +102,13 @@ export const codex: AgentAdapter = {
     let state = initialCodexJsonState(o.sessionId);
 
     try {
-      const { code, stderr } = await spawnJsonl(resolveBin('codex'), args, {
+      const bin = resolveBin('codex');
+      const { code, stderr } = await spawnJsonl(bin.cmd, [...bin.prefixArgs, ...args], {
         cwd: o.cwd,
         stdin: o.prompt,
         signal: o.signal,
         timeoutMs: o.timeoutMs ?? 10 * 60_000,
+        env: bin.env ? { ...process.env, ...bin.env } : undefined,
         onRawLine: (line) => o.onEvent({ kind: 'raw', content: line }),
         onJson: (ev) => {
           const result = onJson(ev, state);
