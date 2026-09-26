@@ -70,6 +70,8 @@ export interface RunSummary {
   id: string;
   mode: Run['config']['mode'];
   prompt: string;
+  /** Working directory the run belongs to (groups runs by project). */
+  cwd: string;
   status: Run['status'];
   createdAt: number;
 }
@@ -79,7 +81,7 @@ export async function listRuns(): Promise<RunSummary[]> {
   const out: RunSummary[] = [];
   for (const n of names) {
     const run = await loadRun(n.slice(0, -5));
-    if (run) out.push({ id: run.id, mode: run.config.mode, prompt: run.config.prompt.slice(0, 200), status: run.status, createdAt: run.createdAt });
+    if (run) out.push({ id: run.id, mode: run.config.mode, prompt: run.config.prompt.slice(0, 200), cwd: run.config.cwd, status: run.status, createdAt: run.createdAt });
   }
   return out.sort((a, b) => b.createdAt - a.createdAt);
 }

@@ -23,6 +23,7 @@ export interface RunSummary {
   id: string;
   mode: 'debate' | 'pair';
   prompt: string;
+  cwd: string;
   status: Run['status'];
   createdAt: number;
 }
