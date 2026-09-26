@@ -1,5 +1,6 @@
+import { agentEnv, assertPlanOnly, blockClaudeUntil, claudeOverageMessage } from './billing.ts';
 import { resolveBin } from './bins.ts';
-import { spawnJsonl } from './process.ts';
+import { AbortedError, spawnJsonl } from './process.ts';
 import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult, Usage } from './types.ts';
 
 function permissionArgs(role: Role): string[] {
@@ -49,6 +50,8 @@ export interface ClaudeJsonState {
   streamed: string;
   errorText?: string;
   usage?: Usage;
+  /** Claude switched to extra usage (billed beyond the plan); the turn must stop. */
+  overage?: { resetsAt?: number };
 }
 
 const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
@@ -109,7 +112,10 @@ export function onJson(ev: any, state: ClaudeJsonState): { state: ClaudeJsonStat
       ...(typeof info.utilization === 'number' && { utilization: info.utilization }),
       ...(typeof info.resetsAt === 'number' && { resetsAt: info.resetsAt }),
     } });
-    if (status === 'rejected') next.errorText = `Claude rate limit rejected: ${JSON.stringify(info)}`;
+    if (info.isUsingOverage === true) {
+      next.overage = { resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt : undefined };
+      next.errorText = claudeOverageMessage(next.overage.resetsAt);
+    } else if (status === 'rejected') next.errorText = `Claude rate limit rejected: ${JSON.stringify(info)}`;
     // 'allowed' arrives on nearly every turn; only surface warnings.
     else if (status !== 'allowed') events.push({ kind: 'raw', content: describeRateLimit(status, info) });
   }
@@ -127,19 +133,34 @@ export const claude: AgentAdapter = {
     let state = initialClaudeJsonState(o.sessionId);
 
     const bin = resolveBin('claude');
+    await assertPlanOnly('claude', bin, o.cwd);
+    // Our own abort, so extra usage can stop the CLI mid-turn; the run's cancel still flows through.
+    const stop = new AbortController();
+    const onCancel = () => stop.abort();
+    o.signal.addEventListener('abort', onCancel);
     const { code, stderr } = await spawnJsonl(bin.cmd, [...bin.prefixArgs, ...args], {
       cwd: o.cwd,
       stdin: o.images?.length ? `${o.prompt}\n\nAttached images (use the Read tool to inspect them):\n${o.images.join('\n')}` : o.prompt,
-      signal: o.signal,
+      signal: stop.signal,
       timeoutMs: o.timeoutMs ?? 10 * 60_000,
-      env: bin.env ? { ...process.env, ...bin.env } : undefined,
+      env: agentEnv(bin),
       onRawLine: (line) => o.onEvent({ kind: 'raw', content: line }),
       onJson: (ev) => {
         const result = onJson(ev, state);
         state = result.state;
         for (const event of result.events) o.onEvent(event);
+        if (state.overage && !stop.signal.aborted) {
+          blockClaudeUntil(state.overage.resetsAt);
+          stop.abort();
+        }
       },
-    });
+    })
+      .catch((err) => {
+        // Stopped for extra usage, not by the user: report it as a failure, not a cancel.
+        if (err instanceof AbortedError && state.overage && !o.signal.aborted) throw new Error(state.errorText);
+        throw err;
+      })
+      .finally(() => o.signal.removeEventListener('abort', onCancel));
 
     if (state.errorText) throw new Error(state.errorText);
     if (state.finalText === undefined) {

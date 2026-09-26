@@ -11,6 +11,7 @@ import { streamSSE } from 'hono/streaming';
 import type { AgentName, Usage } from './agents/index.ts';
 import { runDebate } from './modes/debate.ts';
 import { runPair } from './modes/pair.ts';
+import { agentEnv } from './agents/billing.ts';
 import { resolveBin, type ResolvedBin } from './agents/bins.ts';
 import { EFFORT, listModels } from './models.ts';
 import { paths } from './paths.ts';
@@ -157,7 +158,7 @@ function version(bin: ResolvedBin): Promise<string | null> {
         timeout: 15000,
         windowsHide: true,
         shell: false,
-        env: bin.env ? { ...process.env, ...bin.env } : process.env,
+        env: agentEnv(bin),
       },
       (err, out) => resolve(err ? null : out.trim()),
     ),

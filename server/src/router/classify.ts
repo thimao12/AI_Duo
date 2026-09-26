@@ -1,4 +1,5 @@
 import { tmpdir } from 'node:os';
+import { agentEnv, assertPlanOnly } from '../agents/billing.ts';
 import { resolveBin } from '../agents/bins.ts';
 import { claudeUsage } from '../agents/claude.ts';
 import { spawnJsonl } from '../agents/process.ts';
@@ -51,12 +52,14 @@ export const classifyWithHaiku: Classifier = async (prompt, signal) => {
   let result: any;
   try {
     const bin = resolveBin('claude');
+    // Outside the plan the rules' answer is good enough; never pay for routing.
+    await assertPlanOnly('claude', bin, tmpdir());
     await spawnJsonl(bin.cmd, [...bin.prefixArgs, ...HAIKU_ARGS], {
       cwd: tmpdir(),
       stdin: render('route', { prompt: clipped }),
       signal: signal ?? new AbortController().signal,
       timeoutMs: 60_000,
-      env: bin.env ? { ...process.env, ...bin.env } : undefined,
+      env: agentEnv(bin),
       onJson: (ev) => {
         if (ev?.type === 'result') result = ev;
       },

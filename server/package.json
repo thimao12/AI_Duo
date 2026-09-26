@@ -10,6 +10,7 @@
     "test:agent-parsers": "tsx src/agent-parser-smoke.ts",
     "test:desktop-links": "tsx src/desktop-link-smoke.ts",
     "test:security": "tsx src/security-smoke.ts",
+    "test:billing": "tsx src/billing-smoke.ts",
     "test:lifecycle": "tsx src/lifecycle-smoke.ts",
     "test:pair": "tsx src/pair-smoke.ts",
     "test:router": "tsx src/router-smoke.ts",
