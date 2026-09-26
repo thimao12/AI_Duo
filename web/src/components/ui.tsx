@@ -143,7 +143,7 @@ export function Markdown({ children }: { children: string }) {
 }
 
 export function Kbd({ children }: { children: ReactNode }) {
-  return <kbd className="rounded border border-line bg-bg px-1 font-sans text-[10.5px] font-medium text-faint">{children}</kbd>;
+  return <kbd className="rounded border border-line bg-bg px-1 font-sans text-[11.5px] font-medium text-faint">{children}</kbd>;
 }
 
 /* ---- Popover / menu -------------------------------------------------------- */

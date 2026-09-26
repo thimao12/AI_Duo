@@ -229,9 +229,9 @@ body {
   margin-top: 1.4em;
   text-wrap: balance;
 }
-.md h1 { font-size: 1.2rem; }
-.md h2 { font-size: 1.07rem; }
-.md h3, .md h4 { font-size: 0.95rem; }
+/* Weight, not size: agent headings stay on the 14px body step; rank shows in weight and space. */
+.md h1, .md h2 { font-weight: 650; margin-top: 1.6em; }
+.md h3, .md h4 { color: var(--muted); }
 .md > :first-child { margin-top: 0; }
 .md ul { list-style: disc; padding-left: 1.3em; }
 .md ol { list-style: decimal; padding-left: 1.4em; }
