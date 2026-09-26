@@ -98,8 +98,8 @@ function FileBlock({ file, defaultOpen }: { file: FileDiff; defaultOpen: boolean
                   </tr>
                 ) : (
                   <tr key={i} className={ROW[r.type]}>
-                    <td className="w-10 px-1.5 text-right align-top text-faint/70 select-none">{r.old ?? ''}</td>
-                    <td className="w-10 px-1.5 text-right align-top text-faint/70 select-none">{r.new ?? ''}</td>
+                    <td className="w-10 px-1.5 text-right align-top text-faint select-none">{r.old ?? ''}</td>
+                    <td className="w-10 px-1.5 text-right align-top text-faint select-none">{r.new ?? ''}</td>
                     <td className="w-4 text-center align-top select-none">{MARK[r.type]}</td>
                     <td className="pr-3 whitespace-pre">{r.text || ' '}</td>
                   </tr>
