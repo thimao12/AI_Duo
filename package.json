@@ -1,0 +1,16 @@
+{
+  "name": "ai-duo",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n server,web -c yellow,cyan \"pnpm --filter server dev\" \"pnpm --filter web dev\"",
+    "desktop": "pnpm --filter desktop start",
+    "desktop:dist": "pnpm --filter desktop dist",
+    "build": "pnpm --filter web build",
+    "start": "pnpm --filter server start",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

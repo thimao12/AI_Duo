@@ -1,0 +1,41 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
+  --color-claude: #d97757;
+  --color-codex: #10a37f;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-200 antialiased;
+}
+
+/* Markdown rendered from agent output */
+.md {
+  @apply text-[14px] leading-relaxed break-words;
+}
+.md h1, .md h2, .md h3, .md h4 {
+  @apply font-semibold text-zinc-100 mt-4 mb-2;
+}
+.md h1 { @apply text-lg; }
+.md h2 { @apply text-base; }
+.md h3, .md h4 { @apply text-sm; }
+.md p { @apply my-2; }
+.md ul { @apply list-disc pl-5 my-2 space-y-1; }
+.md ol { @apply list-decimal pl-5 my-2 space-y-1; }
+.md a { @apply text-sky-400 underline; }
+.md strong { @apply text-zinc-100; }
+.md blockquote { @apply border-l-2 border-zinc-700 pl-3 text-zinc-400; }
+.md code { @apply font-mono text-[12.5px] bg-zinc-800/80 rounded px-1 py-0.5; }
+.md pre { @apply bg-zinc-900 border border-zinc-800 rounded-md p-3 my-3 overflow-x-auto; }
+.md pre code { @apply bg-transparent p-0; }
+.md table { @apply my-3 text-sm border-collapse block overflow-x-auto; }
+.md th, .md td { @apply border border-zinc-800 px-2 py-1 text-left; }
+.md th { @apply bg-zinc-900; }
+.md hr { @apply border-zinc-800 my-4; }
+.md > :first-child { @apply mt-0; }

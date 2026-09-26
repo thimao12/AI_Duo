@@ -1,0 +1,51 @@
+# AI Duo – Claude × Codex
+
+App web local để **Claude Code** và **Codex** cùng làm việc với nhau. App gọi 2 CLI ở chế độ headless (`claude -p`, `codex exec`), nên dùng luôn subscription/đăng nhập sẵn có trên máy, không cần API key.
+
+## Chế độ
+
+| Mode | Luồng |
+|---|---|
+| **Debate** | Cả 2 đề xuất song song → review chéo N vòng (mỗi con kết thúc bằng `VERDICT: AGREE/REVISE`) → dừng sớm nếu cả 2 cùng AGREE → judge viết **giải pháp cuối**. Agent chỉ được đọc (read-only). |
+| **Pair** | Coder sửa code trong repo → Reviewer đọc diff + chạy test → trả JSON `APPROVE / CHANGES_REQUESTED` → coder sửa tiếp (resume đúng session) → lặp tới khi approve hoặc hết số vòng. **Không tự commit.** |
+
+## Chạy
+
+**App desktop (cửa sổ riêng, không cần browser):**
+
+```bash
+pnpm install
+pnpm desktop        # build rồi mở cửa sổ AI Duo
+pnpm desktop:dist   # đóng gói → desktop/release/AI-Duo-Setup-x.y.z.exe (cài đặt) và AI-Duo-x.y.z-portable.exe
+```
+
+Bản desktop lưu lịch sử phiên ở `%APPDATA%\AI Duo\runs` và prompt ở `%APPDATA%\AI Duo\prompts`. Prompt ở đây sửa được, và app chỉ chép file prompt nào chưa có, nên phần bạn đã sửa sẽ không bị ghi đè.
+
+**Chế độ dev (chạy trong browser, hot reload):**
+
+```bash
+pnpm dev            # server :8787 + web :5173 → mở http://localhost:5173
+```
+
+Yêu cầu: `claude` và `codex` có trong PATH và đã đăng nhập. Có thể đặt đường dẫn khác qua `CLAUDE_BIN` / `CODEX_BIN`.
+
+Smoke test 2 adapter (1 turn + 1 turn resume mỗi CLI): `pnpm --filter server test:agents`
+
+## Quyền của agent
+
+| Vai | Claude | Codex |
+|---|---|---|
+| thinker (debate) | chỉ Read/Grep/Glob/Web | `-s read-only` |
+| coder | `acceptEdits` + Bash/Edit/Write | `-s workspace-write` |
+| reviewer | Bash/Read, cấm Edit/Write | `-s workspace-write` + được dặn không sửa file |
+
+Pair mode chụp snapshot working tree lúc bắt đầu (dùng index tạm, không đụng vào staging của bạn), nên diff cuối chỉ chứa thay đổi do agent tạo ra, kể cả khi repo đang có sẵn thay đổi chưa commit.
+
+## Cấu trúc
+
+- `server/src/agents/` – adapter cho từng CLI (parse JSONL, resume session, kill cả cây process khi huỷ)
+- `server/src/modes/` – orchestrator `debate.ts`, `pair.ts`
+- `server/src/prompts/*.md` – prompt template, sửa trực tiếp được, không cần restart
+- `web/src/` – React UI (stream qua SSE)
+- `desktop/` – Electron: `main.mjs` chạy server (bundle bằng esbuild) ngay trong app và mở cửa sổ; `build.mjs` chuẩn bị `dist/`
+- `data/runs/*.json` – lịch sử các phiên
