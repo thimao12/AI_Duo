@@ -35,7 +35,11 @@ API chỉ nhận request có `Host` là `localhost` hoặc `127.0.0.1`; request 
 
 Yêu cầu: `claude` và `codex` có trong PATH và đã đăng nhập. Có thể đặt đường dẫn khác qua `CLAUDE_BIN` / `CODEX_BIN`.
 
+Lượt của vai thinker/reviewer có câu trả lời rỗng sẽ báo lỗi. Dòng JSONL dài hơn 64 MB sẽ dừng lượt; cảnh báo giới hạn Claude vẫn được hiển thị.
+
 Smoke test 2 adapter (1 turn + 1 turn resume mỗi CLI): `pnpm --filter server test:agents`
+
+Kiểm tra parser JSONL, trạng thái adapter và thông báo lỗi: `pnpm --filter server test:agent-parsers`
 
 Kiểm tra cách mở link file trong desktop: `pnpm --filter server test:desktop-links`
 

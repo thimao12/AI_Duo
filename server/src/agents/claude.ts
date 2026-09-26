@@ -1,6 +1,6 @@
 import { resolveBin } from './bins.ts';
 import { spawnJsonl } from './process.ts';
-import type { AgentAdapter, Role, RunOptions, RunResult } from './types.ts';
+import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult } from './types.ts';
 
 function permissionArgs(role: Role): string[] {
   switch (role) {
@@ -29,6 +29,70 @@ function toolResultText(content: any): string {
   return '';
 }
 
+const WINDOW_LABEL: Record<string, string> = { five_hour: '5 giờ', seven_day: '7 ngày' };
+
+/** e.g. "⚠ Claude quota: đã dùng 75% hạn mức 7 ngày, reset lúc 26/9 21:00" */
+export function describeRateLimit(status: string, info: any): string {
+  const window = WINDOW_LABEL[info.rateLimitType] ?? info.rateLimitType ?? '';
+  const pct = typeof info.utilization === 'number' ? `${Math.round(info.utilization * 100)}% ` : '';
+  const reset =
+    typeof info.resetsAt === 'number'
+      ? `, reset lúc ${new Date(info.resetsAt * 1000).toLocaleString('vi-VN', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+      : '';
+  return `⚠ Claude quota (${status}): đã dùng ${pct}hạn mức ${window}${reset}`.replace(/\s+/g, ' ');
+}
+
+export interface ClaudeJsonState {
+  sessionId?: string;
+  finalText?: string;
+  streamed: string;
+  errorText?: string;
+}
+
+export function initialClaudeJsonState(sessionId?: string): ClaudeJsonState {
+  return { sessionId, streamed: '' };
+}
+
+export function onJson(ev: any, state: ClaudeJsonState): { state: ClaudeJsonState; events: AgentEvent[] } {
+  const next = { ...state };
+  const events: AgentEvent[] = [];
+  if (ev.session_id) next.sessionId = ev.session_id;
+  const topLevel = !ev.parent_tool_use_id;
+
+  if (ev.type === 'stream_event' && topLevel) {
+    const d = ev.event?.delta;
+    if (ev.event?.type === 'content_block_delta' && d?.type === 'text_delta' && d.text) {
+      next.streamed += d.text;
+      events.push({ kind: 'text_delta', content: d.text });
+    } else if (ev.event?.type === 'content_block_start' && ev.event.content_block?.type === 'text' && next.streamed) {
+      // new text block after a tool call: keep blocks visually separated
+      next.streamed += '\n\n';
+      events.push({ kind: 'text_delta', content: '\n\n' });
+    }
+  } else if (ev.type === 'assistant') {
+    for (const block of ev.message?.content ?? []) {
+      if (block.type === 'tool_use') events.push({ kind: 'tool', content: `${block.name}: ${summarizeInput(block.input)}` });
+    }
+  } else if (ev.type === 'user' && topLevel) {
+    for (const block of ev.message?.content ?? []) {
+      if (block?.type === 'tool_result') {
+        const text = toolResultText(block.content);
+        if (text) events.push({ kind: 'tool_result', content: text.length > 4000 ? text.slice(0, 4000) + '\n…' : text });
+      }
+    }
+  } else if (ev.type === 'result') {
+    if (ev.is_error) next.errorText = typeof ev.result === 'string' ? ev.result : `Claude error (${ev.subtype})`;
+    else if (typeof ev.result === 'string') next.finalText = ev.result;
+  } else if (ev.type === 'rate_limit_event') {
+    const info = ev.rate_limit_info ?? {};
+    const status = info.status ?? ev.status;
+    if (status === 'rejected') next.errorText = `Claude rate limit rejected: ${JSON.stringify(info)}`;
+    // 'allowed' arrives on nearly every turn; only surface warnings.
+    else if (status !== 'allowed') events.push({ kind: 'raw', content: describeRateLimit(status, info) });
+  }
+  return { state: next, events };
+}
+
 export const claude: AgentAdapter = {
   name: 'claude',
   async run(o: RunOptions): Promise<RunResult> {
@@ -36,10 +100,7 @@ export const claude: AgentAdapter = {
     if (o.model) args.push('--model', o.model);
     if (o.sessionId) args.push('--resume', o.sessionId);
 
-    let sessionId = o.sessionId;
-    let finalText: string | undefined;
-    let streamed = '';
-    let errorText: string | undefined;
+    let state = initialClaudeJsonState(o.sessionId);
 
     const { code, stderr } = await spawnJsonl(resolveBin('claude'), args, {
       cwd: o.cwd,
@@ -48,45 +109,17 @@ export const claude: AgentAdapter = {
       timeoutMs: o.timeoutMs ?? 10 * 60_000,
       onRawLine: (line) => o.onEvent({ kind: 'raw', content: line }),
       onJson: (ev) => {
-        if (ev.session_id) sessionId = ev.session_id;
-        const topLevel = !ev.parent_tool_use_id;
-
-        if (ev.type === 'stream_event' && topLevel) {
-          const d = ev.event?.delta;
-          if (ev.event?.type === 'content_block_delta' && d?.type === 'text_delta' && d.text) {
-            streamed += d.text;
-            o.onEvent({ kind: 'text_delta', content: d.text });
-          } else if (ev.event?.type === 'content_block_start' && ev.event.content_block?.type === 'text' && streamed) {
-            // new text block after a tool call: keep blocks visually separated
-            streamed += '\n\n';
-            o.onEvent({ kind: 'text_delta', content: '\n\n' });
-          }
-        } else if (ev.type === 'assistant') {
-          for (const block of ev.message?.content ?? []) {
-            if (block.type === 'tool_use') {
-              o.onEvent({ kind: 'tool', content: `${block.name}: ${summarizeInput(block.input)}` });
-            }
-          }
-        } else if (ev.type === 'user' && topLevel) {
-          for (const block of ev.message?.content ?? []) {
-            if (block?.type === 'tool_result') {
-              const text = toolResultText(block.content);
-              if (text) o.onEvent({ kind: 'tool_result', content: text.length > 4000 ? text.slice(0, 4000) + '\n…' : text });
-            }
-          }
-        } else if (ev.type === 'result') {
-          if (ev.is_error) errorText = typeof ev.result === 'string' ? ev.result : `Claude error (${ev.subtype})`;
-          else if (typeof ev.result === 'string') finalText = ev.result;
-        }
-        // system / rate_limit_event / other: ignored on purpose
+        const result = onJson(ev, state);
+        state = result.state;
+        for (const event of result.events) o.onEvent(event);
       },
     });
 
-    if (errorText) throw new Error(errorText);
-    if (finalText === undefined) {
+    if (state.errorText) throw new Error(state.errorText);
+    if (state.finalText === undefined) {
       if (code !== 0) throw new Error(`claude exited with code ${code}: ${stderr.trim().slice(-1500)}`);
-      finalText = streamed;
+      state.finalText = state.streamed;
     }
-    return { finalText, sessionId };
+    return { finalText: state.finalText, sessionId: state.sessionId };
   },
 };

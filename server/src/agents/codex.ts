@@ -3,10 +3,74 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveBin } from './bins.ts';
 import { spawnJsonl } from './process.ts';
-import type { AgentAdapter, Role, RunOptions, RunResult } from './types.ts';
+import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult } from './types.ts';
 
 function sandboxFor(role: Role): 'read-only' | 'workspace-write' {
   return role === 'thinker' ? 'read-only' : 'workspace-write';
+}
+
+export interface CodexJsonState {
+  sessionId?: string;
+  messages: string[];
+  completed: boolean;
+  failed: boolean;
+  lastError?: string;
+}
+
+export function initialCodexJsonState(sessionId?: string): CodexJsonState {
+  return { sessionId, messages: [], completed: false, failed: false };
+}
+
+export function onJson(ev: any, state: CodexJsonState): { state: CodexJsonState; events: AgentEvent[] } {
+  const next = { ...state, messages: [...state.messages] };
+  const events: AgentEvent[] = [];
+  const item = ev.item;
+  switch (ev.type) {
+    case 'thread.started':
+      next.sessionId = ev.thread_id;
+      break;
+    case 'item.started':
+      if (item?.type === 'command_execution') events.push({ kind: 'tool', content: `Shell: ${item.command}` });
+      else if (item?.type === 'mcp_tool_call') events.push({ kind: 'tool', content: `MCP: ${item.server}/${item.tool}` });
+      else if (item?.type === 'web_search') events.push({ kind: 'tool', content: `WebSearch: ${item.query ?? ''}` });
+      break;
+    case 'item.completed':
+      if (item?.type === 'agent_message' && item.text) {
+        next.messages.push(item.text);
+        events.push({ kind: 'text', content: item.text });
+      } else if (item?.type === 'command_execution') {
+        const out = String(item.aggregated_output ?? '');
+        events.push({
+          kind: 'tool_result',
+          content: `exit ${item.exit_code ?? '?'}\n${out.length > 4000 ? out.slice(0, 4000) + '\n…' : out}`,
+        });
+      } else if (item?.type === 'file_change') {
+        const changes = (item.changes ?? []).map((c: any) => `${c.kind ?? 'edit'} ${c.path}`).join('\n');
+        events.push({ kind: 'tool', content: `Edit files:\n${changes}` });
+      } else if (item?.type === 'error') {
+        events.push({ kind: 'error', content: item.message ?? 'error' });
+      }
+      break;
+    case 'turn.completed':
+      next.completed = true;
+      break;
+    case 'turn.failed':
+      next.failed = true;
+      next.lastError = ev.error?.message ?? 'Codex turn failed';
+      break;
+    case 'error':
+      next.lastError = ev.message ?? 'Codex error';
+      events.push({ kind: 'error', content: next.lastError! });
+      break;
+  }
+  return { state: next, events };
+}
+
+export function codexError(state: CodexJsonState, code: number, stderr: string): string | undefined {
+  if (state.failed) return state.lastError ?? 'Codex turn failed';
+  if (!state.completed && (state.lastError || code !== 0)) {
+    return state.lastError ?? `codex exited with code ${code}: ${stderr.trim().slice(-1500)}`;
+  }
 }
 
 export const codex: AgentAdapter = {
@@ -24,9 +88,7 @@ export const codex: AgentAdapter = {
     if (o.sessionId) args.push(o.sessionId);
     args.push('-'); // prompt from stdin
 
-    let sessionId = o.sessionId;
-    const messages: string[] = [];
-    let errorText: string | undefined;
+    let state = initialCodexJsonState(o.sessionId);
 
     try {
       const { code, stderr } = await spawnJsonl(resolveBin('codex'), args, {
@@ -36,48 +98,17 @@ export const codex: AgentAdapter = {
         timeoutMs: o.timeoutMs ?? 10 * 60_000,
         onRawLine: (line) => o.onEvent({ kind: 'raw', content: line }),
         onJson: (ev) => {
-          const item = ev.item;
-          switch (ev.type) {
-            case 'thread.started':
-              sessionId = ev.thread_id;
-              break;
-            case 'item.started':
-              if (item?.type === 'command_execution') o.onEvent({ kind: 'tool', content: `Shell: ${item.command}` });
-              else if (item?.type === 'mcp_tool_call') o.onEvent({ kind: 'tool', content: `MCP: ${item.server}/${item.tool}` });
-              else if (item?.type === 'web_search') o.onEvent({ kind: 'tool', content: `WebSearch: ${item.query ?? ''}` });
-              break;
-            case 'item.completed':
-              if (item?.type === 'agent_message' && item.text) {
-                messages.push(item.text);
-                o.onEvent({ kind: 'text', content: item.text });
-              } else if (item?.type === 'command_execution') {
-                const out = String(item.aggregated_output ?? '');
-                o.onEvent({
-                  kind: 'tool_result',
-                  content: `exit ${item.exit_code ?? '?'}\n${out.length > 4000 ? out.slice(0, 4000) + '\n…' : out}`,
-                });
-              } else if (item?.type === 'file_change') {
-                const changes = (item.changes ?? []).map((c: any) => `${c.kind ?? 'edit'} ${c.path}`).join('\n');
-                o.onEvent({ kind: 'tool', content: `Edit files:\n${changes}` });
-              } else if (item?.type === 'error') {
-                o.onEvent({ kind: 'error', content: item.message ?? 'error' });
-              }
-              break;
-            case 'turn.failed':
-              errorText = ev.error?.message ?? 'Codex turn failed';
-              break;
-            case 'error':
-              errorText = ev.message ?? 'Codex error';
-              break;
-          }
+          const result = onJson(ev, state);
+          state = result.state;
+          for (const event of result.events) o.onEvent(event);
         },
       });
 
-      if (errorText) throw new Error(errorText);
+      const error = codexError(state, code, stderr);
+      if (error) throw new Error(error);
       let finalText = await readFile(lastFile, 'utf8').catch(() => '');
-      if (!finalText) finalText = messages.join('\n\n');
-      if (!finalText && code !== 0) throw new Error(`codex exited with code ${code}: ${stderr.trim().slice(-1500)}`);
-      return { finalText, sessionId };
+      if (!finalText) finalText = state.messages.join('\n\n');
+      return { finalText, sessionId: state.sessionId };
     } finally {
       rm(dir, { recursive: true, force: true }).catch(() => {});
     }

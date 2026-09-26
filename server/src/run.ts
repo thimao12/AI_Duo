@@ -21,6 +21,23 @@ export interface TurnResult {
   verdict?: Verdict;
 }
 
+export function classifyError(msg: string): string {
+  let hint: string | undefined;
+  // Messages can embed long stderr, so match only the launcher failure and whole status codes.
+  if (/Failed to start|spawn \S+ ENOENT/i.test(msg)) hint = 'Không tìm thấy CLI, đặt CLAUDE_BIN/CODEX_BIN';
+  else if (/usage limit|rate limit|quota|\b429\b/i.test(msg)) hint = 'Hết quota, thử lại sau hoặc đổi model';
+  else if (/not logged in|unauthorized|\b401\b/i.test(msg)) hint = 'Chạy `claude` / `codex login`';
+  else if (/timed out/i.test(msg)) hint = 'Tăng Giới hạn mỗi lượt';
+  return hint ? `${msg}\n${hint}` : msg;
+}
+
+export function validateTurnOutput(agent: AgentName, role: Role, finalText: string) {
+  if ((role === 'thinker' || role === 'reviewer') && finalText.trim() === '') {
+    const name = agent === 'claude' ? 'Claude' : 'Codex';
+    throw new Error(`${name} trả về câu trả lời rỗng`);
+  }
+}
+
 export class RunContext {
   readonly run: Run;
   readonly abort = new AbortController();
@@ -125,6 +142,7 @@ export class RunContext {
         timeoutMs: (this.run.config.turnTimeoutMin || 30) * 60_000,
         onEvent: (e) => this.pushEvent(m, e),
       });
+      validateTurnOutput(t.agent, t.role, res.finalText);
       if (key && res.sessionId) this.sessions.set(key, res.sessionId);
       // Codex delivers whole messages; if nothing streamed, make sure the final text is shown.
       if (!m.parts.some((p) => p.kind === 'text') && res.finalText) this.pushEvent(m, { kind: 'text', content: res.finalText });
@@ -135,10 +153,12 @@ export class RunContext {
       // An internal abort means another turn failed. Leave this message running so
       // finish() can mark it as stopped without reporting a user cancellation.
       if (err instanceof AbortedError && !this.userCancelled) throw err;
-      const msg = this.userCancelled && err instanceof AbortedError ? 'Cancelled' : (err as Error).message;
+      const rawMsg = this.userCancelled && err instanceof AbortedError ? 'Cancelled' : (err as Error).message;
+      const msg = classifyError(rawMsg);
       this.pushEvent(m, { kind: 'error', content: msg });
       this.endMessage(m, 'error');
-      throw err;
+      if (msg === rawMsg) throw err;
+      throw new Error(msg, { cause: err });
     }
   }
 
