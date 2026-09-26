@@ -3,10 +3,34 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
     <title>AI Duo</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='12' cy='16' r='9' fill='%23d97757'/><circle cx='20' cy='16' r='9' fill='%2310a37f' fill-opacity='.85'/></svg>" />
+    <script>
+      // Apply a saved light/dark choice before first paint so the window never flashes.
+      try {
+        var t = localStorage.getItem('ai-duo:theme');
+        if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    </script>
   </head>
   <body>
+    <!--
+      THESIS: A calm operator's desk for two agents. One quiet column shows progress at a glance and opens
+      detail on demand. It refuses the dashboard-of-cards and the side-by-side "versus" layout.
+      OWN-WORLD: The Codex-desktop grammar, as the user requested. Neutral greys, a slightly darker
+      sidebar, hairline borders, a rounded composer with chip controls, round primary send, system UI
+      type, mono only for code and data. Colour is reserved for state and for the two agents
+      (Claude #d97757, Codex #10a37f), always paired with their names. Light and dark.
+      STORY: The user sees which step is running, who is working and what the verdict was. They open
+      reasoning, tool output or the diff only when they want to, then start the next task from the
+      same composer.
+      FIRST VIEWPORT: Project-grouped thread sidebar on the left (about 264px). Centred heading plus a
+      large composer as the only primary action. In a thread: top bar with title, status and Stop;
+      a single conversation column (max 760px); composer docked at the bottom; changes panel on the right.
+      FORM: Canon, pinned by the user ("giống Codex app desktop"); seed key: user-pinned, no roll.
+      FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
+    -->
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

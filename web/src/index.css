@@ -1,41 +1,264 @@
 @import 'tailwindcss';
 
-@theme {
-  --font-sans: 'Inter', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'Cascadia Code', Consolas, monospace;
-  --color-claude: #d97757;
-  --color-codex: #10a37f;
+/* Dark variant follows the resolved theme: data-theme wins, otherwise the OS preference. */
+@custom-variant dark {
+  &:where([data-theme='dark'], [data-theme='dark'] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme='light']), :root:not([data-theme='light']) *) {
+      @slot;
+    }
+  }
 }
 
+/* ---- Semantic tokens ------------------------------------------------------ */
+/* Light is the base; dark overrides below. Agent hues keep one identity, with a
+   darker/lighter text variant so names stay ≥4.5:1 on both grounds. */
 :root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --sidebar: #f6f6f7;
+  --surface: #f3f3f5;
+  --surface-2: #e9e9ec;
+  --line: #e4e4e8;
+  --line-strong: #d1d1d7;
+  --fg: #1a1a1d;
+  --muted: #55555d;
+  --faint: #64646c;
+  --primary: #1a1a1d;
+  --primary-fg: #ffffff;
+  --focus: #2a63c9;
+  --ok: #17803d;
+  --warn: #a35a00;
+  --danger: #c8322b;
+  --info: #2a63c9;
+  --claude: #d97757;
+  --claude-fg: #b0502c;
+  --codex: #10a37f;
+  --codex-fg: #0a7a5e;
+  --add-bg: rgb(23 128 61 / 0.1);
+  --add-fg: #125f2e;
+  --del-bg: rgb(200 50 43 / 0.09);
+  --del-fg: #9b2620;
+  --shadow: 0 1px 2px rgb(20 20 30 / 0.05), 0 10px 28px -14px rgb(20 20 30 / 0.18);
+  --shadow-pop: 0 4px 10px -2px rgb(20 20 30 / 0.1), 0 16px 40px -12px rgb(20 20 30 / 0.22);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+    --bg: #17171a;
+    --sidebar: #111113;
+    --surface: #202024;
+    --surface-2: #2a2a2f;
+    --line: #2b2b30;
+    --line-strong: #3b3b42;
+    --fg: #ececf0;
+    --muted: #a8a8b2;
+    --faint: #9a9aa4;
+    --primary: #ececf0;
+    --primary-fg: #17171a;
+    --focus: #6a9cf5;
+    --ok: #4ccb7b;
+    --warn: #f0b04a;
+    --danger: #f2736b;
+    --info: #6a9cf5;
+    --claude-fg: #e8916f;
+    --codex-fg: #3fcca0;
+    --add-bg: rgb(76 203 123 / 0.12);
+    --add-fg: #8fe0ab;
+    --del-bg: rgb(242 115 107 / 0.12);
+    --del-fg: #f8a39d;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -14px rgb(0 0 0 / 0.6);
+    --shadow-pop: 0 4px 12px -2px rgb(0 0 0 / 0.4), 0 18px 44px -12px rgb(0 0 0 / 0.7);
+  }
+}
+
+:root[data-theme='dark'] {
   color-scheme: dark;
+  --bg: #17171a;
+  --sidebar: #111113;
+  --surface: #202024;
+  --surface-2: #2a2a2f;
+  --line: #2b2b30;
+  --line-strong: #3b3b42;
+  --fg: #ececf0;
+  --muted: #a8a8b2;
+  --faint: #9a9aa4;
+  --primary: #ececf0;
+  --primary-fg: #17171a;
+  --focus: #6a9cf5;
+  --ok: #4ccb7b;
+  --warn: #f0b04a;
+  --danger: #f2736b;
+  --info: #6a9cf5;
+  --claude-fg: #e8916f;
+  --codex-fg: #3fcca0;
+  --add-bg: rgb(76 203 123 / 0.12);
+  --add-fg: #8fe0ab;
+  --del-bg: rgb(242 115 107 / 0.12);
+  --del-fg: #f8a39d;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 12px 32px -14px rgb(0 0 0 / 0.6);
+  --shadow-pop: 0 4px 12px -2px rgb(0 0 0 / 0.4), 0 18px 44px -12px rgb(0 0 0 / 0.7);
+}
+
+@theme inline {
+  --font-sans: system-ui, 'Segoe UI Variable Text', 'Segoe UI', -apple-system, 'Helvetica Neue', sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'Cascadia Mono', 'SF Mono', Consolas, monospace;
+
+  --color-bg: var(--bg);
+  --color-sidebar: var(--sidebar);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-primary: var(--primary);
+  --color-primary-fg: var(--primary-fg);
+  --color-focus: var(--focus);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-danger: var(--danger);
+  --color-info: var(--info);
+  --color-claude: var(--claude);
+  --color-claude-fg: var(--claude-fg);
+  --color-codex: var(--codex);
+  --color-codex-fg: var(--codex-fg);
+  --color-add-bg: var(--add-bg);
+  --color-add-fg: var(--add-fg);
+  --color-del-bg: var(--del-bg);
+  --color-del-fg: var(--del-fg);
+
+  --shadow-card: var(--shadow);
+  --shadow-pop: var(--shadow-pop);
+}
+
+/* ---- Base ------------------------------------------------------------------ */
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
-  @apply bg-zinc-950 text-zinc-200 antialiased;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  caret-color: var(--fg);
+  font-variant-numeric: tabular-nums;
 }
 
-/* Markdown rendered from agent output */
+::selection {
+  background: color-mix(in srgb, var(--focus) 28%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Thin palette scrollbars with no arrow buttons. The webkit pseudos are used on purpose:
+   in Chromium ≥121 `scrollbar-width`/`scrollbar-color` would override them and bring back
+   the Windows arrow buttons. */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--faint);
+}
+
+/* The user's prompt, rendered as markdown at bubble scale. */
+.prompt-md .md { font-size: 14px; line-height: 1.6; }
+.prompt-md .md h1, .prompt-md .md h2, .prompt-md .md h3, .prompt-md .md h4 { font-size: 14px; margin-top: 0.9em; }
+.prompt-md .md code, .prompt-md .md pre { background: var(--bg); }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* "Đang suy nghĩ…": a slow breathing fade signals that the turn is alive. */
+.thinking {
+  color: var(--faint);
+  animation: breathe 1.8s ease-in-out infinite;
+}
+@keyframes breathe {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+/* ---- Markdown from agent output ------------------------------------------- */
 .md {
-  @apply text-[14px] leading-relaxed break-words;
+  font-size: 14px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+  color: var(--fg);
 }
+.md > * + * { margin-top: 0.7em; }
 .md h1, .md h2, .md h3, .md h4 {
-  @apply font-semibold text-zinc-100 mt-4 mb-2;
+  font-weight: 600;
+  line-height: 1.3;
+  margin-top: 1.4em;
+  text-wrap: balance;
 }
-.md h1 { @apply text-lg; }
-.md h2 { @apply text-base; }
-.md h3, .md h4 { @apply text-sm; }
-.md p { @apply my-2; }
-.md ul { @apply list-disc pl-5 my-2 space-y-1; }
-.md ol { @apply list-decimal pl-5 my-2 space-y-1; }
-.md a { @apply text-sky-400 underline; }
-.md strong { @apply text-zinc-100; }
-.md blockquote { @apply border-l-2 border-zinc-700 pl-3 text-zinc-400; }
-.md code { @apply font-mono text-[12.5px] bg-zinc-800/80 rounded px-1 py-0.5; }
-.md pre { @apply bg-zinc-900 border border-zinc-800 rounded-md p-3 my-3 overflow-x-auto; }
-.md pre code { @apply bg-transparent p-0; }
-.md table { @apply my-3 text-sm border-collapse block overflow-x-auto; }
-.md th, .md td { @apply border border-zinc-800 px-2 py-1 text-left; }
-.md th { @apply bg-zinc-900; }
-.md hr { @apply border-zinc-800 my-4; }
-.md > :first-child { @apply mt-0; }
+.md h1 { font-size: 1.2rem; }
+.md h2 { font-size: 1.07rem; }
+.md h3, .md h4 { font-size: 0.95rem; }
+.md > :first-child { margin-top: 0; }
+.md ul { list-style: disc; padding-left: 1.3em; }
+.md ol { list-style: decimal; padding-left: 1.4em; }
+.md li + li { margin-top: 0.25em; }
+.md li::marker { color: var(--faint); }
+.md a { color: var(--info); text-decoration: underline; text-underline-offset: 2px; text-decoration-thickness: 1px; }
+.md strong { font-weight: 600; }
+.md blockquote { border-left: 2px solid var(--line-strong); padding-left: 0.85em; color: var(--muted); }
+.md code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 0.08em 0.35em;
+}
+.md pre {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.8em 1em;
+  overflow-x: auto;
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+.md pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+.md table { display: block; overflow-x: auto; border-collapse: collapse; font-size: 13px; }
+.md th, .md td { border: 1px solid var(--line); padding: 0.35em 0.65em; text-align: left; vertical-align: top; }
+.md th { background: var(--surface); font-weight: 600; }
+.md hr { border: 0; border-top: 1px solid var(--line); margin: 1.4em 0; }
