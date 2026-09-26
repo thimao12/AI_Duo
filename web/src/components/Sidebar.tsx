@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { ChevronRight, ExternalLink, Monitor, Moon, MoreHorizontal, Pencil, Search, SquarePen, Sun, Trash2, X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { ChevronRight, Monitor, Moon, MoreHorizontal, PanelLeftClose, Pencil, Search, SquarePen, Sun, Trash2, X } from 'lucide-react';
 import { api, type AgentStatus, type RunSummary } from '../api.ts';
 import type { ThemePref } from '../theme.ts';
 import { basename, Kbd, Spinner, timeAgo, titleOf } from './ui.tsx';
@@ -20,11 +20,89 @@ const THEME: Record<ThemePref, { icon: typeof Sun; label: string }> = {
   dark: { icon: Moon, label: 'Tối' },
 };
 
+/** Every row leads with a 16px slot (icon, dot or chevron), so all sidebar labels start on one column. */
+const slot = 'grid size-4 shrink-0 place-items-center';
+
 function StatusMark({ status }: { status: RunSummary['status'] }) {
-  if (status === 'running') return <Spinner className="size-3.5 text-info" />;
+  if (status === 'running') return <span className={slot}><Spinner className="size-3.5 text-info" /></span>;
   const cls = status === 'error' ? 'bg-danger' : status === 'cancelled' ? 'bg-faint/60' : 'bg-transparent';
-  return <span aria-hidden className={`mx-[3px] size-2 shrink-0 rounded-full ${cls}`} />;
+  return <span aria-hidden className={slot}><span className={`size-2 rounded-full ${cls}`} /></span>;
 }
+
+/**
+ * Floating menu for one session, pinned to its ⋯ button. Fixed-positioned (and rendered outside the
+ * aside, whose translate would otherwise trap it) so the scrolling list never clips or shifts it.
+ */
+function SessionMenu({ anchor, label, onDismiss, children }: { anchor: HTMLElement; label: string; onDismiss: () => void; children: ReactNode }) {
+  const panel = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+  // Open below the button, right edges aligned; flip above when the window runs out. Re-place when
+  // the content changes size (menu → rename form → delete confirm).
+  useLayoutEffect(() => {
+    const el = panel.current;
+    if (!el) return;
+    const place = () => {
+      const a = anchor.getBoundingClientRect();
+      const margin = 8;
+      const below = a.bottom + 4 + el.offsetHeight <= window.innerHeight - margin;
+      setPos({
+        top: below ? a.bottom + 4 : Math.max(margin, a.top - 4 - el.offsetHeight),
+        left: Math.min(window.innerWidth - margin - el.offsetWidth, Math.max(margin, a.right - el.offsetWidth)),
+      });
+    };
+    place();
+    const ro = new ResizeObserver(place);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [anchor]);
+
+  useEffect(() => {
+    panel.current?.querySelector<HTMLElement>('button, input')?.focus();
+  }, []);
+
+  useEffect(() => {
+    const outside = (t: EventTarget | null) => !panel.current?.contains(t as Node);
+    const onDown = (e: PointerEvent) => {
+      // The ⋯ button toggles on its own click.
+      if (outside(e.target) && !anchor.contains(e.target as Node)) onDismiss();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      onDismiss();
+      anchor.focus();
+    };
+    // A pinned menu would drift away from its row, so any scroll or resize closes it.
+    const onScroll = (e: Event) => {
+      if (outside(e.target)) onDismiss();
+    };
+    document.addEventListener('pointerdown', onDown);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('resize', onDismiss);
+    return () => {
+      document.removeEventListener('pointerdown', onDown);
+      document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('resize', onDismiss);
+    };
+  }, [anchor, onDismiss]);
+
+  return (
+    <div
+      ref={panel}
+      role="menu"
+      aria-label={label}
+      style={pos ?? { top: 0, left: 0, visibility: 'hidden' }}
+      className="fixed z-50 w-56 rounded-xl border border-line bg-bg p-1 shadow-pop"
+    >
+      {children}
+    </div>
+  );
+}
+
+const menuRow = 'flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors hover:bg-surface focus-visible:bg-surface focus-visible:outline-none';
 
 interface SidebarProps {
   runs: RunSummary[];
@@ -35,12 +113,16 @@ interface SidebarProps {
   theme: { pref: ThemePref; cycle: () => void };
   open: boolean;
   onClose: () => void;
+  /** Docked (wide) sidebar hidden by the user. */
+  hidden: boolean;
+  onHide: () => void;
 }
 
-export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, theme, open, onClose }: SidebarProps) {
+export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, theme, open, onClose, hidden, onHide }: SidebarProps) {
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState(loadCollapsed);
   const [menuId, setMenuId] = useState<string | null>(null);
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftTitle, setDraftTitle] = useState('');
   const [confirmId, setConfirmId] = useState<string | null>(null);
@@ -63,7 +145,8 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
     return () => { mounted = false; clearInterval(timer); };
   }, []);
 
-  const closeActions = () => { setMenuId(null); setEditingId(null); setConfirmId(null); setActionError(null); };
+  const closeActions = () => { setMenuId(null); setMenuAnchor(null); setEditingId(null); setConfirmId(null); setActionError(null); };
+  const menuRun = menuId ? runs.find((r) => r.id === menuId) : undefined;
   const rename = async (id: string) => {
     if (!draftTitle.trim() || pending) return;
     setPending(true);
@@ -111,17 +194,21 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
         aria-label="Danh sách phiên"
         className={`fixed inset-y-0 left-0 z-40 flex w-[264px] flex-col border-r border-line bg-sidebar transition-transform duration-200 ease-out md:static md:z-auto md:translate-x-0 ${
           open ? 'translate-x-0 shadow-pop' : '-translate-x-full'
-        }`}
+        } ${hidden ? 'md:hidden' : ''}`}
       >
-        <div className="app-drag flex h-12 shrink-0 items-center gap-2 px-4">
-          <span aria-hidden className="flex">
-            <span className="size-3 rounded-full bg-claude" />
-            <span className="-ml-1.5 size-3 rounded-full bg-codex/90" />
+        <div className="app-drag flex h-12 shrink-0 items-center gap-2.5 px-4.5">
+          <span aria-hidden className="flex w-4">
+            <span className="size-2.5 rounded-full bg-claude" />
+            <span className="-ml-1 size-2.5 rounded-full bg-codex/90" />
           </span>
           <span className="text-[14px] font-semibold tracking-tight">AI Duo</span>
-          <button type="button" onClick={onClose} className="ml-auto grid size-7 place-items-center rounded-md text-muted hover:bg-surface-2 md:hidden">
+          <button type="button" onClick={onClose} className="-mr-1.5 ml-auto grid size-7 place-items-center rounded-md text-muted hover:bg-surface-2 md:hidden">
             <X aria-hidden className="size-4" />
             <span className="sr-only">Đóng danh sách</span>
+          </button>
+          <button type="button" onClick={onHide} title="Ẩn danh sách phiên (Ctrl B)" className="-mr-1.5 ml-auto hidden size-7 place-items-center rounded-md text-muted hover:bg-surface-2 hover:text-fg md:grid">
+            <PanelLeftClose aria-hidden className="size-4" />
+            <span className="sr-only">Ẩn danh sách phiên</span>
           </button>
         </div>
 
@@ -157,9 +244,11 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
                   aria-expanded={!isCollapsed}
                   onClick={() => toggle(cwd)}
                   title={cwd}
-                  className="group flex h-7 w-full items-center gap-1.5 rounded-md px-2.5 text-left text-[12px] font-medium text-faint transition-colors hover:text-fg"
+                  className="group flex h-7 w-full items-center gap-2.5 rounded-md px-2.5 text-left text-[12px] font-medium text-faint transition-colors hover:text-fg"
                 >
-                  <ChevronRight aria-hidden className={`size-3 shrink-0 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
+                  <span className={slot}>
+                    <ChevronRight aria-hidden className={`size-3 transition-transform ${isCollapsed ? '' : 'rotate-90'}`} />
+                  </span>
                   <span className="truncate">{basename(cwd)}</span>
                   <span className="ml-auto text-[11px] opacity-0 transition-opacity group-hover:opacity-100">{items.length}</span>
                 </button>
@@ -167,45 +256,38 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
                   <ul className="space-y-px">
                     {items.map((r) => (
                       <li key={r.id} className="group/session">
-                        <div className={`flex h-8 items-center rounded-lg ${r.id === activeId ? 'bg-surface-2' : 'hover:bg-surface-2'}`}>
+                        <div className={`relative flex h-8 items-center rounded-lg ${r.id === activeId ? 'bg-surface-2' : 'hover:bg-surface-2'}`}>
                           <button
                             type="button"
                             onClick={() => { closeActions(); onOpen(r.id); }}
                             aria-current={r.id === activeId ? 'page' : undefined}
                             title={r.title || r.prompt}
-                            className={`flex h-8 min-w-0 flex-1 items-center gap-2.5 rounded-lg pl-2.5 text-left text-[13px] ${r.id === activeId ? 'text-fg' : 'text-muted hover:text-fg'}`}
+                            className={`flex h-8 min-w-0 flex-1 items-center gap-2.5 rounded-lg pl-2.5 text-left text-[13px] ${menuId === r.id ? 'pr-9' : 'pr-9 md:pr-2.5 md:group-hover/session:pr-9 md:group-focus-within/session:pr-9'} ${r.id === activeId ? 'text-fg' : 'text-muted hover:text-fg'}`}
                           >
                             <StatusMark status={r.status} />
                             <span className="min-w-0 flex-1 truncate">{r.title || titleOf(r.prompt)}</span>
                             {r.status === 'running' ? (
                               <span className="shrink-0 text-[11.5px] font-medium text-info">Đang chạy</span>
                             ) : (
-                              <span className={`hidden shrink-0 text-[11.5px] group-hover/session:hidden group-focus-within/session:hidden md:inline ${r.id === activeId ? 'text-muted' : 'text-faint'}`}>{timeAgo(r.createdAt)}</span>
+                              <span className={`hidden shrink-0 text-[11.5px] ${menuId === r.id ? '' : 'group-hover/session:hidden group-focus-within/session:hidden md:inline'} ${r.id === activeId ? 'text-muted' : 'text-faint'}`}>{timeAgo(r.createdAt)}</span>
                             )}
                           </button>
                           <button
                             type="button"
                             aria-label={`Tùy chọn phiên ${r.title || titleOf(r.prompt)}`}
                             aria-expanded={menuId === r.id}
-                            onClick={() => { setMenuId(menuId === r.id ? null : r.id); setEditingId(null); setConfirmId(null); setActionError(null); }}
-                            className={`mr-1 grid size-7 shrink-0 place-items-center rounded-md text-muted hover:bg-surface hover:text-fg focus-visible:opacity-100 ${menuId === r.id ? 'opacity-100' : 'opacity-100 md:opacity-0 md:group-hover/session:opacity-100 md:group-focus-within/session:opacity-100'}`}
+                            aria-haspopup="menu"
+                            onClick={(e) => {
+                              if (menuId === r.id) return closeActions();
+                              closeActions();
+                              setMenuId(r.id);
+                              setMenuAnchor(e.currentTarget);
+                            }}
+                            className={`absolute top-0.5 right-1 grid size-7 place-items-center rounded-md text-muted hover:bg-surface hover:text-fg focus-visible:opacity-100 ${menuId === r.id ? 'opacity-100' : 'opacity-100 md:opacity-0 md:group-hover/session:opacity-100 md:group-focus-within/session:opacity-100'}`}
                           >
                             <MoreHorizontal aria-hidden className="size-4" />
                           </button>
                         </div>
-                        {menuId === r.id && <div className="mx-2 my-1 rounded-lg border border-line bg-bg p-1 shadow-pop">
-                          {editingId === r.id ? <form onSubmit={(e) => { e.preventDefault(); void rename(r.id); }} className="flex gap-1 p-1">
-                            <input autoFocus maxLength={120} aria-label="Tên phiên mới" value={draftTitle} onChange={(e) => setDraftTitle(e.target.value)} onKeyDown={(e) => { if (e.key === 'Escape') closeActions(); }} className="min-w-0 flex-1 rounded border border-line bg-bg px-2 text-[12px] text-fg focus:border-line-strong focus:outline-none" />
-                            <button type="submit" disabled={!draftTitle.trim() || pending} className="rounded bg-primary px-2 text-[11px] text-primary-fg disabled:opacity-50">Lưu</button>
-                          </form> : confirmId === r.id ? <div className="p-1 text-[12px] text-fg">
-                            <p className="px-1 pb-2">Xóa phiên này?</p>
-                            <div className="flex gap-1"><button type="button" onClick={closeActions} className="rounded px-2 py-1 hover:bg-surface">Hủy</button><button type="button" disabled={pending} onClick={() => void remove(r.id)} className="rounded bg-danger px-2 py-1 text-white disabled:opacity-50">Xóa</button></div>
-                          </div> : <>
-                            <button type="button" onClick={() => { setEditingId(r.id); setDraftTitle(r.title || titleOf(r.prompt)); }} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-fg hover:bg-surface"><Pencil aria-hidden className="size-3.5" />Đổi tên</button>
-                            <button type="button" onClick={() => setConfirmId(r.id)} className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px] text-danger hover:bg-surface"><Trash2 aria-hidden className="size-3.5" />Xóa</button>
-                          </>}
-                          {actionError && <p role="alert" className="px-2 py-1 text-[11px] text-danger">{actionError}</p>}
-                        </div>}
                       </li>
                     ))}
                   </ul>
@@ -218,7 +300,7 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
         <div className="shrink-0 border-t border-line px-2 py-2">
           <div className="mb-2 space-y-0.5">
             <button type="button" aria-expanded={showClaudeUsage} onClick={() => setShowClaudeUsage((shown) => !shown)} className={`${row} h-9 text-muted hover:bg-surface-2 hover:text-fg`}>
-              <span aria-hidden className="size-2 rounded-full bg-claude" />
+              <span aria-hidden className={slot}><span className="size-2 rounded-full bg-claude" /></span>
               <span className="min-w-0 flex-1">Claude usage</span>
               <span className={`text-[11px] ${agents?.claude ? 'text-ok' : 'text-faint'}`}>{agents ? agents.claude ? 'CLI sẵn sàng' : 'CLI chưa sẵn sàng' : 'Đang kiểm tra'}</span>
               <ChevronRight aria-hidden className={`size-3 transition-transform ${showClaudeUsage ? 'rotate-90' : ''}`} />
@@ -234,7 +316,7 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
               </div>
             )}
             <button type="button" aria-expanded={showCodexStatus} onClick={() => setShowCodexStatus((shown) => !shown)} className={`${row} h-9 text-muted hover:bg-surface-2 hover:text-fg`}>
-              <span aria-hidden className="size-2 rounded-full bg-codex" />
+              <span aria-hidden className={slot}><span className="size-2 rounded-full bg-codex" /></span>
               <span className="min-w-0 flex-1">Codex status</span>
               <span className={`text-[11px] ${agents?.codex ? 'text-ok' : 'text-faint'}`}>{agents ? agents.codex ? 'CLI sẵn sàng' : 'CLI chưa sẵn sàng' : 'Đang kiểm tra'}</span>
               <ChevronRight aria-hidden className={`size-3 transition-transform ${showCodexStatus ? 'rotate-90' : ''}`} />
@@ -253,6 +335,48 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
         </div>
       </aside>
       {open && <div aria-hidden className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={onClose} />}
+      {menuRun && menuAnchor && (
+        <SessionMenu anchor={menuAnchor} label={`Tùy chọn phiên ${menuRun.title || titleOf(menuRun.prompt)}`} onDismiss={closeActions}>
+          {editingId === menuRun.id ? (
+            <form onSubmit={(e) => { e.preventDefault(); void rename(menuRun.id); }} className="p-1.5">
+              <input
+                autoFocus
+                maxLength={120}
+                aria-label="Tên phiên mới"
+                value={draftTitle}
+                onChange={(e) => setDraftTitle(e.target.value)}
+                onFocus={(e) => e.currentTarget.select()}
+                className="h-8 w-full rounded-lg border border-line bg-bg px-2.5 text-[13px] text-fg focus:border-line-strong focus:outline-none"
+              />
+              <div className="mt-2 flex justify-end gap-1">
+                <button type="button" onClick={closeActions} className="h-7 rounded-lg px-2.5 text-[12.5px] text-muted hover:bg-surface hover:text-fg">Hủy</button>
+                <button type="submit" disabled={!draftTitle.trim() || pending} className="h-7 rounded-lg bg-primary px-2.5 text-[12.5px] font-medium text-primary-fg disabled:opacity-50">Lưu</button>
+              </div>
+            </form>
+          ) : confirmId === menuRun.id ? (
+            <div className="p-1.5">
+              <p className="px-1 text-[13px] text-fg">Xóa phiên này?</p>
+              <p className="mt-0.5 px-1 text-[12px] leading-snug text-faint">Lịch sử và ảnh đính kèm sẽ bị xóa vĩnh viễn.</p>
+              <div className="mt-2 flex justify-end gap-1">
+                <button type="button" onClick={closeActions} className="h-7 rounded-lg px-2.5 text-[12.5px] text-muted hover:bg-surface hover:text-fg">Hủy</button>
+                <button type="button" disabled={pending} onClick={() => void remove(menuRun.id)} className="h-7 rounded-lg bg-danger px-2.5 text-[12.5px] font-medium text-white disabled:opacity-50">Xóa</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <button type="button" role="menuitem" onClick={() => { setEditingId(menuRun.id); setDraftTitle(menuRun.title || titleOf(menuRun.prompt)); }} className={`${menuRow} text-fg`}>
+                <Pencil aria-hidden className="size-4 shrink-0 text-muted" />
+                Đổi tên
+              </button>
+              <button type="button" role="menuitem" onClick={() => setConfirmId(menuRun.id)} className={`${menuRow} text-danger`}>
+                <Trash2 aria-hidden className="size-4 shrink-0" />
+                Xóa
+              </button>
+            </>
+          )}
+          {actionError && <p role="alert" className="px-2.5 py-1 text-[12px] text-danger">{actionError}</p>}
+        </SessionMenu>
+      )}
     </>
   );
 }

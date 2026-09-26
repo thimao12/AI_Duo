@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, Check, CircleAlert, Copy, FileDiff, ListChevronsDownUp, ListChevronsUpDown, Menu, Square, WifiOff } from 'lucide-react';
+import { ArrowDown, Check, CircleAlert, Copy, FileDiff, ListChevronsDownUp, ListChevronsUpDown, PanelLeft, Square, WifiOff } from 'lucide-react';
 import { api, useRun, type Message, type Run } from './api.ts';
 import ChangesPanel from './components/ChangesPanel.tsx';
 import Composer, { MODE_ICON } from './components/Composer.tsx';
@@ -99,9 +99,10 @@ interface ThreadProps {
   projects: string[];
   onCreated: (id: string) => void;
   onMenu: () => void;
+  sidebarHidden: boolean;
 }
 
-export default function Thread({ id, title, projects, onCreated, onMenu }: ThreadProps) {
+export default function Thread({ id, title, projects, onCreated, onMenu, sidebarHidden }: ThreadProps) {
   const [revision, setRevision] = useState(0);
   const { run, reconnecting, error } = useRun(id, revision);
   const [compact, setCompact] = useState(false);
@@ -159,9 +160,9 @@ export default function Thread({ id, title, projects, onCreated, onMenu }: Threa
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
         <header className={`app-drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-3 sm:px-4 ${panelOpen && run?.diff !== undefined ? '' : 'titlebar-inset'}`}>
-          <button type="button" onClick={onMenu} className={`${iconBtn} md:hidden`}>
-            <Menu aria-hidden className="size-4" />
-            <span className="sr-only">Mở danh sách phiên</span>
+          <button type="button" onClick={onMenu} title="Hiện danh sách phiên (Ctrl B)" className={`${iconBtn} ${sidebarHidden ? '' : 'md:hidden'}`}>
+            <PanelLeft aria-hidden className="size-4" />
+            <span className="sr-only">Hiện danh sách phiên</span>
           </button>
           <div className="flex min-w-0 flex-1 items-baseline gap-2">
             <h1 className="min-w-0 truncate text-[13.5px] font-semibold">{run ? title || run.title || titleOf(run.config.prompt) : 'Đang tải…'}</h1>

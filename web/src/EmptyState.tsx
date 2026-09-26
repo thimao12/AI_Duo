@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Menu } from 'lucide-react';
+import { PanelLeft } from 'lucide-react';
 import type { AgentStatus } from './api.ts';
 import Composer, { MODE_ICON, type ComposerSeed } from './components/Composer.tsx';
 import { MODE_LABEL } from './components/ui.tsx';
@@ -30,17 +30,17 @@ function CliStatus({ agents }: { agents: AgentStatus | null }) {
   );
 }
 
-export default function EmptyState({ projects, onCreated, onMenu }: { projects: string[]; onCreated: (id: string) => void; onMenu: () => void }) {
+export default function EmptyState({ projects, onCreated, onMenu, sidebarHidden }: { projects: string[]; onCreated: (id: string) => void; onMenu: () => void; sidebarHidden: boolean }) {
   const [seed, setSeed] = useState<ComposerSeed>();
   const [agents, setAgents] = useState<AgentStatus | null>(null);
   const onAgents = useCallback((a: AgentStatus | null) => setAgents(a), []);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="app-drag flex h-12 shrink-0 items-center px-3">
-        <button type="button" onClick={onMenu} className="grid size-8 place-items-center rounded-lg text-muted hover:bg-surface hover:text-fg md:hidden">
-          <Menu aria-hidden className="size-4" />
-          <span className="sr-only">Mở danh sách phiên</span>
+      <header className="app-drag flex h-12 shrink-0 items-center px-3 sm:px-4">
+        <button type="button" onClick={onMenu} title="Hiện danh sách phiên (Ctrl B)" className={`grid size-8 place-items-center rounded-lg text-muted hover:bg-surface hover:text-fg ${sidebarHidden ? '' : 'md:hidden'}`}>
+          <PanelLeft aria-hidden className="size-4" />
+          <span className="sr-only">Hiện danh sách phiên</span>
         </button>
       </header>
       <div className="flex min-h-0 flex-1 overflow-y-auto">

@@ -1,5 +1,46 @@
 @import 'tailwindcss';
 
+/* Segoe UI with its line box re-centred. Its stock metrics (ascent 1.079em, descent 0.251em)
+   sit the x-height/cap-height middle ~0.1em below the centre of the line, so every label in a
+   centred row looked ~1px low next to its icon. Same total height (1.33em), so layout is unchanged;
+   off Windows the local() lookups miss and the stack falls through to the system font. */
+@font-face {
+  font-family: 'AI Duo UI';
+  src: local('Segoe UI Semilight'), local('SegoeUI-Semilight');
+  font-weight: 300;
+  ascent-override: 96.6%;
+  descent-override: 36.4%;
+}
+@font-face {
+  font-family: 'AI Duo UI';
+  src: local('Segoe UI'), local('SegoeUI');
+  font-weight: 400;
+  ascent-override: 96.6%;
+  descent-override: 36.4%;
+}
+@font-face {
+  font-family: 'AI Duo UI';
+  src: local('Segoe UI Semibold'), local('SegoeUI-Semibold');
+  font-weight: 600;
+  ascent-override: 96.6%;
+  descent-override: 36.4%;
+}
+@font-face {
+  font-family: 'AI Duo UI';
+  src: local('Segoe UI Bold'), local('SegoeUI-Bold');
+  font-weight: 700;
+  ascent-override: 96.6%;
+  descent-override: 36.4%;
+}
+@font-face {
+  font-family: 'AI Duo UI';
+  src: local('Segoe UI Italic'), local('SegoeUI-Italic');
+  font-weight: 400;
+  font-style: italic;
+  ascent-override: 96.6%;
+  descent-override: 36.4%;
+}
+
 /* Dark variant follows the resolved theme: data-theme wins, otherwise the OS preference. */
 @custom-variant dark {
   &:where([data-theme='dark'], [data-theme='dark'] *) {
@@ -104,7 +145,7 @@
 }
 
 @theme inline {
-  --font-sans: system-ui, 'Segoe UI Variable Text', 'Segoe UI', -apple-system, 'Helvetica Neue', sans-serif;
+  --font-sans: 'AI Duo UI', system-ui, 'Segoe UI Variable Text', 'Segoe UI', -apple-system, 'Helvetica Neue', sans-serif;
   --font-mono: ui-monospace, 'Cascadia Code', 'Cascadia Mono', 'SF Mono', Consolas, monospace;
 
   --color-bg: var(--bg);
