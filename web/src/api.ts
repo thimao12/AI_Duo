@@ -25,7 +25,10 @@ export const api = {
     fetch('/api/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }).then((r) =>
       json<{ id: string }>(r),
     ),
-  cancel: (id: string) => fetch(`/api/runs/${id}/cancel`, { method: 'POST' }).then((r) => json(r)),
+  cancel: (id: string) =>
+    fetch(`/api/runs/${id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((r) =>
+      json(r),
+    ),
 };
 
 function reduce(run: Run | null, e: RunEvent): Run | null {

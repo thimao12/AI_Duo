@@ -27,6 +27,8 @@ Bản desktop lưu lịch sử phiên ở `%APPDATA%\AI Duo\runs` và prompt ở
 pnpm dev            # server :8787 + web :5173 → mở http://localhost:5173
 ```
 
+API chỉ nhận request có `Host` là `localhost` hoặc `127.0.0.1`; request có `Origin` phải cùng origin với server hoặc thuộc `AI_DUO_DEV_ORIGINS` (mặc định `http://localhost:5173,http://127.0.0.1:5173`). `POST /api/runs` yêu cầu `Content-Type: application/json`.
+
 Yêu cầu: `claude` và `codex` có trong PATH và đã đăng nhập. Có thể đặt đường dẫn khác qua `CLAUDE_BIN` / `CODEX_BIN`.
 
 Smoke test 2 adapter (1 turn + 1 turn resume mỗi CLI): `pnpm --filter server test:agents`

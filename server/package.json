@@ -6,7 +6,8 @@
     "dev": "tsx watch --clear-screen=false src/index.ts",
     "start": "tsx src/index.ts",
     "typecheck": "tsc --noEmit",
-    "test:agents": "tsx src/smoke.ts"
+    "test:agents": "tsx src/smoke.ts",
+    "test:security": "tsx src/security-smoke.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",

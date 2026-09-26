@@ -18,6 +18,47 @@ import type { RunConfig, RunEvent } from './types.ts';
 
 const app = new Hono();
 
+const defaultDevOrigins = 'http://localhost:5173,http://127.0.0.1:5173';
+
+function isLocalHost(host: string): boolean {
+  try {
+    const url = new URL(`http://${host}`);
+    return (
+      (url.hostname === '127.0.0.1' || url.hostname === 'localhost') &&
+      !url.username &&
+      !url.password &&
+      url.pathname === '/' &&
+      !url.search &&
+      !url.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+app.use('/api/*', async (c, next) => {
+  const host = c.req.header('host') ?? '';
+  if (!isLocalHost(host)) return c.json({ error: 'Host must be localhost or 127.0.0.1' }, 403);
+
+  const origin = c.req.header('origin');
+  if (origin !== undefined) {
+    const devOrigins = (process.env.AI_DUO_DEV_ORIGINS ?? defaultDevOrigins)
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean);
+    if (origin !== `http://${host}` && !devOrigins.includes(origin)) {
+      return c.json({ error: 'Origin is not allowed' }, 403);
+    }
+  }
+
+  if (c.req.method === 'POST' && c.req.path === '/api/runs') {
+    const contentType = c.req.header('content-type')?.split(';', 1)[0].trim().toLowerCase();
+    if (contentType !== 'application/json') return c.json({ error: 'Content-Type must be application/json' }, 415);
+  }
+
+  await next();
+});
+
 const isAgent = (x: unknown): x is AgentName => x === 'claude' || x === 'codex';
 
 function parseConfig(body: any): RunConfig | string {
