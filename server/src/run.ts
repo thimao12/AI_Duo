@@ -13,7 +13,7 @@ export interface TurnOptions {
   title: string;
   /** Turns sharing a key continue the same CLI conversation. Omit for a fresh session. */
   sessionKey?: string;
-  parseVerdict?: (text: string) => Verdict | undefined;
+  parseVerdict?: (text: string) => Verdict | undefined | Promise<Verdict | undefined>;
 }
 
 export interface TurnResult {
@@ -146,7 +146,7 @@ export class RunContext {
       if (key && res.sessionId) this.sessions.set(key, res.sessionId);
       // Codex delivers whole messages; if nothing streamed, make sure the final text is shown.
       if (!m.parts.some((p) => p.kind === 'text') && res.finalText) this.pushEvent(m, { kind: 'text', content: res.finalText });
-      const verdict = t.parseVerdict?.(res.finalText);
+      const verdict = await t.parseVerdict?.(res.finalText);
       this.endMessage(m, 'done', verdict);
       return { text: res.finalText, verdict };
     } catch (err) {

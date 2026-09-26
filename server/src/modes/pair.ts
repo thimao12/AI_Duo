@@ -1,5 +1,5 @@
 import { other, type AgentName } from '../agents/index.ts';
-import { diffSince, isGitRepo, snapshotTree } from '../git.ts';
+import { diffSince, diffTreeSummary, isGitRepo, snapshotTree } from '../git.ts';
 import { render } from '../prompts/index.ts';
 import type { RunContext } from '../run.ts';
 import type { Verdict } from '../types.ts';
@@ -14,19 +14,30 @@ export interface ReviewResult {
 }
 
 export function parseReview(text: string): ReviewResult {
-  const blocks = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/g)].map((m) => m[1]);
+  const blocks = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((m) => m[1]);
   for (const b of blocks.reverse()) {
     try {
       const obj = JSON.parse(b);
-      if (obj && typeof obj.verdict === 'string') {
-        const v = obj.verdict.toUpperCase();
-        return { ...obj, verdict: v.includes('APPROVE') ? 'APPROVE' : 'CHANGES_REQUESTED' };
-      }
+      if (!obj || typeof obj !== 'object' || Array.isArray(obj) || typeof obj.verdict !== 'string') continue;
+      const verdict = obj.verdict.trim().toUpperCase();
+      if (verdict !== 'APPROVE' && verdict !== 'CHANGES_REQUESTED') continue;
+
+      const issues = Array.isArray(obj.issues)
+        ? obj.issues
+            .filter((issue: unknown): issue is Record<string, unknown> => !!issue && typeof issue === 'object' && !Array.isArray(issue))
+            .map((issue: Record<string, unknown>) => ({
+              ...(typeof issue.severity === 'string' ? { severity: issue.severity } : {}),
+              ...(typeof issue.file === 'string' ? { file: issue.file } : {}),
+              ...(typeof issue.description === 'string' ? { description: issue.description } : {}),
+            }))
+        : [];
+      return {
+        verdict,
+        ...(typeof obj.tests === 'string' ? { tests: obj.tests } : {}),
+        issues,
+      };
     } catch {}
   }
-  // Fallback when the JSON block is missing or malformed.
-  if (/CHANGES_REQUESTED/i.test(text)) return { verdict: 'CHANGES_REQUESTED' };
-  if (/\bAPPROVE\b/i.test(text)) return { verdict: 'APPROVE' };
   return {};
 }
 
@@ -74,6 +85,9 @@ export async function runPair(ctx: RunContext) {
     const diff = await diffSince(cwd, base);
     ctx.update({ diff });
 
+    const reviewTreeBefore = await snapshotTree(cwd);
+    let reviewTreeAfter = reviewTreeBefore;
+    let reviewerChanges: { stat: string; files: string[] } | undefined;
     const review = await ctx.turn({
       agent: reviewer,
       role: 'reviewer',
@@ -82,11 +96,30 @@ export async function runPair(ctx: RunContext) {
       round: r,
       title: `${label(reviewer)} reviews & tests – round ${r}`,
       prompt: render('review', { coder: label(coder), cwd, round: r, prompt, summary, diff: formatDiff(diff), testHint }),
-      parseVerdict: (t) => parseReview(t).verdict as Verdict | undefined,
+      parseVerdict: async (text): Promise<Verdict> => {
+        reviewTreeAfter = await snapshotTree(cwd);
+        if (reviewTreeBefore !== reviewTreeAfter) {
+          reviewerChanges = await diffTreeSummary(cwd, reviewTreeBefore, reviewTreeAfter);
+        }
+        const verdict = parseReview(text).verdict;
+        return verdict === 'APPROVE' && reviewerChanges ? 'CHANGES_REQUESTED' : verdict ?? 'CHANGES_REQUESTED';
+      },
     });
     lastReview = parseReview(review.text);
 
-    if (lastReview.verdict === 'APPROVE') {
+    if (!lastReview.verdict) {
+      ctx.note('Reviewer không trả verdict hợp lệ', '→ coi như CHANGES_REQUESTED', 'review', r);
+    }
+    if (reviewerChanges) {
+      ctx.note(
+        'Reviewer đã sửa tệp trong lượt đánh giá',
+        `Lượt đánh giá ${r} đã thay đổi working tree nên verdict APPROVE bị từ chối.\n\nTheo lệnh git diff --stat ${reviewTreeBefore} ${reviewTreeAfter}:\n${reviewerChanges.stat || '(không có thống kê)'}\n\nCác tệp đã thay đổi:\n${reviewerChanges.files.map((file) => `- ${file}`).join('\n')}`,
+        'review',
+        r,
+      );
+    }
+
+    if (lastReview.verdict === 'APPROVE' && !reviewerChanges) {
       approved = true;
       break;
     }
@@ -100,7 +133,13 @@ export async function runPair(ctx: RunContext) {
         phase: 'fix',
         round: r + 1,
         title: `${label(coder)} addresses review – round ${r}`,
-        prompt: render('fix', { reviewer: label(reviewer), round: r, review: review.text }),
+        prompt: render('fix', {
+          reviewer: label(reviewer),
+          round: r,
+          review: reviewerChanges
+            ? `${review.text}\n\nThe reviewer changed these files during review. Treat this as CHANGES_REQUESTED:\n${reviewerChanges.files.map((file) => `- ${file}`).join('\n')}`
+            : review.text,
+        }),
       })
     ).text;
   }

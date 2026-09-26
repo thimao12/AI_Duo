@@ -11,7 +11,8 @@
     "test:desktop-links": "tsx src/desktop-link-smoke.ts",
     "test:security": "tsx src/security-smoke.ts",
     "test:lifecycle": "tsx src/lifecycle-smoke.ts",
-    "test": "tsx src/security-smoke.ts && tsx src/desktop-link-smoke.ts && tsx src/lifecycle-smoke.ts && tsx src/agent-parser-smoke.ts"
+    "test:pair": "tsx src/pair-smoke.ts",
+    "test": "tsx src/security-smoke.ts && tsx src/desktop-link-smoke.ts && tsx src/lifecycle-smoke.ts && tsx src/agent-parser-smoke.ts && tsx src/pair-smoke.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.0",

@@ -46,6 +46,20 @@ export function snapshotTree(cwd: string): Promise<string> {
   });
 }
 
+export interface TreeDiffSummary {
+  stat: string;
+  files: string[];
+}
+
+/** Summary of changes between two working-tree snapshots. */
+export async function diffTreeSummary(cwd: string, before: string, after: string): Promise<TreeDiffSummary> {
+  const [stat, names] = await Promise.all([
+    git(cwd, ['diff', '--no-color', '--no-renames', '--stat', before, after]),
+    git(cwd, ['diff', '--no-color', '--no-renames', '--name-only', '-z', before, after]),
+  ]);
+  return { stat: stat.trim(), files: names.split('\0').filter(Boolean) };
+}
+
 /** Unified diff of the current working tree against a snapshot tree. */
 export async function diffSince(cwd: string, baseTree: string): Promise<string> {
   const now = await snapshotTree(cwd);
