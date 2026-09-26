@@ -59,6 +59,11 @@ export class RunContext {
       createdAt: Date.now(),
       messages: [],
     };
+    this.checkpoint();
+  }
+
+  private checkpoint() {
+    void saveRun(this.run).catch((err) => console.error(`Failed to checkpoint run ${this.run.id}:`, err));
   }
 
   subscribe(fn: (e: RunEvent) => void) {
@@ -107,6 +112,7 @@ export class RunContext {
   private startMessage(agent: Speaker, phase: string, round: number, title: string, model?: string): Message {
     const message: Message = { id: randomUUID(), agent, phase, round, title, parts: [], status: 'running', startedAt: Date.now(), ...(model && { model }) };
     this.run.messages.push(message);
+    this.checkpoint();
     this.emit({ type: 'message.start', message: structuredClone(message) });
     return message;
   }

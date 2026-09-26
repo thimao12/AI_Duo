@@ -62,3 +62,5 @@ Pair mode chụp snapshot working tree lúc bắt đầu (dùng index tạm, kh�
 - `web/src/` – React UI (stream qua SSE)
 - `desktop/` – Electron: `main.mjs` chạy server (bundle bằng esbuild) ngay trong app và mở cửa sổ; `build.mjs` chuẩn bị `dist/`
 - `data/runs/*.json` – lịch sử các phiên
+
+Các phiên được lưu checkpoint khi tạo run và khi bắt đầu mỗi message. Nếu server khởi động lại bất ngờ, phiên và message đang chạy sẽ được hiển thị là gián đoạn trong lịch sử.

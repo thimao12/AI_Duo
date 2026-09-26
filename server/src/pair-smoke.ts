@@ -6,8 +6,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { agents } from './agents/index.ts';
 import { diffTreeSummary, snapshotTree } from './git.ts';
-import { parseReview, runPair } from './modes/pair.ts';
-import { RunContext } from './run.ts';
+import type { RunContext as RunContextType } from './run.ts';
+
+const dataDir = await mkdtemp(path.join(tmpdir(), 'ai-duo-pair-review-runs-'));
+process.env.AI_DUO_DATA_DIR = dataDir;
+const [{ parseReview, runPair }, { RunContext }] = await Promise.all([import('./modes/pair.ts'), import('./run.ts')]);
 
 function fencedReview(verdict: string, extra = '') {
   return `\`\`\`json\n{"verdict":"${verdict}"${extra}}\n\`\`\``;
@@ -52,7 +55,7 @@ function fakeContext(cwd: string, coder: 'claude' | 'codex', maxRounds: number, 
       turns.push({ ...turn, verdict });
       return { text, verdict };
     },
-  } as unknown as RunContext;
+  } as unknown as RunContextType;
   return { ctx, notes, updates, turns };
 }
 
@@ -81,6 +84,7 @@ try {
     assert.equal(turn.verdict, 'CHANGES_REQUESTED');
     assert.equal(run.run.messages[0].verdict, 'CHANGES_REQUESTED');
     assert.equal(events[0].verdict, 'CHANGES_REQUESTED');
+    await run.finish('done');
   } finally {
     agents.claude.run = originalClaudeRun;
   }
@@ -147,4 +151,5 @@ try {
   process.exitCode = 1;
 } finally {
   await Promise.all(tempRepos.map((cwd) => rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(console.error)));
+  await rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(console.error);
 }
