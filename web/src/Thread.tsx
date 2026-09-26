@@ -2,6 +2,7 @@ import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 
 import { ArrowDown, Check, CircleAlert, Copy, FileDiff, ListChevronsDownUp, ListChevronsUpDown, PanelLeft, Square, WifiOff } from 'lucide-react';
 import { api, useRun, type Message, type Run } from './api.ts';
 import ChangesPanel from './components/ChangesPanel.tsx';
+import ChoiceQuestion from './components/ChoiceQuestion.tsx';
 import Composer, { MODE_ICON } from './components/Composer.tsx';
 import { parseDiff } from './components/DiffView.tsx';
 import Turn, { SystemNote } from './components/Turn.tsx';
@@ -284,6 +285,14 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
               )}
               {run.status === 'cancelled' && <p className="mt-8 text-center text-[12.5px] text-faint">Phiên đã dừng.</p>}
               {run.final && <FinalBlock run={run} files={files.length} onShowChanges={() => setPanel(true)} />}
+              {run.status === 'done' && run.final && (
+                <ChoiceQuestion
+                  key={run.messages.at(-1)?.id}
+                  runId={run.id}
+                  text={run.final}
+                  onContinue={() => { positioned.current = false; setAtBottom(true); setRevision((n) => n + 1); }}
+                />
+              )}
             </div>
           )}
         </div>
