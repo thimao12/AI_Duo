@@ -35,6 +35,8 @@ export interface RunConfig {
   judge: AgentName;
   /** pair: who writes code (the other one reviews) */
   coder: AgentName;
+  /** pair: who reviews and tests; may be the same agent as coder. */
+  reviewer?: AgentName;
   testCommand?: string;
   /** Max minutes a single agent turn may take before it is killed. */
   turnTimeoutMin: number;

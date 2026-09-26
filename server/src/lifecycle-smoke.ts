@@ -55,7 +55,7 @@ try {
   const { id: threadId } = await firstResponse.json();
   await waitForRun(threadId);
   const image = { name: 'tiny.png', dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9WlOxKcAAAAASUVORK5CYII=' };
-  const followResponse = await request(`/api/runs/${threadId}/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'second question', images: [image] }) });
+  const followResponse = await request(`/api/runs/${threadId}/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'second question', images: [image], mode: 'plan' }) });
   assert.equal(followResponse.status, 200);
   assert.equal((await followResponse.json()).id, threadId);
   const followed = await waitForRun(threadId);
@@ -65,6 +65,15 @@ try {
   assert.equal(userMessage.parts[0].content, 'second question');
   assert.equal((await request(`/api/runs/${threadId}/messages/${userMessage.id}/images/0`)).status, 200);
   assert.equal(followed.final, 'answer 2');
+
+  // A new task in the same thread is routed again instead of inheriting plan mode.
+  agents.claude.run = async () => ({ finalText: 'Claude response' });
+  const reroutedResponse = await request('/api/runs/' + threadId + '/messages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'Giải thích tại sao hàm này hoạt động như vậy?', mode: 'auto' }) });
+  assert.equal(reroutedResponse.status, 200);
+  const rerouted = await waitForRun(threadId);
+  assert.equal(rerouted.config.mode, 'debate');
+  assert.equal(rerouted.config.route.taskType, 'explain');
+  assert.ok(rerouted.messages.some((message: { title: string }) => message.title === 'Định tuyến tự động'));
 
   // A failed agent aborts and waits for its sibling before the final run is saved.
   agents.claude.run = ({ signal }) =>

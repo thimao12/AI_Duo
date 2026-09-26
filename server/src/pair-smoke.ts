@@ -113,6 +113,14 @@ try {
   assert.equal(approval.turns.find((turn) => turn.phase === 'review')?.verdict, 'APPROVE');
   assert.equal(approval.notes.some((note) => note.title === 'Reviewer không trả verdict hợp lệ'), false);
 
+  const sameAgentRepo = await makeRepo();
+  const sameAgent = fakeContext(sameAgentRepo, 'codex', 1, async (turn) =>
+    turn.phase === 'review' ? fencedReview('APPROVE') : 'Implemented.',
+  );
+  sameAgent.ctx.run.config.reviewer = 'codex';
+  await runPair(sameAgent.ctx);
+  assert.equal((sameAgent.turns.find((turn) => turn.phase === 'review') as any)?.agent, 'codex');
+
   const invalidRepo = await makeRepo();
   const invalid = fakeContext(invalidRepo, 'claude', 1, async (turn) =>
     turn.phase === 'review' ? 'I would not APPROVE this' : 'Implemented.',

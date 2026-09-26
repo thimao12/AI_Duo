@@ -126,13 +126,15 @@ async function parseConfig(body: any): Promise<{ cfg: RunConfig; routeUsage?: Us
 
 function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
   const maxRounds = clampRounds(Number(body.maxRounds) || (body.mode === 'plan' ? 1 : body.mode === 'debate' ? 2 : 3));
+  const coder = isAgent(body.coder) ? body.coder : 'codex';
   return {
     mode: body.mode,
     prompt,
     cwd,
     maxRounds,
     judge: isAgent(body.judge) ? body.judge : 'claude',
-    coder: isAgent(body.coder) ? body.coder : 'codex',
+    coder,
+    reviewer: isAgent(body.reviewer) ? body.reviewer : coder === 'claude' ? 'codex' : 'claude',
     testCommand: String(body.testCommand ?? '').trim() || undefined,
     turnTimeoutMin: Math.min(Math.max(Number(body.turnTimeoutMin) || 30, 1), 180),
     models: {
@@ -353,6 +355,26 @@ app.post('/api/runs/:id/messages', async (c) => {
     const run = await loadRun(id);
     if (!run) return c.json({ error: 'not found' }, 404);
     if (active.has(id)) return c.json({ error: 'Phiên đang chạy, hãy đợi hoàn tất.' }, 409);
+    const nextPrompt = prompt || 'Hãy phân tích ảnh đính kèm.';
+    const manualMode = body?.mode === 'pair' || body?.mode === 'debate' || body?.mode === 'plan' ? body.mode : null;
+    let routeUsage: Usage | undefined;
+    if (manualMode) {
+      run.config = { ...run.config, mode: manualMode, route: undefined };
+    } else {
+      const decision = await autoRoute(nextPrompt);
+      routeUsage = decision.usage;
+      run.config = {
+        ...run.config,
+        mode: decision.mode,
+        coder: decision.coder,
+        reviewer: decision.reviewer,
+        judge: decision.judge,
+        maxRounds: decision.maxRounds,
+        route: decision.route,
+        models: {},
+        efforts: {},
+      };
+    }
     if (run.config.mode === 'pair') {
       const repo = realpathSync.native(run.config.cwd);
       pairRepoKey = process.platform === 'win32' ? repo.toLowerCase() : repo;
@@ -371,7 +393,8 @@ app.post('/api/runs/:id/messages', async (c) => {
       }
     }
     const ctx = new RunContext(run.config, run);
-    ctx.followUp(prompt || 'Hãy phân tích ảnh đính kèm.', parsedImages.images, messageId);
+    ctx.followUp(nextPrompt, parsedImages.images, messageId);
+    if (run.config.route) ctx.note('Định tuyến tự động', run.config.route.reason, 'info', 0, routeUsage);
     launchRun(ctx, pairRepoKey);
     return c.json({ id });
   } catch (err) {

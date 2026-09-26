@@ -50,7 +50,8 @@ try {
   assert.equal(small.coder, 'codex');
   assert.equal(small.maxRounds, 2);
   assert.equal(small.models.codex?.coder?.model, cat.codex.light.model);
-  assert.equal(small.models.claude?.reviewer?.tier, 'light');
+  assert.equal(small.reviewer, 'codex');
+  assert.equal(small.models.codex?.reviewer?.model, small.models.codex?.coder?.model);
 
   const refactor = decide('refactor', 'heavy', cat);
   assert.equal(refactor.coder, 'claude');

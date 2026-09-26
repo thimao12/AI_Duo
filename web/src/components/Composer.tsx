@@ -31,7 +31,7 @@ const DEFAULTS: Form = {
 function loadForm(): Form {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    return { ...DEFAULTS, ...saved, prompt: '', models: { ...DEFAULTS.models, ...saved.models }, efforts: { ...DEFAULTS.efforts, ...saved.efforts } };
+    return { ...DEFAULTS, ...saved, prompt: typeof saved.prompt === 'string' ? saved.prompt : '', models: { ...DEFAULTS.models, ...saved.models }, efforts: { ...DEFAULTS.efforts, ...saved.efforts } };
   } catch {
     return DEFAULTS;
   }
@@ -47,7 +47,7 @@ export const MODE_ICON = Object.fromEntries(MODES.map((m) => [m.id, m.icon])) as
 
 /** The new-run form: persisted settings, router preview, CLI status and submit. */
 function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, threadId?: string, onContinue?: () => void) {
-  const [form, setForm] = useState<Form>(loadForm);
+  const [form, setForm] = useState<Form>(() => ({ ...loadForm(), ...(threadId && { mode: 'auto' as const }) }));
   const [agents, setAgents] = useState<AgentStatus | null>(null);
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [preview, setPreview] = useState<RoutePreview | null>(null);
@@ -86,9 +86,8 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
   }, []);
 
   useEffect(() => {
-    const { prompt: _omit, ...rest } = form;
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(rest));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(form));
     } catch {}
   }, [form]);
 
@@ -100,8 +99,11 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
       // Auto: the router picks mode, agents and rounds; sending them would override it.
       const { maxRounds: _r, judge: _j, coder: _c, ...rest } = form;
       const { id } = threadId
-        ? await api.continue(threadId, form.prompt, images)
+        ? await api.continue(threadId, form.prompt, images, form.mode)
         : await api.create({ ...(auto ? rest : form), images });
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...form, prompt: '' }));
+      } catch {}
       setForm((f) => ({ ...f, prompt: '' }));
       setImages([]);
       if (threadId) onContinue?.();
@@ -242,7 +244,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
           className={`composer-input block w-full resize-none bg-transparent px-4 text-[14.5px] leading-relaxed text-fg placeholder:text-faint focus:outline-none ${hero ? 'min-h-24 pt-4 pb-2' : 'min-h-11 pt-3 pb-1'}`}
         />
 
-        {!threadId && auto && preview && (
+        {auto && preview && (
           <p className="flex items-start gap-1.5 px-4 pb-1 text-[12px] leading-snug text-faint">
             <Waypoints aria-hidden className="mt-px size-3.5 shrink-0" />
             <span className="line-clamp-2">

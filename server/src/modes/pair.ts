@@ -54,7 +54,7 @@ function formatDiff(diff: string) {
 export async function runPair(ctx: RunContext) {
   const { cwd, maxRounds, coder, testCommand } = ctx.run.config;
   const prompt = ctx.prompt;
-  const reviewer = other(coder);
+  const reviewer = ctx.run.config.reviewer ?? other(coder);
 
   if (!(await isGitRepo(cwd))) {
     throw new Error(`Pair mode needs a git repository so changes can be diffed and reverted. "${cwd}" is not one (run \`git init\` there first).`);

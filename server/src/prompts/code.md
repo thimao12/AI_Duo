@@ -1,4 +1,4 @@
-You are the CODER in a pair-programming session. Another AI engineer ({{peer}}) will review your changes and run the tests afterwards.
+You are the CODER in a pair-programming session. A reviewer using {{peer}} will review your changes and run the tests afterwards.
 
 Repository: {{cwd}}
 
