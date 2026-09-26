@@ -2,13 +2,18 @@ import { existsSync, statSync } from 'node:fs';
 import { copyFile, mkdir, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
 import { openAgentLink } from './link-handler.mjs';
 
 const here = import.meta.dirname;
 const dist = path.join(here, 'dist');
 // Fixed port keeps the page origin stable, so the UI's saved form settings survive restarts.
 const PREFERRED_PORT = 47821;
+// The page's own 48px headers act as the title bar; the overlay stops 1px short so their bottom border shows.
+const TITLE_BAR_HEIGHT = 47;
+// First-paint colours (the --bg / --muted tokens); the page re-sends its resolved theme once it loads.
+const themeColors = () =>
+  nativeTheme.shouldUseDarkColors ? { color: '#17171a', symbolColor: '#a8a8b2' } : { color: '#ffffff', symbolColor: '#55555d' };
 
 let win = null;
 let server = null;
@@ -60,6 +65,13 @@ async function start() {
     return r.canceled ? null : r.filePaths[0];
   });
 
+  ipcMain.on('title-bar-colors', (_e, colors) => {
+    const hex = /^#[0-9a-f]{6}$/i;
+    if (!win || !hex.test(colors?.color) || !hex.test(colors?.symbolColor)) return;
+    win.setTitleBarOverlay({ color: colors.color, symbolColor: colors.symbolColor, height: TITLE_BAR_HEIGHT });
+    win.setBackgroundColor(colors.color);
+  });
+
   createWindow(url);
 }
 
@@ -70,8 +82,10 @@ function createWindow(url) {
     minWidth: 720,
     minHeight: 480,
     title: 'AI Duo',
-    backgroundColor: '#09090b',
+    backgroundColor: themeColors().color,
     autoHideMenuBar: true,
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { ...themeColors(), height: TITLE_BAR_HEIGHT },
     show: false,
     icon: path.join(here, 'build', 'icon.png'),
     webPreferences: {

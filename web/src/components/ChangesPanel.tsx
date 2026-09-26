@@ -8,7 +8,7 @@ export default function ChangesPanel({ files, diff, onClose }: { files: FileDiff
   const removed = files.reduce((s, f) => s + f.removed, 0);
   return (
     <aside aria-label="Thay đổi" className="flex h-full min-h-0 flex-col bg-bg">
-      <header className="flex h-12 shrink-0 items-center gap-2 border-b border-line px-3">
+      <header className="app-drag titlebar-inset flex h-12 shrink-0 items-center gap-2 border-b border-line px-3">
         <h2 className="text-[13px] font-semibold">Thay đổi</h2>
         <span className="text-[12px] text-faint">{files.length} file</span>
         <span className="font-mono text-[11.5px] text-add-fg">+{added}</span>

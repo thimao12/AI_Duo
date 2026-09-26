@@ -148,7 +148,7 @@ export default function Thread({ id, projects, onCreated, onMenu }: ThreadProps)
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-line px-3 sm:px-4">
+        <header className={`app-drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-3 sm:px-4 ${panelOpen && run?.diff !== undefined ? '' : 'titlebar-inset'}`}>
           <button type="button" onClick={onMenu} className={`${iconBtn} md:hidden`}>
             <Menu aria-hidden className="size-4" />
             <span className="sr-only">Mở danh sách phiên</span>

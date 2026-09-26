@@ -4,4 +4,5 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('aiDuo', {
   desktop: true,
   pickFolder: (defaultPath) => ipcRenderer.invoke('pick-folder', defaultPath),
+  setTitleBarColors: (color, symbolColor) => ipcRenderer.send('title-bar-colors', { color, symbolColor }),
 });

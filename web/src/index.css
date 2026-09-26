@@ -164,6 +164,18 @@ body {
   border-radius: 6px;
 }
 
+/* Desktop title bar: the 48px headers drag the window; anything clickable inside opts out. */
+.app-drag {
+  -webkit-app-region: drag;
+}
+.app-drag :is(button, a, input, textarea, select, label, [role='button']) {
+  -webkit-app-region: no-drag;
+}
+/* The rightmost header keeps clear of the window buttons (env() is 0 outside the desktop app). */
+.titlebar-inset {
+  padding-right: max(1rem, calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 0.5rem));
+}
+
 /* Thin palette scrollbars with no arrow buttons. The webkit pseudos are used on purpose:
    in Chromium ≥121 `scrollbar-width`/`scrollbar-color` would override them and bring back
    the Windows arrow buttons. */

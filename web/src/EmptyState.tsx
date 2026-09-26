@@ -37,8 +37,8 @@ export default function EmptyState({ projects, onCreated, onMenu }: { projects: 
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex h-12 shrink-0 items-center px-3 md:hidden">
-        <button type="button" onClick={onMenu} className="grid size-8 place-items-center rounded-lg text-muted hover:bg-surface hover:text-fg">
+      <header className="app-drag flex h-12 shrink-0 items-center px-3">
+        <button type="button" onClick={onMenu} className="grid size-8 place-items-center rounded-lg text-muted hover:bg-surface hover:text-fg md:hidden">
           <Menu aria-hidden className="size-4" />
           <span className="sr-only">Mở danh sách phiên</span>
         </button>

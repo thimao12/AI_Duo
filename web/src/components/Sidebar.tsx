@@ -73,7 +73,7 @@ export default function Sidebar({ runs, activeId, onOpen, theme, open, onClose }
           open ? 'translate-x-0 shadow-pop' : '-translate-x-full'
         }`}
       >
-        <div className="flex h-12 shrink-0 items-center gap-2 px-4">
+        <div className="app-drag flex h-12 shrink-0 items-center gap-2 px-4">
           <span aria-hidden className="flex">
             <span className="size-3 rounded-full bg-claude" />
             <span className="-ml-1.5 size-3 rounded-full bg-codex/90" />
