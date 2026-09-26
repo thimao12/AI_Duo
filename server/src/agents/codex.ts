@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { resolveBin } from './bins.ts';
 import { spawnJsonl } from './process.ts';
-import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult } from './types.ts';
+import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult, Usage } from './types.ts';
 
 function sandboxFor(role: Role): 'read-only' | 'workspace-write' {
   return role === 'thinker' ? 'read-only' : 'workspace-write';
@@ -15,6 +15,15 @@ export interface CodexJsonState {
   completed: boolean;
   failed: boolean;
   lastError?: string;
+  usage?: Usage;
+}
+
+const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+
+/** `turn.completed` usage; Codex's input_tokens already includes the cached part. */
+export function codexUsage(u: any): Usage | undefined {
+  if (!u || typeof u !== 'object') return undefined;
+  return { inputTokens: num(u.input_tokens), outputTokens: num(u.output_tokens), cachedInputTokens: num(u.cached_input_tokens) };
 }
 
 export function initialCodexJsonState(sessionId?: string): CodexJsonState {
@@ -53,6 +62,7 @@ export function onJson(ev: any, state: CodexJsonState): { state: CodexJsonState;
       break;
     case 'turn.completed':
       next.completed = true;
+      next.usage = codexUsage(ev.usage);
       break;
     case 'turn.failed':
       next.failed = true;
@@ -85,6 +95,7 @@ export const codex: AgentAdapter = {
       ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode="${sandbox}"`, '-o', lastFile]
       : ['exec', '--json', '--skip-git-repo-check', '-C', o.cwd, '-s', sandbox, '-o', lastFile];
     if (o.model) args.push('-m', o.model);
+    if (o.effort) args.push('-c', `model_reasoning_effort="${o.effort}"`);
     if (o.sessionId) args.push(o.sessionId);
     args.push('-'); // prompt from stdin
 
@@ -108,7 +119,7 @@ export const codex: AgentAdapter = {
       if (error) throw new Error(error);
       let finalText = await readFile(lastFile, 'utf8').catch(() => '');
       if (!finalText) finalText = state.messages.join('\n\n');
-      return { finalText, sessionId: state.sessionId };
+      return { finalText, sessionId: state.sessionId, usage: state.usage };
     } finally {
       rm(dir, { recursive: true, force: true }).catch(() => {});
     }

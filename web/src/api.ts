@@ -1,8 +1,22 @@
 import { useEffect, useState } from 'react';
-import { applyAgentEvent, type Run, type RunConfig, type RunEvent } from '../../server/src/types.ts';
+import type { AgentName } from '../../server/src/agents/types.ts';
+import { applyAgentEvent, type Run, type RunConfig, type RunEvent, type RoutePlan } from '../../server/src/types.ts';
 
-export type { Message, Part, Run, RunConfig, Verdict, Speaker } from '../../server/src/types.ts';
-export type { AgentName } from '../../server/src/agents/types.ts';
+export type { Message, ModelChoice, Part, RoutePlan, Run, RunConfig, Verdict, Speaker } from '../../server/src/types.ts';
+export type { AgentName, Usage } from '../../server/src/agents/types.ts';
+
+/** What the form sends: a concrete mode, or 'auto' to let the router decide. */
+export type NewRunRequest = Omit<Partial<RunConfig>, 'mode'> & { mode: RunConfig['mode'] | 'auto' };
+
+export interface RoutePreview {
+  mode: RunConfig['mode'];
+  coder: AgentName;
+  judge: AgentName;
+  maxRounds: number;
+  route: RoutePlan;
+  /** The rules aren't sure; starting the run will ask Haiku first. */
+  askHaiku: boolean;
+}
 
 export interface RunSummary {
   id: string;
@@ -21,9 +35,13 @@ async function json<T>(res: Response): Promise<T> {
 export const api = {
   agents: () => fetch('/api/agents').then((r) => json<{ claude: string | null; codex: string | null; defaultCwd: string }>(r)),
   list: () => fetch('/api/runs').then((r) => json<RunSummary[]>(r)),
-  create: (cfg: Partial<RunConfig>) =>
+  create: (cfg: NewRunRequest) =>
     fetch('/api/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }).then((r) =>
       json<{ id: string }>(r),
+    ),
+  previewRoute: (prompt: string, signal?: AbortSignal) =>
+    fetch('/api/route/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }), signal }).then((r) =>
+      json<RoutePreview>(r),
     ),
   cancel: (id: string) =>
     fetch(`/api/runs/${id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((r) =>
@@ -48,7 +66,7 @@ function reduce(run: Run | null, e: RunEvent): Run | null {
       });
       break;
     case 'message.end':
-      next.messages = run.messages.map((m) => (m.id === e.id ? { ...m, status: e.status, verdict: e.verdict, endedAt: e.endedAt } : m));
+      next.messages = run.messages.map((m) => (m.id === e.id ? { ...m, status: e.status, verdict: e.verdict, usage: e.usage, endedAt: e.endedAt } : m));
       break;
     case 'run.update':
       Object.assign(next, e.patch);

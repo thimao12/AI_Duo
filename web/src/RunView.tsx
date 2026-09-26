@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api, useRun, type Message } from './api.ts';
 import DiffView from './components/DiffView.tsx';
 import MessageCard from './components/MessageCard.tsx';
-import { AGENT_LABEL, Markdown, StatusBadge } from './components/ui.tsx';
+import { AGENT_LABEL, formatUsage, Markdown, StatusBadge } from './components/ui.tsx';
 
 const PHASE_LABEL: Record<string, string> = {
   info: 'Chuẩn bị',
@@ -46,6 +46,11 @@ export default function RunView({ id }: { id: string }) {
     <div className="mx-auto max-w-6xl px-4 pb-24 sm:px-8">
       <header className="sticky top-0 z-10 -mx-4 border-b border-zinc-800 bg-zinc-950/95 px-4 py-4 backdrop-blur sm:-mx-8 sm:px-8">
         <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+          {config.route && (
+            <span className="rounded bg-zinc-800/60 px-1.5 py-0.5 font-medium tracking-wide text-zinc-400 uppercase" title={config.route.reason}>
+              auto
+            </span>
+          )}
           <span className="rounded bg-zinc-800 px-1.5 py-0.5 font-medium tracking-wide text-zinc-300 uppercase">{config.mode}</span>
           <StatusBadge status={run.status} />
           <span>
@@ -55,6 +60,11 @@ export default function RunView({ id }: { id: string }) {
             {' · '}tối đa {config.maxRounds} vòng
           </span>
           <span className="truncate font-mono">{config.cwd}</span>
+          {run.usage && (
+            <span className="font-mono tabular-nums" title="Tổng token của cả phiên">
+              Σ {formatUsage(run.usage)}
+            </span>
+          )}
           <div className="ml-auto flex items-center gap-3">
             {running && (
               <>

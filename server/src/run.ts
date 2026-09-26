@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { agents, type AgentName, type Role } from './agents/index.ts';
+import { agents, type AgentName, type Role, type Usage } from './agents/index.ts';
 import { AbortedError } from './agents/process.ts';
 import { saveRun } from './store.ts';
-import { applyAgentEvent, type Message, type Run, type RunConfig, type RunEvent, type Speaker, type Verdict } from './types.ts';
+import { addUsage, applyAgentEvent, type Message, type ModelRole, type Run, type RunConfig, type RunEvent, type Speaker, type Verdict } from './types.ts';
 
 export interface TurnOptions {
   agent: AgentName;
@@ -13,6 +13,8 @@ export interface TurnOptions {
   title: string;
   /** Turns sharing a key continue the same CLI conversation. Omit for a fresh session. */
   sessionKey?: string;
+  /** Which routed model to use; defaults to `role`. */
+  modelRole?: ModelRole;
   parseVerdict?: (text: string) => Verdict | undefined | Promise<Verdict | undefined>;
 }
 
@@ -88,14 +90,22 @@ export class RunContext {
   }
 
   /** A short informational message from the orchestrator itself. */
-  note(title: string, text: string, phase = 'info', round = 0) {
+  note(title: string, text: string, phase = 'info', round = 0, usage?: Usage) {
     const m = this.startMessage('system', phase, round, title);
     this.pushEvent(m, { kind: 'text', content: text });
-    this.endMessage(m, 'done');
+    this.endMessage(m, 'done', undefined, usage);
   }
 
-  private startMessage(agent: Speaker, phase: string, round: number, title: string): Message {
-    const message: Message = { id: randomUUID(), agent, phase, round, title, parts: [], status: 'running', startedAt: Date.now() };
+  /** A manual model for the agent wins; otherwise the router's pick for this role, if any. */
+  modelFor(agent: AgentName, role: ModelRole): { model?: string; effort?: string } {
+    const manual = this.run.config.models?.[agent];
+    if (manual) return { model: manual };
+    const routed = this.run.config.route?.models[agent]?.[role];
+    return { model: routed?.model, effort: routed?.effort };
+  }
+
+  private startMessage(agent: Speaker, phase: string, round: number, title: string, model?: string): Message {
+    const message: Message = { id: randomUUID(), agent, phase, round, title, parts: [], status: 'running', startedAt: Date.now(), ...(model && { model }) };
     this.run.messages.push(message);
     this.emit({ type: 'message.start', message: structuredClone(message) });
     return message;
@@ -107,12 +117,17 @@ export class RunContext {
     this.emit({ type: 'message.event', id: m.id, event });
   }
 
-  private endMessage(m: Message, status: Message['status'], verdict?: Verdict) {
+  private endMessage(m: Message, status: Message['status'], verdict?: Verdict, usage?: Usage) {
     if (this.finished) return;
     m.status = status;
     m.verdict = verdict;
     m.endedAt = Date.now();
-    this.emit({ type: 'message.end', id: m.id, status, verdict, endedAt: m.endedAt });
+    if (usage) {
+      m.usage = usage;
+      this.run.usage = addUsage(this.run.usage, usage);
+    }
+    this.emit({ type: 'message.end', id: m.id, status, verdict, usage, endedAt: m.endedAt });
+    if (usage) this.emit({ type: 'run.update', patch: { usage: this.run.usage } });
     this.scheduleSave();
   }
 
@@ -129,7 +144,8 @@ export class RunContext {
 
   private async runTurn(t: TurnOptions): Promise<TurnResult> {
     if (this.abort.signal.aborted) throw new AbortedError();
-    const m = this.startMessage(t.agent, t.phase, t.round, t.title);
+    const { model, effort } = this.modelFor(t.agent, t.modelRole ?? t.role);
+    const m = this.startMessage(t.agent, t.phase, t.round, t.title, [model, effort].filter(Boolean).join(' · ') || undefined);
     const key = t.sessionKey ? `${t.agent}:${t.sessionKey}` : undefined;
     try {
       const res = await agents[t.agent].run({
@@ -137,7 +153,8 @@ export class RunContext {
         cwd: this.run.config.cwd,
         role: t.role,
         sessionId: key ? this.sessions.get(key) : undefined,
-        model: this.run.config.models?.[t.agent] || undefined,
+        model,
+        effort,
         signal: this.abort.signal,
         timeoutMs: (this.run.config.turnTimeoutMin || 30) * 60_000,
         onEvent: (e) => this.pushEvent(m, e),
@@ -147,7 +164,7 @@ export class RunContext {
       // Codex delivers whole messages; if nothing streamed, make sure the final text is shown.
       if (!m.parts.some((p) => p.kind === 'text') && res.finalText) this.pushEvent(m, { kind: 'text', content: res.finalText });
       const verdict = await t.parseVerdict?.(res.finalText);
-      this.endMessage(m, 'done', verdict);
+      this.endMessage(m, 'done', verdict, res.usage);
       return { text: res.finalText, verdict };
     } catch (err) {
       // An internal abort means another turn failed. Leave this message running so

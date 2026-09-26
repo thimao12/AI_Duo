@@ -68,6 +68,7 @@ export async function runDebate(ctx: RunContext) {
   const final = await ctx.turn({
     agent: judge,
     role: 'thinker',
+    modelRole: 'judge',
     phase: 'synthesize',
     round: rounds + 1,
     title: `Final solution (judge: ${label(judge)})`,

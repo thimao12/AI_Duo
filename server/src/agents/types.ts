@@ -27,14 +27,25 @@ export interface RunOptions {
   /** Continue an earlier conversation of the same agent. */
   sessionId?: string;
   model?: string;
+  /** Reasoning effort (low | medium | high | …); omitted = CLI default. */
+  effort?: string;
   signal: AbortSignal;
   timeoutMs?: number;
   onEvent: (e: AgentEvent) => void;
 }
 
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+  /** Input tokens served from the prompt cache (already included in inputTokens). */
+  cachedInputTokens: number;
+  costUsd?: number;
+}
+
 export interface RunResult {
   finalText: string;
   sessionId?: string;
+  usage?: Usage;
 }
 
 export interface AgentAdapter {

@@ -6,6 +6,7 @@ App web local để **Claude Code** và **Codex** cùng làm việc với nhau. 
 
 | Mode | Luồng |
 |---|---|
+| **Tự động** (`mode: "auto"`) | Router phân loại task (loại việc + độ khó), rồi chọn Pair/Debate, AI nào code, và model + mức reasoning cho **từng vai trò**, ưu tiên ít token nhất mà vẫn đủ tốt. Luật từ khoá chạy trước (miễn phí); chỉ khi luật không chắc mới gọi Haiku ở chế độ tối giản (~1k token). Model điền tay ở "Tùy chọn nâng cao" luôn thắng router. Danh mục model nằm ở `server/src/router/catalog.ts`, có thể ghi đè bằng file JSON qua `AI_DUO_ROUTER_CATALOG`. |
 | **Debate** | Cả 2 đề xuất song song → review chéo N vòng (mỗi con kết thúc bằng `VERDICT: AGREE/REVISE`) → dừng sớm nếu cả 2 cùng AGREE → judge viết **giải pháp cuối**. Agent chỉ được đọc (read-only). |
 | **Pair** | Coder sửa code trong repo → Reviewer đọc diff + chạy test → trả JSON `APPROVE / CHANGES_REQUESTED` trong code block → coder sửa tiếp (resume đúng session) → lặp tới khi approve hoặc hết số vòng. Verdict không hợp lệ bị coi là yêu cầu sửa; nếu reviewer ghi file, phiên không thể được duyệt và danh sách file được gửi cho coder. **Không tự commit.** |
 

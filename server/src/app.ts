@@ -6,11 +6,13 @@ import { createAdaptorServer } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import type { AgentName } from './agents/index.ts';
+import type { AgentName, Usage } from './agents/index.ts';
 import { runDebate } from './modes/debate.ts';
 import { runPair } from './modes/pair.ts';
 import { resolveBin } from './agents/bins.ts';
 import { paths } from './paths.ts';
+import { autoRoute } from './router/index.ts';
+import { classifyByRules, CONFIDENT } from './router/rules.ts';
 import { active, RunContext } from './run.ts';
 import { listRuns, loadRun } from './store.ts';
 import type { RunConfig, RunEvent } from './types.ts';
@@ -51,7 +53,7 @@ app.use('/api/*', async (c, next) => {
     }
   }
 
-  if (c.req.method === 'POST' && c.req.path === '/api/runs') {
+  if (c.req.method === 'POST' && (c.req.path === '/api/runs' || c.req.path === '/api/route/preview')) {
     const contentType = c.req.header('content-type')?.split(';', 1)[0].trim().toLowerCase();
     if (contentType !== 'application/json') return c.json({ error: 'Content-Type must be application/json' }, 415);
   }
@@ -61,13 +63,25 @@ app.use('/api/*', async (c, next) => {
 
 const isAgent = (x: unknown): x is AgentName => x === 'claude' || x === 'codex';
 
-function parseConfig(body: any): RunConfig | string {
-  if (body?.mode !== 'debate' && body?.mode !== 'pair') return 'mode must be "debate" or "pair"';
+const clampRounds = (n: number) => Math.min(Math.max(n, 1), 8);
+
+/** `mode: "auto"` hands mode, agents, models and (unless given) rounds to the router. */
+async function parseConfig(body: any): Promise<{ cfg: RunConfig; routeUsage?: Usage } | string> {
+  if (body?.mode !== 'debate' && body?.mode !== 'pair' && body?.mode !== 'auto') return 'mode must be "auto", "debate" or "pair"';
   const prompt = String(body.prompt ?? '').trim();
   if (!prompt) return 'prompt is required';
   const cwd = path.resolve(String(body.cwd ?? '').trim() || paths.defaultCwd);
   if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return `Working directory not found: ${cwd}`;
-  const maxRounds = Math.min(Math.max(Number(body.maxRounds) || (body.mode === 'debate' ? 2 : 3), 1), 8);
+  if (body.mode === 'auto') {
+    const { route, usage, ...decision } = await autoRoute(prompt);
+    const cfg = manualConfig({ ...body, ...decision, maxRounds: Number(body.maxRounds) || decision.maxRounds }, prompt, cwd);
+    return { cfg: { ...cfg, route }, routeUsage: usage };
+  }
+  return { cfg: manualConfig(body, prompt, cwd) };
+}
+
+function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
+  const maxRounds = clampRounds(Number(body.maxRounds) || (body.mode === 'debate' ? 2 : 3));
   return {
     mode: body.mode,
     prompt,
@@ -112,9 +126,18 @@ app.get('/api/runs/:id', async (c) => {
   return run ? c.json(run) : c.json({ error: 'not found' }, 404);
 });
 
+/** Rules-only preview for the form: free and instant; says whether Haiku would be asked. */
+app.post('/api/route/preview', async (c) => {
+  const prompt = String((await c.req.json().catch(() => null))?.prompt ?? '').trim();
+  if (!prompt) return c.json({ error: 'prompt is required' }, 400);
+  const { route, mode, coder, judge, maxRounds } = await autoRoute(prompt, { classify: false });
+  return c.json({ mode, coder, judge, maxRounds, route, askHaiku: classifyByRules(prompt).confidence < CONFIDENT });
+});
+
 app.post('/api/runs', async (c) => {
-  const cfg = parseConfig(await c.req.json().catch(() => null));
-  if (typeof cfg === 'string') return c.json({ error: cfg }, 400);
+  const parsed = await parseConfig(await c.req.json().catch(() => null));
+  if (typeof parsed === 'string') return c.json({ error: parsed }, 400);
+  const { cfg, routeUsage } = parsed;
 
   let pairRepoKey: string | undefined;
   if (cfg.mode === 'pair') {
@@ -131,6 +154,11 @@ app.post('/api/runs', async (c) => {
 
   const ctx = new RunContext(cfg);
   active.set(ctx.run.id, ctx);
+  if (cfg.route) {
+    const manual = Object.entries(cfg.models ?? {}).filter(([, m]) => m);
+    const override = manual.length ? `\nModel đặt tay (ưu tiên hơn router): ${manual.map(([a, m]) => `${a}=${m}`).join(', ')}` : '';
+    ctx.note('Định tuyến tự động', cfg.route.reason + override, 'info', 0, routeUsage);
+  }
   (async () => {
     let status: 'done' | 'error' | 'cancelled' = 'done';
     let error: string | undefined;

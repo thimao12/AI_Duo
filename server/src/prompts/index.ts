@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { paths } from '../paths.ts';
 
-export type PromptName = 'propose' | 'critique' | 'synthesize' | 'code' | 'review' | 'fix';
+export type PromptName = 'propose' | 'critique' | 'synthesize' | 'code' | 'review' | 'fix' | 'route';
 
 /**
  * Fill a template from this folder. Templates are re-read on every call so they can

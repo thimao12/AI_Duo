@@ -1,6 +1,15 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import type { Run, Speaker, Verdict } from '../api.ts';
+import type { Run, Speaker, Usage, Verdict } from '../api.ts';
+
+const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n));
+
+/** e.g. "12.3k in (9.1k cache) · 450 out · $0.021" */
+export function formatUsage(u: Usage): string {
+  const cache = u.cachedInputTokens ? ` (${k(u.cachedInputTokens)} cache)` : '';
+  const cost = u.costUsd !== undefined ? ` · $${u.costUsd.toFixed(3)}` : '';
+  return `${k(u.inputTokens)} in${cache} · ${k(u.outputTokens)} out${cost}`;
+}
 
 export const AGENT_LABEL: Record<Speaker, string> = { claude: 'Claude', codex: 'Codex', system: 'Orchestrator' };
 

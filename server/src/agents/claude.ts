@@ -1,6 +1,6 @@
 import { resolveBin } from './bins.ts';
 import { spawnJsonl } from './process.ts';
-import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult } from './types.ts';
+import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult, Usage } from './types.ts';
 
 function permissionArgs(role: Role): string[] {
   switch (role) {
@@ -47,6 +47,22 @@ export interface ClaudeJsonState {
   finalText?: string;
   streamed: string;
   errorText?: string;
+  usage?: Usage;
+}
+
+const num = (x: unknown) => (typeof x === 'number' && Number.isFinite(x) ? x : 0);
+
+/** The `result` event's usage counts cache writes/reads separately from fresh input. */
+export function claudeUsage(ev: any): Usage | undefined {
+  const u = ev?.usage;
+  if (!u || typeof u !== 'object') return undefined;
+  const cached = num(u.cache_read_input_tokens);
+  return {
+    inputTokens: num(u.input_tokens) + num(u.cache_creation_input_tokens) + cached,
+    outputTokens: num(u.output_tokens),
+    cachedInputTokens: cached,
+    ...(typeof ev.total_cost_usd === 'number' && { costUsd: ev.total_cost_usd }),
+  };
 }
 
 export function initialClaudeJsonState(sessionId?: string): ClaudeJsonState {
@@ -81,6 +97,7 @@ export function onJson(ev: any, state: ClaudeJsonState): { state: ClaudeJsonStat
       }
     }
   } else if (ev.type === 'result') {
+    next.usage = claudeUsage(ev);
     if (ev.is_error) next.errorText = typeof ev.result === 'string' ? ev.result : `Claude error (${ev.subtype})`;
     else if (typeof ev.result === 'string') next.finalText = ev.result;
   } else if (ev.type === 'rate_limit_event') {
@@ -98,6 +115,7 @@ export const claude: AgentAdapter = {
   async run(o: RunOptions): Promise<RunResult> {
     const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', ...permissionArgs(o.role)];
     if (o.model) args.push('--model', o.model);
+    if (o.effort) args.push('--effort', o.effort);
     if (o.sessionId) args.push('--resume', o.sessionId);
 
     let state = initialClaudeJsonState(o.sessionId);
@@ -120,6 +138,6 @@ export const claude: AgentAdapter = {
       if (code !== 0) throw new Error(`claude exited with code ${code}: ${stderr.trim().slice(-1500)}`);
       state.finalText = state.streamed;
     }
-    return { finalText: state.finalText, sessionId: state.sessionId };
+    return { finalText: state.finalText, sessionId: state.sessionId, usage: state.usage };
   },
 };

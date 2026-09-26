@@ -65,6 +65,24 @@ assert.match(rejected.state.errorText ?? '', /rejected/);
 const resultError = onClaudeJson({ type: 'result', is_error: true, result: 'failed result' }, initialClaudeJsonState());
 assert.equal(resultError.state.errorText, 'failed result');
 
+const claudeResult = onClaudeJson(
+  {
+    type: 'result',
+    result: 'done',
+    total_cost_usd: 0.012,
+    usage: { input_tokens: 10, cache_creation_input_tokens: 200, cache_read_input_tokens: 3000, output_tokens: 150 },
+  },
+  initialClaudeJsonState(),
+);
+assert.deepEqual(claudeResult.state.usage, { inputTokens: 3210, outputTokens: 150, cachedInputTokens: 3000, costUsd: 0.012 });
+assert.equal(onClaudeJson({ type: 'result', result: 'done' }, initialClaudeJsonState()).state.usage, undefined);
+
+const codexDone = onCodexJson(
+  { type: 'turn.completed', usage: { input_tokens: 5000, cached_input_tokens: 4000, output_tokens: 300 } },
+  initialCodexJsonState(),
+);
+assert.deepEqual(codexDone.state.usage, { inputTokens: 5000, outputTokens: 300, cachedInputTokens: 4000 });
+
 await assert.rejects(
   spawnJsonl(process.execPath, ['-e', "process.stdout.write('x'.repeat(64 * 1024 * 1024 + 1)); setInterval(() => {}, 1000)"], {
     cwd: process.cwd(),

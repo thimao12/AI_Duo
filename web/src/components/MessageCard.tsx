@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { Message, Part } from '../api.ts';
-import { AGENT_LABEL, AGENT_STYLE, Markdown, Spinner, VerdictBadge } from './ui.tsx';
+import { AGENT_LABEL, AGENT_STYLE, formatUsage, Markdown, Spinner, VerdictBadge } from './ui.tsx';
 
 function elapsed(m: Message, now: number) {
   const s = Math.round(((m.endedAt ?? now) - m.startedAt) / 1000);
@@ -53,8 +53,9 @@ export default function MessageCard({ message: m }: { message: Message }) {
     return (
       <div className="flex items-start gap-2 px-1 text-xs text-zinc-500">
         <span className="mt-1 size-1.5 shrink-0 rounded-full bg-zinc-600" />
-        <span>
+        <span className="whitespace-pre-line">
           <span className="font-medium text-zinc-400">{m.title}.</span> {m.parts.map((p) => p.content).join(' ')}
+          {m.usage && <span className="block font-mono text-zinc-600">{formatUsage(m.usage)}</span>}
         </span>
       </div>
     );
@@ -70,6 +71,8 @@ export default function MessageCard({ message: m }: { message: Message }) {
           {m.verdict && <VerdictBadge verdict={m.verdict} />}
           {running && <Spinner />}
           {m.status === 'error' && <span className="text-red-400">failed</span>}
+          {m.model && <span className="hidden font-mono text-zinc-600 sm:inline">{m.model}</span>}
+          {m.usage && <span className="hidden font-mono tabular-nums sm:inline" title="Token của lượt này">{formatUsage(m.usage)}</span>}
           <span className="tabular-nums">{elapsed(m, now)}</span>
         </span>
       </header>
