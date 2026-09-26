@@ -2,3 +2,4 @@ node_modules/
 dist/
 data/runs/*.json
 *.log
+.impeccable/hook.cache.json

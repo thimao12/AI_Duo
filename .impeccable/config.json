@@ -9,7 +9,7 @@
         "files": [
           "web/src/index.css"
         ],
-        "createdAt": "2026-09-26T09:03:42.639Z",
+        "createdAt": "2026-09-26T09:51:52.033Z",
         "reason": "model triage: L33 is the left rule on markdown blockquotes (standard quote typography), not a card accent"
       }
     ]
