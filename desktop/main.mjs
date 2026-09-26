@@ -1,8 +1,9 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { copyFile, mkdir, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
+import { openAgentLink } from './link-handler.mjs';
 
 const here = import.meta.dirname;
 const dist = path.join(here, 'dist');
@@ -62,24 +63,6 @@ async function start() {
   createWindow(url);
 }
 
-/** Links in agent output: web links go to the default browser, file paths open in Explorer/the editor. */
-function openLink(raw, appUrl) {
-  let u;
-  try {
-    u = new URL(raw);
-  } catch {
-    return;
-  }
-  if (u.origin !== new URL(appUrl).origin) {
-    if (u.protocol === 'http:' || u.protocol === 'https:' || u.protocol === 'mailto:') shell.openExternal(u.href);
-    return;
-  }
-  // Codex links files like /C:/Users/…/price.js
-  let p = decodeURIComponent(u.pathname);
-  if (/^\/[A-Za-z]:[\\/]/.test(p)) p = p.slice(1);
-  if (existsSync(p)) shell.openPath(p);
-}
-
 function createWindow(url) {
   win = new BrowserWindow({
     width: 1320,
@@ -99,13 +82,13 @@ function createWindow(url) {
   });
 
   win.webContents.setWindowOpenHandler(({ url: target }) => {
-    openLink(target, url);
+    openAgentLink(target, url, { statSync, shell });
     return { action: 'deny' };
   });
   win.webContents.on('will-navigate', (e, target) => {
     // Only in-page (hash) routing is allowed inside the window.
     e.preventDefault();
-    openLink(target, url);
+    openAgentLink(target, url, { statSync, shell });
   });
 
   win.once('ready-to-show', () => win.show());

@@ -21,6 +21,8 @@ pnpm desktop:dist   # đóng gói → desktop/release/AI-Duo-Setup-x.y.z.exe (c�
 
 Bản desktop lưu lịch sử phiên ở `%APPDATA%\AI Duo\runs` và prompt ở `%APPDATA%\AI Duo\prompts`. Prompt ở đây sửa được, và app chỉ chép file prompt nào chưa có, nên phần bạn đã sửa sẽ không bị ghi đè.
 
+Link trong output agent mở thư mục và các file `.md`, `.txt`, `.log`, `.json`, `.diff`, `.patch`, `.csv`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.svg` hoặc `.pdf` bằng ứng dụng mặc định. Các loại file khác chỉ mở Explorer và chọn file.
+
 **Chế độ dev (chạy trong browser, hot reload):**
 
 ```bash
@@ -32,6 +34,8 @@ API chỉ nhận request có `Host` là `localhost` hoặc `127.0.0.1`; request 
 Yêu cầu: `claude` và `codex` có trong PATH và đã đăng nhập. Có thể đặt đường dẫn khác qua `CLAUDE_BIN` / `CODEX_BIN`.
 
 Smoke test 2 adapter (1 turn + 1 turn resume mỗi CLI): `pnpm --filter server test:agents`
+
+Kiểm tra cách mở link file trong desktop: `pnpm --filter server test:desktop-links`
 
 ## Quyền của agent
 
