@@ -3,4 +3,5 @@ dist/
 data/runs/*.json
 *.log
 .impeccable/hook.cache.json
-.impeccable/config.json.impeccable/review/
+.impeccable/config.json
+.impeccable/review/
