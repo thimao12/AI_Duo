@@ -31,6 +31,80 @@
       FORM: Canon, pinned by the user ("giống Codex app desktop"); seed key: user-pinned, no roll.
       FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md
     -->
+    <style>
+      #startup-state {
+        position: fixed;
+        inset: 0;
+        z-index: 99999;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: Canvas;
+        color: CanvasText;
+        font: 14px/1.5 system-ui, sans-serif;
+      }
+      #startup-state[hidden] { display: none; }
+      #startup-state > section { width: min(100%, 520px); }
+      #startup-state h1 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+      #startup-state p { margin: 0; opacity: .72; }
+      #startup-state pre { margin: 16px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; opacity: .72; }
+      #startup-reload {
+        margin-top: 20px;
+        border: 0;
+        border-radius: 8px;
+        padding: 9px 14px;
+        background: CanvasText;
+        color: Canvas;
+        font: inherit;
+        cursor: pointer;
+      }
+      #startup-reload[hidden] { display: none; }
+    </style>
+    <div id="startup-state" role="status" aria-live="polite">
+      <section>
+        <h1 id="startup-title">Đang mở AI Duo</h1>
+        <p id="startup-message">Đang khởi chạy giao diện…</p>
+        <pre id="startup-detail" hidden></pre>
+        <button id="startup-reload" type="button" hidden>Tải lại</button>
+      </section>
+    </div>
+    <script>
+      (() => {
+        const state = document.getElementById('startup-state');
+        const title = document.getElementById('startup-title');
+        const message = document.getElementById('startup-message');
+        const detail = document.getElementById('startup-detail');
+        const reload = document.getElementById('startup-reload');
+        let ready = false;
+
+        window.aiDuoStartupReady = () => {
+          ready = true;
+          state.hidden = true;
+        };
+        const fail = (reason) => {
+          if (ready) return;
+          title.textContent = 'Không thể mở giao diện AI Duo';
+          message.textContent = 'Hãy tải lại ứng dụng. Nếu lỗi vẫn còn, gửi dòng lỗi bên dưới để kiểm tra.';
+          if (reason) {
+            detail.textContent = String(reason).slice(0, 800);
+            detail.hidden = false;
+          }
+          reload.hidden = false;
+          state.setAttribute('role', 'alert');
+        };
+
+        window.addEventListener('error', (event) => {
+          const target = event.target;
+          if (target && target !== window) fail(`Không tải được tài nguyên: ${target.src || target.href || target.tagName}`);
+          else fail(event.error?.stack || event.message || 'Lỗi JavaScript khi khởi chạy.');
+        }, true);
+        window.addEventListener('unhandledrejection', (event) => {
+          fail(event.reason?.stack || event.reason || 'Lỗi khởi chạy không xác định.');
+        });
+        reload.addEventListener('click', () => window.location.reload());
+        window.setTimeout(() => fail('Giao diện không phản hồi sau 12 giây.'), 12000);
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
