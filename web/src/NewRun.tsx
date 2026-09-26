@@ -15,6 +15,7 @@ const DEFAULTS: Form = {
   judge: 'claude',
   coder: 'codex',
   testCommand: '',
+  turnTimeoutMin: 30,
   models: { claude: '', codex: '' },
 };
 
@@ -207,6 +208,17 @@ export default function NewRun({ onCreated }: { onCreated: (id: string) => void 
               </Field>
             </div>
           )}
+          <Field label="Giới hạn mỗi lượt (phút)" hint="Quá thời gian này thì lượt của agent bị dừng.">
+            <input
+              type="number"
+              min={1}
+              max={180}
+              className={`w-24 ${box}`}
+              value={form.turnTimeoutMin}
+              onChange={(e) => set('turnTimeoutMin', Number(e.target.value))}
+            />
+          </Field>
+          <div className="hidden sm:block" />
           <Field label="Model Claude" hint="VD: opus, sonnet. Để trống = mặc định">
             <input className={`${input} font-mono`} value={form.models.claude} onChange={(e) => set('models', { ...form.models, claude: e.target.value })} />
           </Field>

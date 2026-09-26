@@ -14,6 +14,8 @@ export interface RunConfig {
   /** pair: who writes code (the other one reviews) */
   coder: AgentName;
   testCommand?: string;
+  /** Max minutes a single agent turn may take before it is killed. */
+  turnTimeoutMin: number;
   models?: Partial<Record<AgentName, string>>;
 }
 

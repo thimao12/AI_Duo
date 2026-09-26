@@ -96,6 +96,7 @@ export class RunContext {
         sessionId: key ? this.sessions.get(key) : undefined,
         model: this.run.config.models?.[t.agent] || undefined,
         signal: this.abort.signal,
+        timeoutMs: (this.run.config.turnTimeoutMin || 30) * 60_000,
         onEvent: (e) => this.pushEvent(m, e),
       });
       if (key && res.sessionId) this.sessions.set(key, res.sessionId);

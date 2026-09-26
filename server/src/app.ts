@@ -35,6 +35,7 @@ function parseConfig(body: any): RunConfig | string {
     judge: isAgent(body.judge) ? body.judge : 'claude',
     coder: isAgent(body.coder) ? body.coder : 'codex',
     testCommand: String(body.testCommand ?? '').trim() || undefined,
+    turnTimeoutMin: Math.min(Math.max(Number(body.turnTimeoutMin) || 30, 1), 180),
     models: {
       claude: String(body.models?.claude ?? '').trim() || undefined,
       codex: String(body.models?.codex ?? '').trim() || undefined,
