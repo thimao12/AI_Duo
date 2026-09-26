@@ -9,6 +9,8 @@ App web local để **Claude Code** và **Codex** cùng làm việc với nhau. 
 | **Debate** | Cả 2 đề xuất song song → review chéo N vòng (mỗi con kết thúc bằng `VERDICT: AGREE/REVISE`) → dừng sớm nếu cả 2 cùng AGREE → judge viết **giải pháp cuối**. Agent chỉ được đọc (read-only). |
 | **Pair** | Coder sửa code trong repo → Reviewer đọc diff + chạy test → trả JSON `APPROVE / CHANGES_REQUESTED` → coder sửa tiếp (resume đúng session) → lặp tới khi approve hoặc hết số vòng. **Không tự commit.** |
 
+Pair chỉ chạy một phiên tại một repo tại một thời điểm. Nếu repo đã có phiên pair đang chạy, API trả `409` cho yêu cầu mới.
+
 ## Chạy
 
 **App desktop (cửa sổ riêng, không cần browser):**

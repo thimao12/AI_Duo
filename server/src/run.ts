@@ -24,9 +24,13 @@ export interface TurnResult {
 export class RunContext {
   readonly run: Run;
   readonly abort = new AbortController();
+  userCancelled = false;
+  private finished = false;
   private listeners = new Set<(e: RunEvent) => void>();
+  private inflightTurns = new Set<Promise<unknown>>();
   private sessions = new Map<string, string>();
   private saveTimer?: NodeJS.Timeout;
+  private saveInFlight?: Promise<void>;
 
   constructor(config: RunConfig) {
     this.run = {
@@ -48,12 +52,22 @@ export class RunContext {
   }
 
   private scheduleSave() {
+    if (this.finished) return;
     clearTimeout(this.saveTimer);
-    this.saveTimer = setTimeout(() => saveRun(this.run).catch(console.error), 500);
+    this.saveTimer = setTimeout(() => {
+      if (this.finished) return;
+      this.saveInFlight = (this.saveInFlight ?? Promise.resolve())
+        .then(() => saveRun(this.run))
+        .catch((err) => console.error(err));
+    }, 500);
   }
 
   get cancelled() {
-    return this.abort.signal.aborted;
+    return this.userCancelled;
+  }
+
+  get inflight(): ReadonlySet<Promise<unknown>> {
+    return this.inflightTurns;
   }
 
   /** A short informational message from the orchestrator itself. */
@@ -71,11 +85,13 @@ export class RunContext {
   }
 
   private pushEvent(m: Message, event: Parameters<typeof applyAgentEvent>[1]) {
+    if (this.finished) return;
     applyAgentEvent(m.parts, event);
     this.emit({ type: 'message.event', id: m.id, event });
   }
 
   private endMessage(m: Message, status: Message['status'], verdict?: Verdict) {
+    if (this.finished) return;
     m.status = status;
     m.verdict = verdict;
     m.endedAt = Date.now();
@@ -84,8 +100,18 @@ export class RunContext {
   }
 
   /** One call to one agent, streamed into one message. */
-  async turn(t: TurnOptions): Promise<TurnResult> {
-    if (this.cancelled) throw new AbortedError();
+  turn(t: TurnOptions): Promise<TurnResult> {
+    const promise = this.runTurn(t);
+    this.inflightTurns.add(promise);
+    void promise.then(
+      () => this.inflightTurns.delete(promise),
+      () => this.inflightTurns.delete(promise),
+    );
+    return promise;
+  }
+
+  private async runTurn(t: TurnOptions): Promise<TurnResult> {
+    if (this.abort.signal.aborted) throw new AbortedError();
     const m = this.startMessage(t.agent, t.phase, t.round, t.title);
     const key = t.sessionKey ? `${t.agent}:${t.sessionKey}` : undefined;
     try {
@@ -106,7 +132,10 @@ export class RunContext {
       this.endMessage(m, 'done', verdict);
       return { text: res.finalText, verdict };
     } catch (err) {
-      const msg = err instanceof AbortedError ? 'Cancelled' : (err as Error).message;
+      // An internal abort means another turn failed. Leave this message running so
+      // finish() can mark it as stopped without reporting a user cancellation.
+      if (err instanceof AbortedError && !this.userCancelled) throw err;
+      const msg = this.userCancelled && err instanceof AbortedError ? 'Cancelled' : (err as Error).message;
       this.pushEvent(m, { kind: 'error', content: msg });
       this.endMessage(m, 'error');
       throw err;
@@ -120,8 +149,16 @@ export class RunContext {
   }
 
   async finish(status: Run['status'], error?: string) {
+    if (this.finished) return;
+    for (const message of this.run.messages) {
+      if (message.status !== 'running') continue;
+      this.pushEvent(message, { kind: 'error', content: 'Stopped: run ended' });
+      this.endMessage(message, 'error');
+    }
     this.update({ status, error, endedAt: Date.now() });
+    this.finished = true;
     clearTimeout(this.saveTimer);
+    await this.saveInFlight;
     await saveRun(this.run);
   }
 }

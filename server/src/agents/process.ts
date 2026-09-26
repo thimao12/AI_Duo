@@ -1,4 +1,4 @@
-import { spawn, execFile } from 'node:child_process';
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
 
 export interface SpawnJsonlOptions {
   cwd: string;
@@ -16,10 +16,15 @@ export class AbortedError extends Error {
   }
 }
 
-function killTree(pid: number | undefined) {
-  if (!pid) return;
+function killTree(pid: number | undefined, child?: ChildProcess): Promise<void> {
+  if (!pid) return Promise.resolve();
   if (process.platform === 'win32') {
-    execFile('taskkill', ['/PID', String(pid), '/T', '/F'], () => {});
+    return new Promise((resolve) => {
+      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], (err) => {
+        if (err) child?.kill();
+        resolve();
+      });
+    });
   } else {
     try {
       process.kill(-pid, 'SIGKILL');
@@ -28,6 +33,7 @@ function killTree(pid: number | undefined) {
         process.kill(pid, 'SIGKILL');
       } catch {}
     }
+    return Promise.resolve();
   }
 }
 
@@ -50,6 +56,9 @@ export function spawnJsonl(cmd: string, args: string[], o: SpawnJsonlOptions): P
     let stderr = '';
     let buf = '';
     let settled = false;
+    let childClosed = false;
+    let resolveClosed!: () => void;
+    const closed = new Promise<void>((resolve) => (resolveClosed = resolve));
 
     const finish = (fn: () => void) => {
       if (settled) return;
@@ -60,13 +69,16 @@ export function spawnJsonl(cmd: string, args: string[], o: SpawnJsonlOptions): P
     };
 
     const onAbort = () => {
-      killTree(child.pid);
-      finish(() => reject(new AbortedError()));
+      void killTree(child.pid, child).then(async () => {
+        // A grandchild holding the pipes open must not keep the run (and its pair lock) alive.
+        if (!childClosed) await Promise.race([closed, new Promise((r) => setTimeout(r, 5000))]);
+        finish(() => reject(new AbortedError()));
+      });
     };
     o.signal.addEventListener('abort', onAbort, { once: true });
 
     const timer = setTimeout(() => {
-      killTree(child.pid);
+      void killTree(child.pid, child);
       finish(() => reject(new Error(`${cmd} timed out after ${Math.round(o.timeoutMs / 1000)}s`)));
     }, o.timeoutMs);
 
@@ -104,8 +116,10 @@ export function spawnJsonl(cmd: string, args: string[], o: SpawnJsonlOptions): P
 
     child.on('error', (err) => finish(() => reject(new Error(`Failed to start ${cmd}: ${err.message}`))));
     child.on('close', (code) => {
+      childClosed = true;
+      resolveClosed();
       if (buf.trim()) handleLine(buf);
-      finish(() => resolve({ code: code ?? -1, stderr }));
+      finish(() => (o.signal.aborted ? reject(new AbortedError()) : resolve({ code: code ?? -1, stderr })));
     });
 
     child.stdin.on('error', () => {}); // child may exit before reading everything

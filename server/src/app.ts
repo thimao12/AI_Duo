@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, realpathSync, statSync } from 'node:fs';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createAdaptorServer } from '@hono/node-server';
@@ -7,7 +7,6 @@ import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import type { AgentName } from './agents/index.ts';
-import { AbortedError } from './agents/process.ts';
 import { runDebate } from './modes/debate.ts';
 import { runPair } from './modes/pair.ts';
 import { resolveBin } from './agents/bins.ts';
@@ -17,6 +16,7 @@ import { listRuns, loadRun } from './store.ts';
 import type { RunConfig, RunEvent } from './types.ts';
 
 const app = new Hono();
+const activePairRepos = new Set<string>();
 
 const defaultDevOrigins = 'http://localhost:5173,http://127.0.0.1:5173';
 
@@ -116,17 +116,39 @@ app.post('/api/runs', async (c) => {
   const cfg = parseConfig(await c.req.json().catch(() => null));
   if (typeof cfg === 'string') return c.json({ error: cfg }, 400);
 
+  let pairRepoKey: string | undefined;
+  if (cfg.mode === 'pair') {
+    let repo: string;
+    try {
+      repo = realpathSync.native(cfg.cwd);
+    } catch (err) {
+      return c.json({ error: `Cannot resolve working directory: ${(err as Error).message}` }, 400);
+    }
+    pairRepoKey = process.platform === 'win32' ? repo.toLowerCase() : repo;
+    if (activePairRepos.has(pairRepoKey)) return c.json({ error: 'A pair run is already active for this repository' }, 409);
+    activePairRepos.add(pairRepoKey);
+  }
+
   const ctx = new RunContext(cfg);
   active.set(ctx.run.id, ctx);
   (async () => {
+    let status: 'done' | 'error' | 'cancelled' = 'done';
+    let error: string | undefined;
     try {
       await (cfg.mode === 'debate' ? runDebate(ctx) : runPair(ctx));
-      await ctx.finish('done');
     } catch (err) {
-      if (err instanceof AbortedError || ctx.cancelled) await ctx.finish('cancelled');
-      else await ctx.finish('error', (err as Error).message);
+      status = ctx.cancelled ? 'cancelled' : 'error';
+      error = status === 'error' ? (err as Error).message : undefined;
+      ctx.abort.abort();
+      await Promise.allSettled([...ctx.inflight]);
+    }
+    try {
+      await ctx.finish(status, error);
+    } catch (err) {
+      console.error(`Failed to save finished run ${ctx.run.id}:`, err);
     } finally {
       active.delete(ctx.run.id);
+      if (pairRepoKey) activePairRepos.delete(pairRepoKey);
     }
   })();
   return c.json({ id: ctx.run.id });
@@ -135,6 +157,7 @@ app.post('/api/runs', async (c) => {
 app.post('/api/runs/:id/cancel', (c) => {
   const ctx = active.get(c.req.param('id'));
   if (!ctx) return c.json({ error: 'run is not active' }, 404);
+  ctx.userCancelled = true;
   ctx.abort.abort();
   return c.json({ ok: true });
 });
@@ -195,7 +218,7 @@ export interface StartOptions {
   fallbackPort?: boolean;
 }
 
-export function startServer({ port, host = '127.0.0.1', fallbackPort = false }: StartOptions): Promise<{ url: string; close: () => void }> {
+export function startServer({ port, host = '127.0.0.1', fallbackPort = false }: StartOptions): Promise<{ url: string; close: () => Promise<void> }> {
   const server = createAdaptorServer({ fetch: app.fetch });
   const listen = (p: number) =>
     new Promise<number>((resolve, reject) => {
@@ -210,10 +233,17 @@ export function startServer({ port, host = '127.0.0.1', fallbackPort = false }: 
       if (fallbackPort && err.code === 'EADDRINUSE') return listen(0);
       throw err;
     })
-    .then((p) => ({ url: `http://${host}:${p}`, close: () => server.close() }));
+    .then((p) => ({
+      url: `http://${host}:${p}`,
+      close: () => new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
+    }));
 }
 
 /** Kill every running agent process (used on shutdown). */
 export function abortAll() {
-  for (const ctx of active.values()) ctx.abort.abort();
+  for (const ctx of active.values()) {
+    // Shutting down is a deliberate stop, not a failure.
+    ctx.userCancelled = true;
+    ctx.abort.abort();
+  }
 }
