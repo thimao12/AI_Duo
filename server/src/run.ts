@@ -42,6 +42,11 @@ export function validateTurnOutput(agent: AgentName, role: Role, finalText: stri
   }
 }
 
+/** Sortable run id: creation time plus a random suffix. */
+export function newRunId() {
+  return `${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}-${randomUUID().slice(0, 6)}`;
+}
+
 export class RunContext {
   readonly run: Run;
   readonly abort = new AbortController();
@@ -56,9 +61,9 @@ export class RunContext {
   private resolvePairDecision?: (continueRun: boolean) => void;
   private resolvePlanDecision?: (answer: PlanDecisionAnswer) => void;
 
-  constructor(config: RunConfig, existing?: Run) {
+  constructor(config: RunConfig, existing?: Run, id = newRunId()) {
     this.run = existing ?? {
-      id: `${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}-${randomUUID().slice(0, 6)}`,
+      id,
       config,
       status: 'running',
       createdAt: Date.now(),
@@ -206,6 +211,7 @@ export class RunContext {
         effort,
         signal: this.abort.signal,
         timeoutMs: (this.run.config.turnTimeoutMin || 30) * 60_000,
+        allowUnverifiedAuth: this.run.config.skipAuthCheck === true,
         onEvent: (e) => this.pushEvent(m, e),
       });
       validateTurnOutput(t.agent, t.role, res.finalText);

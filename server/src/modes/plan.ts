@@ -1,4 +1,5 @@
 import type { AgentName } from '../agents/types.ts';
+import { gitRequiredMessage, isGitRepo } from '../git.ts';
 import type { RunContext } from '../run.ts';
 import type { Verdict } from '../types.ts';
 
@@ -67,7 +68,9 @@ export async function runPlan(ctx: RunContext): Promise<boolean> {
       ? `${plan}\n\n### Reviewer notes after the final review\n${reviewText}`
       : plan;
     ctx.update({ final: finalPlan });
-    const answer = await ctx.waitForPlanDecision({ type: 'plan-approval', reviewRounds, revision });
+    // Approval switches to Code, which needs Git: say so before asking, not after the user approves.
+    const codeBlocked = (await isGitRepo(cwd)) ? undefined : `${gitRequiredMessage(cwd)} Until then the plan can only be refined or stopped.`;
+    const answer = await ctx.waitForPlanDecision({ type: 'plan-approval', reviewRounds, revision, ...(codeBlocked && { codeBlocked }) });
     if (answer.action === 'approve') return true;
     if (answer.action !== 'refine' || ctx.cancelled) return false;
 

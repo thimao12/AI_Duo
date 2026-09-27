@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { agentEnv, assertPlanOnly } from './billing.ts';
 import { resolveBin } from './bins.ts';
+import { checkAgent } from './check.ts';
 import { spawnJsonl } from './process.ts';
 import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult, Usage } from './types.ts';
 
@@ -105,7 +106,7 @@ export const codex: AgentAdapter = {
 
     try {
       const bin = resolveBin('codex');
-      await assertPlanOnly('codex', bin, o.cwd);
+      await assertPlanOnly('codex', bin, o.cwd, { allowUnverifiedAuth: o.allowUnverifiedAuth });
       const { code, stderr } = await spawnJsonl(bin.cmd, [...bin.prefixArgs, ...args], {
         cwd: o.cwd,
         stdin: o.prompt,
@@ -129,4 +130,5 @@ export const codex: AgentAdapter = {
       rm(dir, { recursive: true, force: true }).catch(() => {});
     }
   },
+  check: (cwd) => checkAgent('codex', cwd),
 };

@@ -1,5 +1,6 @@
 import { agentEnv, assertPlanOnly, blockClaudeUntil, claudeOverageMessage } from './billing.ts';
 import { resolveBin } from './bins.ts';
+import { checkAgent } from './check.ts';
 import { AbortedError, spawnJsonl } from './process.ts';
 import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult, Usage } from './types.ts';
 
@@ -134,7 +135,7 @@ export const claude: AgentAdapter = {
     let state = initialClaudeJsonState(o.sessionId);
 
     const bin = resolveBin('claude');
-    await assertPlanOnly('claude', bin, o.cwd);
+    await assertPlanOnly('claude', bin, o.cwd, { allowUnverifiedAuth: o.allowUnverifiedAuth });
     // Our own abort, so extra usage can stop the CLI mid-turn; the run's cancel still flows through.
     const stop = new AbortController();
     const onCancel = () => stop.abort();
@@ -170,4 +171,5 @@ export const claude: AgentAdapter = {
     }
     return { finalText: state.finalText, sessionId: state.sessionId, usage: state.usage };
   },
+  check: (cwd) => checkAgent('claude', cwd),
 };

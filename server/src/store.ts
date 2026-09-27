@@ -1,5 +1,6 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { runsActiveElsewhere } from './lock.ts';
 import { paths } from './paths.ts';
 import type { Run } from './types.ts';
 
@@ -45,11 +46,14 @@ export async function saveRun(run: Run) {
   }
 }
 
-export async function loadRun(id: string): Promise<Run | undefined> {
+/** `elsewhere`: runs active in other processes, when the caller already looked them up. */
+export async function loadRun(id: string, elsewhere?: Map<string, unknown>): Promise<Run | undefined> {
   if (!/^[\w-]+$/.test(id)) return undefined;
   try {
     const run: Run = JSON.parse(await readFile(file(id), 'utf8'));
-    // A run or message still marked "running" on disk means the server died mid-run.
+    // Another AI Duo process (CLI, desktop) is running it and checkpoints it here.
+    if (run.status === 'running' && (elsewhere ?? (await runsActiveElsewhere())).has(run.id)) return run;
+    // Otherwise a run or message still marked "running" on disk means the server died mid-run.
     if (run.status === 'running') {
       run.status = 'error';
       run.error = 'Interrupted (server restarted)';
@@ -80,9 +84,10 @@ export interface RunSummary {
 
 export async function listRuns(): Promise<RunSummary[]> {
   const names = (await readdir(DIR)).filter((n) => n.endsWith('.json'));
+  const elsewhere = await runsActiveElsewhere();
   const out: RunSummary[] = [];
   for (const n of names) {
-    const run = await loadRun(n.slice(0, -5));
+    const run = await loadRun(n.slice(0, -5), elsewhere);
     if (run) out.push({ id: run.id, title: run.title, mode: run.config.mode, prompt: run.config.prompt.slice(0, 2000), cwd: run.config.cwd, status: run.status, createdAt: run.createdAt, claudeLimits: run.claudeLimits });
   }
   return out.sort((a, b) => b.createdAt - a.createdAt);

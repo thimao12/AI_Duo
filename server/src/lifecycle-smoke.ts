@@ -24,6 +24,9 @@ const [{ agents }, { AbortedError, spawnJsonl }, { startServer, abortAll }, { ac
 
 const originalClaude = agents.claude.run;
 const originalCodex = agents.codex.run;
+const originalChecks = { claude: agents.claude.check, codex: agents.codex.check };
+// Mocked agents need no binary or login; preflight itself is covered by service-smoke.
+for (const agent of ['claude', 'codex'] as const) agents[agent].check = async () => ({ agent, path: agent, version: 'mock', auth: 'ok' });
 const server = await startServer({ port: 0 });
 const base = server.url;
 const request = (path: string, init?: RequestInit) => fetch(`${base}${path}`, init);
@@ -214,7 +217,9 @@ try {
 } finally {
   agents.claude.run = originalClaude;
   agents.codex.run = originalCodex;
-  abortAll();
+  Object.assign(agents.claude, { check: originalChecks.claude });
+  Object.assign(agents.codex, { check: originalChecks.codex });
+  void abortAll();
   const cleanupDeadline = Date.now() + 5_000;
   while (active.size && Date.now() < cleanupDeadline) await new Promise((resolve) => setTimeout(resolve, 25));
   await server.close();

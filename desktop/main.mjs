@@ -114,7 +114,13 @@ function createWindow(url) {
 }
 
 app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => {
-  // Don't leave claude/codex processes running after the window is gone.
-  server?.abortAll();
+let stopping = false;
+app.on('before-quit', (e) => {
+  // Don't leave claude/codex processes running after the window is gone. Wait (briefly) until each
+  // run is saved and has released its repository lock, which the CLI and dev server share.
+  if (!server || stopping) return;
+  stopping = true;
+  e.preventDefault();
+  const timeout = new Promise((resolve) => setTimeout(resolve, 8000));
+  Promise.race([server.abortAll(), timeout]).finally(() => app.quit());
 });

@@ -22,6 +22,20 @@ export async function isGitRepo(cwd: string): Promise<boolean> {
   }
 }
 
+/** Why Code cannot run in `cwd`, for every place that checks it (start, follow-up, Plan approval). */
+export function gitRequiredMessage(cwd: string) {
+  return `Code mode needs a git repository so changes can be diffed and reverted. "${cwd}" is not one (run \`git init\` there first).`;
+}
+
+/** Root of the working tree containing `cwd`, or null outside a repository. */
+export async function gitToplevel(cwd: string): Promise<string | null> {
+  try {
+    return (await git(cwd, ['rev-parse', '--show-toplevel'])).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
 /** Run `fn` with a throwaway index so the user's real staging area is never touched. */
 async function withTempIndex<T>(cwd: string, fn: (env: NodeJS.ProcessEnv) => Promise<T>): Promise<T> {
   const dir = await mkdtemp(path.join(tmpdir(), 'ai-duo-idx-'));

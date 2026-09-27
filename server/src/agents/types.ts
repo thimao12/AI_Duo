@@ -34,7 +34,22 @@ export interface RunOptions {
   effort?: string;
   signal: AbortSignal;
   timeoutMs?: number;
+  /** Run even if the CLI cannot report its login (never when the login is known to be wrong). */
+  allowUnverifiedAuth?: boolean;
   onEvent: (e: AgentEvent) => void;
+}
+
+/** Result of the pre-run check: binary, version and login, without calling a model. */
+export interface AgentCheck {
+  agent: AgentName;
+  /** Binary or shim that was selected; the bare name when nothing was found. */
+  path: string | null;
+  version: string | null;
+  /** Why the binary cannot be used (missing, unsupported shim, `--version` failed). */
+  error?: string;
+  /** skipped: not checked because the binary itself is unusable. */
+  auth: 'ok' | 'failed' | 'unknown' | 'skipped';
+  authError?: string;
 }
 
 export interface Usage {
@@ -54,4 +69,6 @@ export interface RunResult {
 export interface AgentAdapter {
   name: AgentName;
   run(opts: RunOptions): Promise<RunResult>;
+  /** Resolve the binary, read its version and login status for `cwd`. */
+  check(cwd: string): Promise<AgentCheck>;
 }

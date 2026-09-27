@@ -1,0 +1,28 @@
+{
+  "name": "ai-duo-cli",
+  "version": "0.1.0",
+  "description": "AI Duo in the terminal: Claude × Codex Code and Plan runs",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "ai-duo": "dist/ai-duo.mjs"
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "node build.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node build.mjs && tsx src/cli-smoke.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

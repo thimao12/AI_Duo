@@ -48,6 +48,8 @@ export interface RunConfig {
   efforts?: Partial<Record<AgentName, string>>;
   /** Set when mode/agents/models were picked by the auto-router. */
   route?: RoutePlan;
+  /** The user chose to run although an agent CLI could not report its login status. */
+  skipAuthCheck?: boolean;
 }
 
 export type Verdict = 'AGREE' | 'REVISE' | 'APPROVE' | 'CHANGES_REQUESTED';
@@ -62,6 +64,8 @@ export interface PlanDecision {
   type: 'plan-approval';
   reviewRounds: number;
   revision: number;
+  /** Set when approving could not start Code (the folder is not a Git repository); approval is refused. */
+  codeBlocked?: string;
 }
 
 export type PlanDecisionAnswer =

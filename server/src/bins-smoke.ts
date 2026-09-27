@@ -71,6 +71,7 @@ try {
       [
         "const fs = require('node:fs');",
         "if (process.argv.includes('--version')) { process.stdout.write('codex npm shim 1.2.3\\n'); process.exit(0); }",
+        "if (process.argv.includes('login')) { process.stdout.write('Logged in using ChatGPT\\n'); process.exit(0); }",
         "const args = process.argv.slice(2);",
         "const output = args.indexOf('-o');",
         "if (output >= 0) fs.writeFileSync(args[output + 1], 'npm shim completed one turn');",

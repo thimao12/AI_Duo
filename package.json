@@ -8,6 +8,8 @@
     "desktop:dist": "pnpm --filter desktop dist",
     "build": "pnpm --filter web build",
     "start": "pnpm --filter server start",
+    "cli": "pnpm --silent --filter ai-duo-cli dev",
+    "cli:build": "pnpm --filter ai-duo-cli build",
     "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {

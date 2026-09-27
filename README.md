@@ -10,7 +10,7 @@ App web local để **Claude Code** và **Codex** cùng làm việc với nhau. 
 | **Debate** | Cả 2 đề xuất song song → review chéo N vòng (mỗi con kết thúc bằng `VERDICT: AGREE/REVISE`) → dừng sớm nếu cả 2 cùng AGREE → judge viết **giải pháp cuối**. Agent chỉ được đọc (read-only). |
 | **Pair** | Coder sửa code trong repo → Reviewer đọc diff + chạy test → trả JSON `APPROVE / CHANGES_REQUESTED` trong code block → coder sửa tiếp (resume đúng session) → lặp tới khi approve hoặc hết số vòng. Verdict không hợp lệ bị coi là yêu cầu sửa; nếu reviewer ghi file, phiên không thể được duyệt và danh sách file được gửi cho coder. **Không tự commit.** |
 
-Pair chỉ chạy một phiên tại một repo tại một thời điểm. Nếu repo đã có phiên pair đang chạy, API trả `409` cho yêu cầu mới.
+Mỗi repo chỉ chạy một phiên Code/Plan tại một thời điểm, **kể cả giữa các tiến trình** (web, desktop, CLI). Khóa là file JSON trong `<AI_DUO_DATA_DIR>/locks/`, đặt tên theo hash của Git toplevel đã chuẩn hóa (ngoài Git – chỉ Plan được phép – là thư mục làm việc), nên hai đường dẫn khác nhau vào cùng repo tranh cùng một khóa. Yêu cầu mới bị từ chối (API `409`, CLI mã thoát `4`) kèm run ID, PID và ứng dụng đang giữ khóa. Khóa được nhả khi agent đã dừng và phiên đã lưu (xong, lỗi, dừng hoặc Ctrl+C). Khóa **không bao giờ tự bị xóa vì cũ**: nếu tiến trình giữ khóa chết đột ngột, chạy `ai-duo unlock` – lệnh chỉ gỡ khi PID đó không còn chạy trên máy này (`--force` khi chắc chắn, ví dụ PID đã bị chương trình khác dùng lại).
 
 ## Chạy
 
@@ -23,6 +23,25 @@ pnpm desktop:dist   # đóng gói → desktop/release/AI-Duo-Setup-x.y.z.exe (c�
 ```
 
 Bản desktop lưu lịch sử phiên ở `%APPDATA%\AI Duo\runs` và prompt ở `%APPDATA%\AI Duo\prompts`. Prompt ở đây sửa được, và app chỉ chép file prompt nào chưa có, nên phần bạn đã sửa sẽ không bị ghi đè.
+
+**CLI (`ai-duo`):**
+
+```bash
+pnpm cli:build                               # → cli/dist/ai-duo.mjs + cli/dist/prompts
+node cli/dist/ai-duo.mjs doctor              # hoặc: cd cli && npm link → gọi `ai-duo` ở bất kỳ đâu
+ai-duo run "thêm nút xuất CSV" --mode plan   # chạy trong thư mục hiện tại (hoặc --cwd <dir>)
+ai-duo runs                                  # phiên của repo hiện tại (--all: mọi thư mục)
+ai-duo show <id> [--diff]                    ai-duo continue <id> "sửa thêm…"
+pnpm cli run "…" --cwd <dir>                 # chạy thẳng từ source ở gốc repo, không cần build
+```
+
+CLI chạy trực tiếp trên cùng lõi `RunService` với server (routing, kiểm tra agent, khóa repo, Plan → Code), không cần server đang chạy. Vẫn cần Node ≥ 22, Git, Claude CLI và Codex CLI trên máy. Tiến độ in ra `stderr`, kết quả cuối ra `stdout` (`--json` cho máy đọc); không có TTY hoặc có `NO_COLOR` thì bỏ màu. Mã thoát: `0` xong · `1` phiên lỗi · `2` yêu cầu sai · `3` kiểm tra agent thất bại · `4` repo đang bị khóa · `130` bị hủy.
+
+- Trước khi tạo phiên (sau routing, trước lượt model đầu tiên), CLI/server kiểm tra từng agent sẽ dùng: tìm binary, chạy `--version`, và kiểm tra đăng nhập bằng `claude auth status` / `codex login status` (không gọi model). Chưa đăng nhập hoặc đăng nhập kiểu tính tiền theo API → dừng ngay. Nếu phiên bản CLI không báo được trạng thái đăng nhập → “không xác minh được”, cần `--skip-auth-check` (API: `skipAuthCheck: true`) để chạy tiếp. `ai-duo doctor` in đường dẫn, phiên bản, trạng thái đăng nhập, thư mục dữ liệu và các khóa.
+- Điểm quyết định: có TTY thì CLI hỏi (Plan: `approve` / `refine` kèm góp ý / `stop`; Code: `continue` / `stop`; phải gõ lựa chọn rõ ràng). **Không có TTY thì mọi điểm quyết định mặc định là stop**, trừ khi có cờ: `--plan-decision=approve|stop` cho Plan (approve chuyển sang Code, được sửa file, nên không bao giờ là mặc định) và `--pair-extra-rounds=N` cho Code (mặc định `0`; mỗi lần cấp 2 vòng, không vượt quá N). Plan chạy được ngoài Git, nhưng duyệt kế hoạch sẽ chuyển sang Code (cần Git): khi đó “approve” bị từ chối kèm hướng dẫn `git init`, kế hoạch vẫn chờ để sửa/dừng, còn `--plan-decision=approve` ngoài Git bị từ chối ngay từ đầu (mã thoát `2`). Nếu stdin đóng trong lúc đang hỏi, CLI báo `stdin closed; cannot collect decision`, trả lời stop rồi kết thúc bình thường.
+- Ctrl+C hủy cây tiến trình agent, lưu phiên ở trạng thái `cancelled` và nhả khóa; nhấn lần nữa để thoát ngay (khi đó khóa còn lại tới khi `ai-duo unlock`). Chỉ hủy được từ chính terminal đang chạy; web/desktop hiển thị phiên đó đang chạy (theo checkpoint trên đĩa) nhưng không dừng được nó.
+
+**Dữ liệu dùng chung:** web (`pnpm dev`), desktop và CLI mặc định dùng chung `%APPDATA%\AI Duo\runs` (macOS: `~/Library/Application Support/AI Duo`, Linux: `~/.config/AI Duo`), nên phiên tạo bằng CLI mở được trong web/desktop và ngược lại. CLI dùng prompt ở `%APPDATA%\AI Duo\prompts` và chỉ chép các template còn thiếu, như desktop. `AI_DUO_DATA_DIR` và `AI_DUO_PROMPTS_DIR` luôn được ưu tiên. Trước đây `pnpm dev` lưu ở `data/runs` trong repo; để tiếp tục dùng lịch sử cũ, đặt `AI_DUO_DATA_DIR=<repo>/data/runs`, hoặc chép các file `*.json` (và thư mục `images/`) sang `%APPDATA%\AI Duo\runs`.
 
 Link trong output agent mở thư mục và các file `.md`, `.txt`, `.log`, `.json`, `.diff`, `.patch`, `.csv`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.svg` hoặc `.pdf` bằng ứng dụng mặc định. Các loại file khác chỉ mở Explorer và chọn file.
 
@@ -58,11 +77,16 @@ Pair mode chụp snapshot working tree lúc bắt đầu (dùng index tạm, kh�
 
 ## Cấu trúc
 
-- `server/src/agents/` – adapter cho từng CLI (parse JSONL, resume session, kill cả cây process khi huỷ)
-- `server/src/modes/` – orchestrator `debate.ts`, `pair.ts`
+- `server/src/service.ts` – `RunService`: validation, routing, kiểm tra agent, khóa repo, vòng đời phiên, hủy và các quyết định; `app.ts` (HTTP) và `cli/` chỉ là lớp giao diện mỏng gọi vào đây
+- `server/src/lock.ts` – khóa repo dùng chung giữa các tiến trình
+- `server/src/agents/` – adapter cho từng CLI (parse JSONL, resume session, kill cả cây process khi huỷ, `check()` cho preflight)
+- `server/src/modes/` – orchestrator `pair.ts` (Code), `plan.ts`, `debate.ts` (phiên cũ)
+- `cli/` – lệnh `ai-duo` (`src/commands.ts`, hiển thị tiến độ `render.ts`, quyết định `decisions.ts`); `build.mjs` bundle bằng esbuild
 - `server/src/prompts/*.md` – prompt template, sửa trực tiếp được, không cần restart
 - `web/src/` – React UI (stream qua SSE)
 - `desktop/` – Electron: `main.mjs` chạy server (bundle bằng esbuild) ngay trong app và mở cửa sổ; `build.mjs` chuẩn bị `dist/`
-- `data/runs/*.json` – lịch sử các phiên
+- `%APPDATA%\AI Duo\runs/*.json` – lịch sử các phiên (dùng chung, xem trên)
+
+Kiểm tra: `pnpm --filter server test` (gồm `test:service` – RunService với agent giả, khóa giữa hai tiến trình) và `pnpm --filter ai-duo-cli test` (build rồi chạy bản build từ thư mục ngoài repo với `claude`/`codex` giả qua pipe, cùng các quyết định có TTY, stdin đóng và Ctrl+C).
 
 Các phiên được lưu checkpoint khi tạo run và khi bắt đầu mỗi message. Nếu server khởi động lại bất ngờ, phiên và message đang chạy sẽ được hiển thị là gián đoạn trong lịch sử.

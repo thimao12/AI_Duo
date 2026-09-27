@@ -1,55 +1,31 @@
-import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { existsSync, realpathSync, statSync } from 'node:fs';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createAdaptorServer } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import type { AgentName, Usage } from './agents/index.ts';
-import { runDebate } from './modes/debate.ts';
-import { runPair } from './modes/pair.ts';
-import { runPlan } from './modes/plan.ts';
-import { agentEnv } from './agents/billing.ts';
-import { resolveBin, type ResolvedBin } from './agents/bins.ts';
-import { EFFORT, listModels } from './models.ts';
+import { listModels } from './models.ts';
 import { paths } from './paths.ts';
-import { autoRoute } from './router/index.ts';
-import { classifyByRules, CONFIDENT } from './router/rules.ts';
-import { active, RunContext } from './run.ts';
-import { deleteRun, listRuns, loadRun, saveRun } from './store.ts';
-import type { RunConfig, RunEvent } from './types.ts';
+import { IMAGE_TYPES, RunService, ServiceError, type ServiceErrorCode } from './service.ts';
+import { loadRun } from './store.ts';
+import type { RunEvent } from './types.ts';
 
 const app = new Hono();
-const activePairRepos = new Set<string>();
-const pendingFollowUps = new Set<string>();
-const IMAGE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
-const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+/** Web and desktop share this service with the CLI; `app` labels the lock files it creates. */
+export const service = new RunService({ app: process.versions.electron ? 'desktop' : 'server' });
 
-function parseImages(value: unknown): { images: NonNullable<RunConfig['images']>; buffers: Buffer[] } | string {
-  if (value === undefined) return { images: [], buffers: [] };
-  if (!Array.isArray(value) || value.length > 4) return 'Choose up to 4 images';
-  const images: NonNullable<RunConfig['images']> = [];
-  const buffers: Buffer[] = [];
-  for (const item of value) {
-    if (!item || typeof item.name !== 'string' || typeof item.dataUrl !== 'string') return 'Invalid image';
-    const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(item.dataUrl);
-    if (!match) return 'Use PNG, JPEG, WebP or GIF images';
-    if (match[2].length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 4) return 'Each image must be 5 MB or smaller';
-    const bytes = Buffer.from(match[2], 'base64');
-    if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) return 'Each image must be 5 MB or smaller';
-    const mimeType = match[1];
-    const valid = mimeType === 'image/png' ? bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))
-      : mimeType === 'image/jpeg' ? bytes.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex'))
-      : mimeType === 'image/gif' ? /^GIF8[79]a$/.test(bytes.subarray(0, 6).toString('ascii'))
-      : bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
-    if (!valid) return 'Image contents do not match the selected format';
-    images.push({ name: item.name.slice(0, 150), mimeType });
-    buffers.push(bytes);
+const STATUS: Record<ServiceErrorCode, 400 | 404 | 409 | 424 | 500> = { invalid: 400, not_found: 404, conflict: 409, preflight: 424, internal: 500 };
+
+/** Maps service failures to JSON errors; anything else is a bug and stays a 500. */
+async function handle(c: Context, fn: () => Promise<Response>): Promise<Response> {
+  try {
+    return await fn();
+  } catch (err) {
+    if (err instanceof ServiceError) return c.json({ error: err.message, ...(err.details.preflight && { preflight: err.details.preflight }) }, STATUS[err.code]);
+    throw err;
   }
-  return { images, buffers };
 }
 
 const defaultDevOrigins = 'http://localhost:5173,http://127.0.0.1:5173';
@@ -93,88 +69,11 @@ app.use('/api/*', async (c, next) => {
   await next();
 });
 
-const isAgent = (x: unknown): x is AgentName => x === 'claude' || x === 'codex';
-
-/** The router chooses agents and models within the user's selected Code or Plan mode. */
-async function parseConfig(body: any): Promise<{ cfg: RunConfig; routeUsage?: Usage } | string> {
-  if (body?.mode !== 'code' && body?.mode !== 'plan') return 'mode must be "code" or "plan"';
-  const prompt = String(body.prompt ?? '').trim();
-  if (!prompt) return 'prompt is required';
-  for (const name of ['claude', 'codex'] as const) {
-    const value = body.models?.[name];
-    if (value === undefined || value === null) continue;
-    if (typeof value !== 'string') return `models.${name} must be a valid model name`;
-    const model = value.trim();
-    if (model && (!/^[\w.:\/-]{1,64}$/.test(model) || model.startsWith('-'))) {
-      return `Invalid models.${name}: use 1-64 letters, numbers, or . : / _ - and do not start with -`;
-    }
-  }
-  for (const name of ['claude', 'codex'] as const) {
-    const value = body.efforts?.[name];
-    if (value === undefined || value === null || value === '') continue;
-    if (typeof value !== 'string' || !EFFORT.test(value)) return `Invalid efforts.${name}: use a level like low, medium or high`;
-  }
-  const cwd = path.resolve(String(body.cwd ?? '').trim() || paths.defaultCwd);
-  if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return `Working directory not found: ${cwd}`;
-  const { route, usage, ...decision } = await autoRoute(prompt, { mode: body.mode });
-  const cfg = manualConfig({ ...body, ...decision }, prompt, cwd);
-  return { cfg: { ...cfg, route }, routeUsage: usage };
-}
-
-function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
-  const maxRounds = 2;
-  const coder = isAgent(body.coder) ? body.coder : 'codex';
-  return {
-    mode: body.mode,
-    prompt,
-    cwd,
-    maxRounds,
-    judge: isAgent(body.judge) ? body.judge : 'claude',
-    coder,
-    reviewer: isAgent(body.reviewer) ? body.reviewer : coder === 'claude' ? 'codex' : 'claude',
-    testCommand: String(body.testCommand ?? '').trim() || undefined,
-    turnTimeoutMin: Math.min(Math.max(Number(body.turnTimeoutMin) || 30, 1), 180),
-    models: {
-      claude: String(body.models?.claude ?? '').trim() || undefined,
-      codex: String(body.models?.codex ?? '').trim() || undefined,
-    },
-    efforts: {
-      claude: String(body.efforts?.claude ?? '').trim() || undefined,
-      codex: String(body.efforts?.codex ?? '').trim() || undefined,
-    },
-  };
-}
-
-function version(bin: ResolvedBin): Promise<string | null> {
-  return new Promise((resolve) =>
-    execFile(
-      bin.cmd,
-      [...bin.prefixArgs, '--version'],
-      {
-        timeout: 15000,
-        windowsHide: true,
-        shell: false,
-        env: agentEnv(bin),
-      },
-      (err, out) => resolve(err ? null : out.trim()),
-    ),
-  );
-}
-
-async function agentInfo(name: AgentName) {
-  try {
-    const bin = resolveBin(name);
-    return { version: await version(bin), path: bin.resolvedFrom, error: null };
-  } catch (err) {
-    return { version: null, path: null, error: (err as Error).message };
-  }
-}
-
 // Models and reasoning levels for the composer's pickers (read fresh: the Codex cache updates itself).
 app.get('/api/models', (c) => c.json(listModels()));
 
 app.get('/api/agents', async (c) => {
-  const [claude, codex] = await Promise.all([agentInfo('claude'), agentInfo('codex')]);
+  const { claude, codex } = await service.agentVersions();
   return c.json({
     claude: claude.version,
     codex: codex.version,
@@ -186,45 +85,32 @@ app.get('/api/agents', async (c) => {
   });
 });
 
-app.get('/api/runs', async (c) => {
-  const saved = await listRuns();
-  // In-progress runs may not have hit the disk yet.
-  for (const ctx of active.values()) {
-    if (!saved.some((s) => s.id === ctx.run.id)) {
-      const r = ctx.run;
-      saved.unshift({ id: r.id, title: r.title, mode: r.config.mode, prompt: r.config.prompt.slice(0, 2000), cwd: r.config.cwd, status: r.status, createdAt: r.createdAt, claudeLimits: r.claudeLimits });
-    }
-  }
-  return c.json(saved.map((s) => (active.has(s.id) ? { ...s, title: active.get(s.id)!.run.title, status: 'running' } : s)));
-});
+app.get('/api/runs', async (c) => c.json(await service.list()));
 
 app.get('/api/runs/:id', async (c) => {
-  const run = active.get(c.req.param('id'))?.run ?? (await loadRun(c.req.param('id')));
+  const run = await service.get(c.req.param('id'));
   return run ? c.json(run) : c.json({ error: 'not found' }, 404);
 });
 
-app.patch('/api/runs/:id', async (c) => {
-  const id = c.req.param('id');
-  const body = await c.req.json().catch(() => null);
-  if (typeof body?.title !== 'string' || !body.title.trim() || body.title.trim().length > 120) return c.json({ error: 'Title must be 1–120 characters' }, 400);
-  const run = active.get(id)?.run ?? (await loadRun(id));
-  if (!run) return c.json({ error: 'not found' }, 404);
-  run.title = body.title.trim();
-  await saveRun(run);
-  return c.json({ title: run.title });
-});
+app.patch('/api/runs/:id', (c) =>
+  handle(c, async () => {
+    const body = await c.req.json().catch(() => null);
+    return c.json({ title: await service.rename(c.req.param('id'), body?.title) });
+  }),
+);
 
-app.delete('/api/runs/:id', async (c) => {
-  const id = c.req.param('id');
-  if (active.has(id)) return c.json({ error: 'Dừng phiên đang chạy trước khi xóa.' }, 409);
-  return (await deleteRun(id)) ? c.json({ ok: true }) : c.json({ error: 'not found' }, 404);
-});
+app.delete('/api/runs/:id', (c) =>
+  handle(c, async () => {
+    await service.delete(c.req.param('id'));
+    return c.json({ ok: true });
+  }),
+);
 
 app.get('/api/runs/:id/images/:index', async (c) => {
   const id = c.req.param('id');
   const index = Number(c.req.param('index'));
   if (!/^[\w-]+$/.test(id) || !Number.isSafeInteger(index) || index < 0) return c.json({ error: 'not found' }, 404);
-  const run = active.get(id)?.run ?? (await loadRun(id));
+  const run = await service.get(id);
   const image = run?.config.images?.[index];
   if (!image || !IMAGE_TYPES[image.mimeType]) return c.json({ error: 'not found' }, 404);
   try {
@@ -239,7 +125,7 @@ app.get('/api/runs/:id/messages/:messageId/images/:index', async (c) => {
   const { id, messageId } = c.req.param();
   const index = Number(c.req.param('index'));
   if (!/^[\w-]+$/.test(id) || !/^[\w-]+$/.test(messageId) || !Number.isSafeInteger(index) || index < 0) return c.json({ error: 'not found' }, 404);
-  const run = active.get(id)?.run ?? (await loadRun(id));
+  const run = await service.get(id);
   const image = run?.messages.find((m) => m.id === messageId && m.agent === 'user')?.images?.[index];
   if (!image || !IMAGE_TYPES[image.mimeType]) return c.json({ error: 'not found' }, 404);
   try {
@@ -251,206 +137,84 @@ app.get('/api/runs/:id/messages/:messageId/images/:index', async (c) => {
 });
 
 /** Rules-only preview for the form: free and instant; says whether Haiku would be asked. */
-app.post('/api/route/preview', async (c) => {
-  const body = await c.req.json().catch(() => null);
-  const prompt = String(body?.prompt ?? '').trim();
-  if (!prompt) return c.json({ error: 'prompt is required' }, 400);
-  const mode = body?.mode === 'plan' ? 'plan' : 'code';
-  const { route, coder, reviewer, maxRounds } = await autoRoute(prompt, { classify: false, mode });
-  return c.json({ mode, coder, reviewer, maxRounds, route, askHaiku: classifyByRules(prompt).confidence < CONFIDENT });
-});
-
-function launchRun(ctx: RunContext, pairRepoKey?: string) {
-  const cfg = ctx.run.config;
-  active.set(ctx.run.id, ctx);
-  (async () => {
-    let status: 'done' | 'error' | 'cancelled' = 'done';
-    let error: string | undefined;
-    try {
-      if (cfg.mode === 'debate') await runDebate(ctx); // Existing saved threads remain resumable.
-      else if (cfg.mode === 'plan') {
-        const approved = await runPlan(ctx);
-        if (approved && !ctx.cancelled) {
-          const approvedPlan = ctx.run.final ?? '';
-          const task = ctx.run.config.prompt;
-          const implementationPrompt = `Implement the approved plan for this task. Follow the plan and verify the changes.\n\nOriginal task:\n${task}\n\nUser-approved plan:\n${approvedPlan}`;
-          ctx.followUp(implementationPrompt);
-          const { route, usage, mode, coder, reviewer, judge } = await autoRoute(implementationPrompt, { mode: 'code', signal: ctx.abort.signal });
-          Object.assign(ctx.run.config, { mode, coder, reviewer, judge, maxRounds: 2, route });
-          ctx.note('Đã duyệt kế hoạch · bắt đầu Code', route.reason, 'info', 0, usage);
-          await runPair(ctx);
-        }
-      } else {
-        await runPair(ctx);
-      }
-      if (ctx.cancelled) status = 'cancelled';
-    } catch (err) {
-      status = ctx.cancelled ? 'cancelled' : 'error';
-      error = status === 'error' ? (err as Error).message : undefined;
-      ctx.abort.abort();
-      await Promise.allSettled([...ctx.inflight]);
-    }
-    try {
-      await ctx.finish(status, error);
-    } catch (err) {
-      console.error(`Failed to save finished run ${ctx.run.id}:`, err);
-    } finally {
-      active.delete(ctx.run.id);
-      if (pairRepoKey) activePairRepos.delete(pairRepoKey);
-    }
-  })();
-}
-
-app.post('/api/runs', async (c) => {
-  const body = await c.req.json().catch(() => null);
-  const parsedImages = parseImages(body?.images);
-  if (typeof parsedImages === 'string') return c.json({ error: parsedImages }, 400);
-  const parsed = await parseConfig(parsedImages.images.length && !String(body?.prompt ?? '').trim() ? { ...body, prompt: 'Hãy phân tích ảnh đính kèm.' } : body);
-  if (typeof parsed === 'string') return c.json({ error: parsed }, 400);
-  const { cfg, routeUsage } = parsed;
-  if (parsedImages.images.length) cfg.images = parsedImages.images;
-
-  let pairRepoKey: string | undefined;
-  if (cfg.mode === 'code' || cfg.mode === 'plan' || cfg.mode === 'pair') {
-    let repo: string;
-    try {
-      repo = realpathSync.native(cfg.cwd);
-    } catch (err) {
-      return c.json({ error: `Cannot resolve working directory: ${(err as Error).message}` }, 400);
-    }
-    pairRepoKey = process.platform === 'win32' ? repo.toLowerCase() : repo;
-    if (activePairRepos.has(pairRepoKey)) return c.json({ error: 'A Code or Plan run is already active for this repository' }, 409);
-    activePairRepos.add(pairRepoKey);
-  }
-
-  const ctx = new RunContext(cfg);
-  if (parsedImages.buffers.length) {
-    const dir = path.join(paths.dataDir, 'images', ctx.run.id);
-    try {
-      await mkdir(dir, { recursive: true });
-      await Promise.all(parsedImages.buffers.map((bytes, index) => writeFile(path.join(dir, `${index}.${IMAGE_TYPES[parsedImages.images[index].mimeType]}`), bytes)));
-    } catch (err) {
-      await rm(dir, { recursive: true, force: true }).catch(() => {});
-      if (pairRepoKey) activePairRepos.delete(pairRepoKey);
-      return c.json({ error: `Could not save images: ${(err as Error).message}` }, 500);
-    }
-  }
-  if (cfg.route) {
-    const manual = Object.entries(cfg.models ?? {}).filter(([, m]) => m);
-    const override = manual.length ? `\nModel đặt tay (ưu tiên hơn router): ${manual.map(([a, m]) => `${a}=${m}`).join(', ')}` : '';
-    ctx.note('Định tuyến tự động', cfg.route.reason + override, 'info', 0, routeUsage);
-  }
-  launchRun(ctx, pairRepoKey);
-  return c.json({ id: ctx.run.id });
-});
-
-app.post('/api/runs/:id/messages', async (c) => {
-  const id = c.req.param('id');
-  if (!/^[\w-]+$/.test(id)) return c.json({ error: 'not found' }, 404);
-  if (active.has(id) || pendingFollowUps.has(id)) return c.json({ error: 'Phiên đang chạy, hãy đợi hoàn tất.' }, 409);
-  pendingFollowUps.add(id);
-  let pairRepoKey: string | undefined;
-  try {
+app.post('/api/route/preview', (c) =>
+  handle(c, async () => {
     const body = await c.req.json().catch(() => null);
-    const parsedImages = parseImages(body?.images);
-    if (typeof parsedImages === 'string') return c.json({ error: parsedImages }, 400);
-    const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
-    if (!prompt && !parsedImages.images.length) return c.json({ error: 'prompt is required' }, 400);
-    const run = await loadRun(id);
-    if (!run) return c.json({ error: 'not found' }, 404);
-    if (active.has(id)) return c.json({ error: 'Phiên đang chạy, hãy đợi hoàn tất.' }, 409);
-    const nextPrompt = prompt || 'Hãy phân tích ảnh đính kèm.';
-    if (body?.mode !== undefined && body.mode !== 'code' && body.mode !== 'plan') return c.json({ error: 'Invalid mode' }, 400);
-    const nextMode = body?.mode === 'plan' ? 'plan' : 'code';
-    const parsedOptions = await parseConfig({ ...body, mode: nextMode, cwd: run.config.cwd, prompt: nextPrompt });
-    if (typeof parsedOptions === 'string') return c.json({ error: parsedOptions }, 400);
-    const { routeUsage } = parsedOptions;
-    run.config = {
-      ...run.config,
-      ...parsedOptions.cfg,
-      prompt: run.config.prompt,
-      cwd: run.config.cwd,
-      images: run.config.images,
-    };
-    if (run.config.mode === 'code' || run.config.mode === 'plan' || run.config.mode === 'pair') {
-      const repo = realpathSync.native(run.config.cwd);
-      pairRepoKey = process.platform === 'win32' ? repo.toLowerCase() : repo;
-      if (activePairRepos.has(pairRepoKey)) return c.json({ error: 'A Code or Plan run is already active for this repository' }, 409);
-      activePairRepos.add(pairRepoKey);
-    }
-    const messageId = randomUUID();
-    if (parsedImages.buffers.length) {
-      const dir = path.join(paths.dataDir, 'images', id);
-      await mkdir(dir, { recursive: true });
-      try {
-        await Promise.all(parsedImages.buffers.map((bytes, index) => writeFile(path.join(dir, `${messageId}-${index}.${IMAGE_TYPES[parsedImages.images[index].mimeType]}`), bytes)));
-      } catch (err) {
-        await Promise.all(parsedImages.buffers.map((_, index) => rm(path.join(dir, `${messageId}-${index}.${IMAGE_TYPES[parsedImages.images[index].mimeType]}`), { force: true }).catch(() => {})));
-        throw err;
-      }
-    }
-    const ctx = new RunContext(run.config, run);
-    ctx.followUp(nextPrompt, parsedImages.images, messageId);
-    if (run.config.route) {
-      const manual = Object.entries(run.config.models ?? {}).filter(([, model]) => model);
-      const override = manual.length ? `\nModel đặt tay (ưu tiên hơn router): ${manual.map(([agent, model]) => `${agent}=${model}`).join(', ')}` : '';
-      ctx.note('Định tuyến tự động', run.config.route.reason + override, 'info', 0, routeUsage);
-    }
-    launchRun(ctx, pairRepoKey);
+    return c.json(await service.previewRoute(body?.prompt, body?.mode));
+  }),
+);
+
+app.post('/api/runs', (c) =>
+  handle(c, async () => {
+    const body = await c.req.json().catch(() => null);
+    const { id } = await service.start(body);
     return c.json({ id });
-  } catch (err) {
-    if (pairRepoKey) activePairRepos.delete(pairRepoKey);
-    return c.json({ error: `Could not continue run: ${(err as Error).message}` }, 500);
-  } finally {
-    pendingFollowUps.delete(id);
-  }
+  }),
+);
+
+app.post('/api/runs/:id/messages', (c) =>
+  handle(c, async () => {
+    const body = await c.req.json().catch(() => null);
+    const { id } = await service.continue(c.req.param('id'), body);
+    return c.json({ id });
+  }),
+);
+
+app.post('/api/runs/:id/cancel', async (c) => {
+  const id = c.req.param('id');
+  if (service.cancel(id)) return c.json({ ok: true });
+  const owner = await service.activeElsewhere(id);
+  // Stopping another process's run needs inter-process messaging, which does not exist yet.
+  if (owner) return c.json({ error: `Phiên này đang chạy ở tiến trình khác (${owner.app}, PID ${owner.pid}); hãy dừng nó từ đó.` }, 409);
+  return c.json({ error: 'run is not active' }, 404);
 });
 
-app.post('/api/runs/:id/cancel', (c) => {
-  const ctx = active.get(c.req.param('id'));
-  if (!ctx) return c.json({ error: 'run is not active' }, 404);
-  ctx.userCancelled = true;
-  ctx.abort.abort();
-  return c.json({ ok: true });
-});
+app.post('/api/runs/:id/pair-decision', (c) =>
+  handle(c, async () => {
+    const body = await c.req.json().catch(() => null);
+    service.answerPairDecision(c.req.param('id'), body);
+    return c.json({ ok: true });
+  }),
+);
 
-app.post('/api/runs/:id/pair-decision', async (c) => {
-  const ctx = active.get(c.req.param('id'));
-  if (!ctx?.run.pairDecision) return c.json({ error: 'no Pair decision is waiting' }, 409);
-  const body = await c.req.json().catch(() => null);
-  if (typeof body?.continue !== 'boolean') return c.json({ error: 'continue must be a boolean' }, 400);
-  if (!ctx.answerPairDecision(body.continue)) return c.json({ error: 'Pair decision is no longer waiting' }, 409);
-  return c.json({ ok: true });
-});
-
-app.post('/api/runs/:id/plan-decision', async (c) => {
-  const ctx = active.get(c.req.param('id'));
-  if (!ctx?.run.planDecision) return c.json({ error: 'no Plan decision is waiting' }, 409);
-  const body = await c.req.json().catch(() => null);
-  if (!['approve', 'stop', 'refine'].includes(body?.action)) return c.json({ error: 'action must be approve, stop or refine' }, 400);
-  if (body.action === 'refine' && (typeof body.feedback !== 'string' || !body.feedback.trim())) return c.json({ error: 'feedback is required to refine the plan' }, 400);
-  const answer = body.action === 'refine'
-    ? { action: 'refine' as const, feedback: body.feedback.trim().slice(0, 8000) }
-    : { action: body.action as 'approve' | 'stop' };
-  if (!ctx.answerPlanDecision(answer)) return c.json({ error: 'Plan decision is no longer waiting' }, 409);
-  return c.json({ ok: true });
-});
+app.post('/api/runs/:id/plan-decision', (c) =>
+  handle(c, async () => {
+    const body = await c.req.json().catch(() => null);
+    await service.answerPlanDecision(c.req.param('id'), body);
+    return c.json({ ok: true });
+  }),
+);
 
 app.get('/api/runs/:id/events', async (c) => {
   const id = c.req.param('id');
   return streamSSE(c, async (stream) => {
-    const ctx = active.get(id);
+    const run = service.handle(id);
     const send = (e: RunEvent) => stream.writeSSE({ data: JSON.stringify(e) });
 
-    if (!ctx) {
-      const run = await loadRun(id);
-      if (run) await send({ type: 'snapshot', run });
+    if (!run) {
+      let saved = await loadRun(id);
+      if (saved) await send({ type: 'snapshot', run: saved });
+      // Still "running" on disk only while another process (CLI, desktop) runs it: follow its checkpoints.
+      let last = JSON.stringify(saved);
+      let lastPing = Date.now();
+      while (saved?.status === 'running' && !stream.aborted) {
+        await stream.sleep(1500);
+        saved = await loadRun(id);
+        const text = JSON.stringify(saved);
+        if (saved && text !== last) {
+          await send({ type: 'snapshot', run: saved });
+          last = text;
+        } else if (Date.now() - lastPing > 14000) {
+          await stream.writeSSE({ event: 'ping', data: '' });
+          lastPing = Date.now();
+        }
+      }
       return;
     }
 
     const queue: RunEvent[] = [];
     let wake: (() => void) | undefined;
-    const unsubscribe = ctx.subscribe((e) => {
+    const unsubscribe = run.subscribe((e) => {
       queue.push(e);
       wake?.();
     });
@@ -459,11 +223,11 @@ app.get('/api/runs/:id/events', async (c) => {
       wake?.();
     });
 
-    await send({ type: 'snapshot', run: ctx.run });
+    await send({ type: 'snapshot', run: run.run });
     let lastPing = Date.now();
     while (!stream.aborted) {
       while (queue.length) await send(queue.shift()!);
-      if (ctx.run.status !== 'running') break;
+      if (run.run.status !== 'running') break;
       await new Promise<void>((r) => {
         wake = r;
         setTimeout(r, 15000);
@@ -513,11 +277,10 @@ export function startServer({ port, host = '127.0.0.1', fallbackPort = false }: 
     }));
 }
 
-/** Kill every running agent process (used on shutdown). */
-export function abortAll() {
-  for (const ctx of active.values()) {
-    // Shutting down is a deliberate stop, not a failure.
-    ctx.userCancelled = true;
-    ctx.abort.abort();
-  }
+/**
+ * Kill every running agent process (used on shutdown). Resolves once each run is saved and has
+ * released its repository lock, so callers should wait (with a timeout) before exiting.
+ */
+export function abortAll(): Promise<void> {
+  return service.abortAll();
 }
