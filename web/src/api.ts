@@ -1,20 +1,20 @@
 import { useEffect, useState } from 'react';
 import type { AgentName } from '../../server/src/agents/types.ts';
-import type { Run, RunConfig, RoutePlan } from '../../server/src/types.ts';
+import type { Mode, Run, RunConfig, RoutePlan } from '../../server/src/types.ts';
 import type { ModelCatalog } from '../../server/src/types.ts';
 import { startRunStream } from './run-events.ts';
 
-export type { Message, ModelChoice, PairDecision, Part, RoutePlan, Run, RunConfig, Verdict, Speaker } from '../../server/src/types.ts';
+export type { Message, ModelChoice, PairDecision, PlanDecision, Part, RoutePlan, Run, RunConfig, Verdict, Speaker } from '../../server/src/types.ts';
 export type { AgentName, Usage } from '../../server/src/agents/types.ts';
-export type { ModelCatalog, ModelInfo } from '../../server/src/types.ts';
+export type { Mode, ModelCatalog, ModelInfo } from '../../server/src/types.ts';
 
-/** What the form sends: a concrete mode, or 'auto' to let the router decide. */
-export type NewRunRequest = Omit<Partial<RunConfig>, 'mode' | 'images'> & { mode: RunConfig['mode'] | 'auto'; images?: { name: string; dataUrl: string }[] };
+/** The router selects agents within the selected mode. */
+export type NewRunRequest = Omit<Partial<RunConfig>, 'mode' | 'images'> & { mode: Mode; images?: { name: string; dataUrl: string }[] };
 
 export interface RoutePreview {
-  mode: RunConfig['mode'];
+  mode: Mode;
   coder: AgentName;
-  judge: AgentName;
+  reviewer: AgentName;
   maxRounds: number;
   route: RoutePlan;
   /** The rules aren't sure; starting the run will ask Haiku first. */
@@ -24,7 +24,7 @@ export interface RoutePreview {
 export interface RunSummary {
   id: string;
   title?: string;
-  mode: 'debate' | 'pair' | 'plan';
+  mode: RunConfig['mode'];
   prompt: string;
   cwd: string;
   status: Run['status'];
@@ -64,9 +64,9 @@ export const api = {
       json<{ id: string }>(r),
     ),
   continue: (id: string, prompt: string, images: NonNullable<NewRunRequest['images']>, config: Partial<NewRunRequest> = {}) =>
-    fetch(`/api/runs/${id}/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...config, prompt, images, mode: config.mode ?? 'auto' }) }).then((r) => json<{ id: string }>(r)),
-  previewRoute: (prompt: string, signal?: AbortSignal) =>
-    fetch('/api/route/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }), signal }).then((r) =>
+    fetch(`/api/runs/${id}/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...config, prompt, images, mode: config.mode ?? 'code' }) }).then((r) => json<{ id: string }>(r)),
+  previewRoute: (prompt: string, mode: Mode, signal?: AbortSignal) =>
+    fetch('/api/route/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, mode }), signal }).then((r) =>
       json<RoutePreview>(r),
     ),
   cancel: (id: string) =>
@@ -75,6 +75,10 @@ export const api = {
     ),
   pairDecision: (id: string, continueRun: boolean) =>
     fetch(`/api/runs/${id}/pair-decision`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ continue: continueRun }) }).then((r) =>
+      json<{ ok: boolean }>(r),
+    ),
+  planDecision: (id: string, action: 'approve' | 'stop' | 'refine', feedback?: string) =>
+    fetch(`/api/runs/${id}/plan-decision`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, feedback }) }).then((r) =>
       json<{ ok: boolean }>(r),
     ),
 };

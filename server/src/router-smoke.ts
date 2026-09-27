@@ -45,8 +45,8 @@ try {
 
   // Policy.
   const cat = DEFAULT_CATALOG;
-  const small = decide('edit', 'light', cat);
-  assert.equal(small.mode, 'pair');
+  const small = decide('edit', 'light', cat, 'code');
+  assert.equal(small.mode, 'code');
   assert.equal(small.coder, 'codex');
   assert.equal(small.maxRounds, 2);
   assert.equal(small.models.codex?.coder?.model, cat.codex.light.model);
@@ -59,14 +59,20 @@ try {
   assert.equal(refactor.models.codex?.reviewer?.tier, 'standard', 'reviewer runs one tier below the coder');
   assert.equal(decide('bugfix', 'heavy', cat).coder, 'codex');
 
-  const design = decide('design', 'heavy', cat);
-  assert.equal(design.mode, 'debate');
-  assert.equal(design.models.claude?.thinker?.tier, 'heavy');
-  assert.equal(design.models.codex?.thinker?.tier, 'heavy');
-  assert.equal(design.models.claude?.judge?.tier, 'standard');
-  const explain = decide('explain', 'heavy', cat);
-  assert.equal(explain.maxRounds, 1);
-  assert.equal(explain.models.claude?.thinker?.tier, 'standard');
+  const design = decide('design', 'heavy', cat, 'code');
+  assert.equal(design.mode, 'code');
+  assert.equal(design.coder, 'claude');
+  assert.equal(design.reviewer, 'codex');
+  assert.equal(design.maxRounds, 2);
+  const explain = decide('explain', 'heavy', cat, 'code');
+  assert.equal(explain.mode, 'code');
+  assert.equal(explain.coder, 'claude');
+  const plan = decide('refactor', 'heavy', cat, 'plan');
+  assert.equal(plan.mode, 'plan');
+  assert.equal(plan.coder, 'claude');
+  assert.equal(plan.reviewer, 'codex');
+  assert.equal(plan.models.claude?.thinker?.tier, 'heavy');
+  assert.equal(plan.models.codex?.thinker?.tier, 'standard');
 
   // Catalog: unknown Codex slugs and unsafe values fall back to the CLI default.
   const checked = loadCatalog({}, new Set(['gpt-6-sol']));
@@ -92,19 +98,19 @@ try {
   assert.equal(asked, 0);
   assert.equal(clear.route.source, 'rules');
 
-  const unclear = await autoRoute('làm cái trang đẹp hơn', { classify: haiku({ taskType: 'design', complexity: 'light', usage }), catalog: cat });
+  const unclear = await autoRoute('làm cái trang đẹp hơn', { classify: haiku({ taskType: 'design', complexity: 'light', usage }), catalog: cat, mode: 'plan' });
   assert.equal(asked, 1);
   assert.equal(unclear.route.source, 'haiku');
-  assert.equal(unclear.mode, 'debate');
+  assert.equal(unclear.mode, 'plan');
   assert.deepEqual(unclear.usage, usage);
   assert.match(unclear.route.reason, /Haiku/);
 
   const failed = await autoRoute('làm cái trang đẹp hơn', { classify: haiku(undefined), catalog: cat });
   assert.equal(failed.route.source, 'rules');
-  assert.equal(failed.mode, 'pair');
+  assert.equal(failed.mode, 'code');
 
   // Model precedence inside a run: manual per-agent model > routed per-role model > CLI default.
-  const routed = await autoRoute('Refactor toàn bộ module auth, tách file và migrate sang kiến trúc mới', { classify: false, catalog: cat });
+  const routed = await autoRoute('Refactor toàn bộ module auth, tách file và migrate sang kiến trúc mới', { classify: false, catalog: cat, mode: 'code' });
   const config: RunConfig = { ...routed, prompt: 'x', cwd: '.', turnTimeoutMin: 1, models: {}, route: routed.route };
   const ctx = new RunContext(config);
   assert.deepEqual(ctx.modelFor('claude', 'coder'), { model: 'opus', effort: 'high' });

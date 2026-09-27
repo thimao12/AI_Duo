@@ -1,6 +1,7 @@
 import type { AgentEvent, AgentName, Role, Usage } from './agents/types.ts';
 
-export type Mode = 'debate' | 'pair' | 'plan';
+export type Mode = 'code' | 'plan';
+export type LegacyMode = 'debate' | 'pair';
 
 /** Which model a turn uses: its role, plus 'judge' for the debate synthesis. */
 export type ModelRole = Role | 'judge';
@@ -26,7 +27,8 @@ export type RunStatus = 'running' | 'done' | 'error' | 'cancelled';
 export type Speaker = AgentName | 'system' | 'user';
 
 export interface RunConfig {
-  mode: Mode;
+  /** New runs use Code or Plan. Legacy modes remain readable in saved threads. */
+  mode: Mode | LegacyMode;
   prompt: string;
   images?: { name: string; mimeType: string }[];
   cwd: string;
@@ -51,10 +53,20 @@ export interface RunConfig {
 export type Verdict = 'AGREE' | 'REVISE' | 'APPROVE' | 'CHANGES_REQUESTED';
 
 export interface PairDecision {
-  type: 'test-failure';
+  type: 'review-limit';
   round: number;
   extraRounds: number;
 }
+
+export interface PlanDecision {
+  type: 'plan-approval';
+  reviewRounds: number;
+  revision: number;
+}
+
+export type PlanDecisionAnswer =
+  | { action: 'approve' | 'stop' }
+  | { action: 'refine'; feedback: string };
 
 export interface Part {
   kind: 'text' | 'tool' | 'tool_result' | 'raw' | 'error';
@@ -92,9 +104,11 @@ export interface Run {
   final?: string;
   diff?: string;
   error?: string;
-  /** A Pair run is paused until the user chooses whether to continue after failed tests. */
+  /** A Code run pauses at its review limit until the user continues or stops. */
   pairDecision?: PairDecision | null;
   pairRoundsGranted?: number;
+  /** A Plan run is paused while the user approves or requests a plan revision. */
+  planDecision?: PlanDecision | null;
   /** Sum over all turns that reported usage. */
   usage?: Usage;
   /** Most recently observed Claude account limit windows. */
@@ -106,7 +120,7 @@ export type RunEvent =
   | { type: 'message.start'; message: Message }
   | { type: 'message.event'; id: string; event: AgentEvent }
   | { type: 'message.end'; id: string; status: Message['status']; verdict?: Verdict; usage?: Usage; endedAt: number }
-  | { type: 'run.update'; patch: Partial<Pick<Run, 'status' | 'final' | 'diff' | 'error' | 'endedAt' | 'usage' | 'claudeLimits' | 'pairDecision' | 'pairRoundsGranted'>> };
+  | { type: 'run.update'; patch: Partial<Pick<Run, 'status' | 'final' | 'diff' | 'error' | 'endedAt' | 'usage' | 'claudeLimits' | 'pairDecision' | 'pairRoundsGranted' | 'planDecision'>> };
 
 export function addUsage(a: Usage | undefined, b: Usage): Usage {
   const costUsd = a?.costUsd !== undefined || b.costUsd !== undefined ? (a?.costUsd ?? 0) + (b.costUsd ?? 0) : undefined;

@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, Check, CircleAlert, Copy, FileDiff, ListChevronsDownUp, ListChevronsUpDown, PanelLeft, Square, WifiOff } from 'lucide-react';
-import { api, useRun, type Message, type PairDecision, type Run } from './api.ts';
+import { api, useRun, type Message, type PairDecision, type PlanDecision, type Run } from './api.ts';
 import ChangesPanel from './components/ChangesPanel.tsx';
 import ChoiceQuestion from './components/ChoiceQuestion.tsx';
 import Composer, { MODE_ICON } from './components/Composer.tsx';
@@ -22,6 +22,12 @@ function phaseTitle(m: Message, run: Run): string {
 function progressOf(run: Run): string | null {
   const last = [...run.messages].reverse().find((m) => m.agent === 'claude' || m.agent === 'codex');
   return last ? phaseTitle(last, run) : null;
+}
+
+function RunStatus({ run }: { run: Run }) {
+  if (run.planDecision) return <span className="text-info">Chờ bạn duyệt kế hoạch</span>;
+  if (run.pairDecision) return <span className="text-info">Chờ bạn chọn bước tiếp</span>;
+  return <StatusText status={run.status} />;
 }
 
 /** The user typed plain lines: make single newlines hard breaks, except inside code fences. */
@@ -111,9 +117,9 @@ function PairFailureDecision({ runId, decision }: { runId: string; decision: Pai
   }
 
   return (
-    <section aria-label="Test thất bại" aria-live="polite" className="mt-6 rounded-2xl border border-warn/30 bg-warn/5 p-4">
-      <h2 className="text-[13.5px] font-semibold">Test fail ở vòng {decision.round}</h2>
-      <p className="mt-1 text-[13px] text-muted">Bạn muốn cho agent thêm 2 vòng sửa và review hay dừng tại đây?</p>
+    <section aria-label="Review chưa approve" aria-live="polite" className="mt-6 rounded-2xl border border-warn/30 bg-warn/5 p-4">
+      <h2 className="text-[13.5px] font-semibold">Chưa được approve sau {decision.round} vòng review</h2>
+      <p className="mt-1 text-[13px] text-muted">Bạn muốn cấp thêm 2 vòng sửa và review hay dừng tại đây?</p>
       {error && <p role="alert" className="mt-3 flex items-center gap-1.5 text-[12.5px] text-danger"><CircleAlert aria-hidden className="size-3.5" />{error}</p>}
       <div className="mt-3 flex flex-wrap gap-2">
         <button type="button" onClick={() => void choose(true)} disabled={busy} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[12.5px] font-medium text-primary-fg hover:opacity-85 disabled:opacity-50">
@@ -124,6 +130,54 @@ function PairFailureDecision({ runId, decision }: { runId: string; decision: Pai
           Dừng
         </button>
       </div>
+    </section>
+  );
+}
+
+function PlanApprovalDecision({ runId, decision }: { runId: string; decision: PlanDecision }) {
+  const [refining, setRefining] = useState(false);
+  const [feedback, setFeedback] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function choose(action: 'approve' | 'stop' | 'refine') {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api.planDecision(runId, action, action === 'refine' ? feedback.trim() : undefined);
+    } catch (cause) {
+      setError((cause as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section aria-label="Duyệt kế hoạch" aria-live="polite" className="mt-6 rounded-2xl border border-focus/30 bg-focus/5 p-4">
+      <h2 className="text-[13.5px] font-semibold">Bạn có đồng ý triển khai kế hoạch này không?</h2>
+      <p className="mt-1 text-[13px] text-muted">Kế hoạch đã qua {decision.reviewRounds} lượt review. Chọn Có để bắt đầu code, Không để dừng, hoặc Khác để yêu cầu chỉnh sửa.</p>
+      {error && <p role="alert" className="mt-3 flex items-center gap-1.5 text-[12.5px] text-danger"><CircleAlert aria-hidden className="size-3.5" />{error}</p>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" onClick={() => void choose('approve')} disabled={busy} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[12.5px] font-medium text-primary-fg hover:opacity-85 disabled:opacity-50">
+          {busy && !refining ? <Spinner className="size-3.5" /> : <Check aria-hidden className="size-3.5" />}
+          Có, triển khai
+        </button>
+        <button type="button" onClick={() => void choose('stop')} disabled={busy} className="h-8 rounded-lg border border-line px-3 text-[12.5px] text-muted transition-colors hover:bg-surface hover:text-fg disabled:opacity-50">
+          Không, dừng
+        </button>
+        <button type="button" onClick={() => setRefining(true)} disabled={busy} className="h-8 rounded-lg border border-line px-3 text-[12.5px] text-muted transition-colors hover:bg-surface hover:text-fg disabled:opacity-50">
+          Khác, chỉnh kế hoạch
+        </button>
+      </div>
+      {refining && (
+        <div className="mt-3 space-y-2">
+          <textarea autoFocus value={feedback} onChange={(event) => setFeedback(event.target.value)} disabled={busy} rows={3} maxLength={8000} placeholder="Bạn muốn thay đổi gì trong kế hoạch?" className="block w-full resize-y rounded-lg border border-line bg-bg px-3 py-2 text-[13px] text-fg placeholder:text-faint focus:border-focus focus:outline-none" />
+          <button type="button" onClick={() => void choose('refine')} disabled={!feedback.trim() || busy} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[12.5px] font-medium text-primary-fg hover:opacity-85 disabled:opacity-50">
+            {busy ? <Spinner className="size-3.5" /> : <ArrowDown aria-hidden className="size-3.5 rotate-[-90deg]" />}
+            Gửi góp ý và review lại
+          </button>
+        </div>
+      )}
     </section>
   );
 }
@@ -186,7 +240,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
       </div>
     );
 
-  const ModeIcon = run ? MODE_ICON[run.config.mode] : null;
+  const ModeIcon = run ? MODE_ICON[run.config.mode as keyof typeof MODE_ICON] : null;
   const progress = run && running ? progressOf(run) : null;
 
   return (
@@ -204,7 +258,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
           {run && (
             <div className="flex shrink-0 items-center gap-1">
               <div className="mr-1 hidden items-center gap-3 lg:flex">
-                <StatusText status={run.status} />
+                <RunStatus run={run} />
                 {progress && <span className="text-[12px] text-muted">{progress}</span>}
                 {ModeIcon && (
                   <span className="inline-flex items-center gap-1.5 text-[12px] text-faint" title={run.config.route?.reason}>
@@ -227,7 +281,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
                     <span className="truncate">{progress}</span>
                   </span>
                 ) : (
-                  <StatusText status={run.status} />
+                  <RunStatus run={run} />
                 )}
               </span>
               <button
@@ -310,7 +364,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
                 })}
               </div>
 
-              {run.pairDecision?.type === 'test-failure' && <PairFailureDecision runId={run.id} decision={run.pairDecision} />}
+              {run.pairDecision && <PairFailureDecision runId={run.id} decision={run.pairDecision} />}
 
               {run.error && (
                 <p role="alert" className="mt-8 flex gap-2 rounded-xl bg-danger/8 px-4 py-3 text-[13px] text-danger">
@@ -320,7 +374,8 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
               )}
               {run.status === 'cancelled' && <p className="mt-8 text-center text-[12.5px] text-faint">Phiên đã dừng.</p>}
               {run.final && <FinalBlock run={run} files={files.length} onShowChanges={() => setPanelOpen(true)} />}
-              {run.status === 'done' && run.final && (
+              {run.planDecision && <PlanApprovalDecision runId={run.id} decision={run.planDecision} />}
+              {run.status === 'done' && run.final && run.config.mode !== 'plan' && (
                 <ChoiceQuestion
                   key={run.messages.at(-1)?.id}
                   runId={run.id}
@@ -344,7 +399,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
             </button>
           )}
           <div className="mx-auto max-w-[760px]">
-            <Composer variant="dock" projects={projects} onCreated={onCreated} threadCwd={run?.config.cwd} threadId={id} onContinue={() => { positioned.current = false; setAtBottom(true); setRevision((n) => n + 1); }} />
+            <Composer variant="dock" projects={projects} onCreated={onCreated} threadCwd={run?.config.cwd} threadId={id} threadMode={run?.config.mode} onContinue={() => { positioned.current = false; setAtBottom(true); setRevision((n) => n + 1); }} />
           </div>
         </div>
       </div>

@@ -5,9 +5,9 @@ import Composer, { MODE_ICON, type ComposerSeed } from './components/Composer.ts
 import { MODE_LABEL } from './components/ui.tsx';
 
 const STARTERS: { mode: ComposerSeed['mode']; prompt: string }[] = [
-  { mode: 'debate', prompt: 'So sánh hai cách cache kết quả API tìm kiếm (Redis hay cache trong bộ nhớ) cho project này và chốt một cách.' },
-  { mode: 'pair', prompt: 'Tìm và sửa bug trong luồng upload file, viết test tái hiện lỗi trước khi sửa.' },
-  { mode: 'auto', prompt: 'Review code trong thư mục này, chỉ ra bug và rủi ro bảo mật theo mức độ nghiêm trọng.' },
+  { mode: 'plan', prompt: 'Lập kế hoạch chuyển cache kết quả API tìm kiếm sang Redis, nêu rủi ro và cách kiểm tra.' },
+  { mode: 'code', prompt: 'Tìm và sửa bug trong luồng upload file, viết test tái hiện lỗi trước khi sửa.' },
+  { mode: 'code', prompt: 'Review code trong thư mục này, chỉ ra bug và rủi ro bảo mật theo mức độ nghiêm trọng.' },
 ];
 
 function CliStatus({ agents }: { agents: AgentStatus | null }) {

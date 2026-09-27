@@ -40,7 +40,7 @@ const postConfig = (model: string) =>
   request('/api/runs', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ mode: 'pair', prompt: 'validate model', cwd: repoDir, models: { codex: model } }),
+    body: JSON.stringify({ mode: 'code', prompt: 'validate model', cwd: repoDir, models: { codex: model } }),
   });
 
 try {
@@ -52,7 +52,7 @@ try {
   const validModel = await request('/api/runs', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ mode: 'pair', prompt: 'validate model', cwd: path.join(temp, 'missing cwd'), models: { codex: 'gpt-5.4-codex/high' } }),
+    body: JSON.stringify({ mode: 'code', prompt: 'validate model', cwd: path.join(temp, 'missing cwd'), models: { codex: 'gpt-5.4-codex/high' } }),
   });
   assert.equal(validModel.status, 400);
   assert.doesNotMatch((await validModel.json()).error, /Invalid models\.codex/);

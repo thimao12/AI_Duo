@@ -11,6 +11,7 @@ import { streamSSE } from 'hono/streaming';
 import type { AgentName, Usage } from './agents/index.ts';
 import { runDebate } from './modes/debate.ts';
 import { runPair } from './modes/pair.ts';
+import { runPlan } from './modes/plan.ts';
 import { agentEnv } from './agents/billing.ts';
 import { resolveBin, type ResolvedBin } from './agents/bins.ts';
 import { EFFORT, listModels } from './models.ts';
@@ -94,11 +95,9 @@ app.use('/api/*', async (c, next) => {
 
 const isAgent = (x: unknown): x is AgentName => x === 'claude' || x === 'codex';
 
-const clampRounds = (n: number) => Math.min(Math.max(n, 1), 8);
-
-/** `mode: "auto"` hands mode, agents, models and (unless given) rounds to the router. */
+/** The router chooses agents and models within the user's selected Code or Plan mode. */
 async function parseConfig(body: any): Promise<{ cfg: RunConfig; routeUsage?: Usage } | string> {
-  if (body?.mode !== 'debate' && body?.mode !== 'pair' && body?.mode !== 'plan' && body?.mode !== 'auto') return 'mode must be "auto", "debate", "pair" or "plan"';
+  if (body?.mode !== 'code' && body?.mode !== 'plan') return 'mode must be "code" or "plan"';
   const prompt = String(body.prompt ?? '').trim();
   if (!prompt) return 'prompt is required';
   for (const name of ['claude', 'codex'] as const) {
@@ -117,16 +116,13 @@ async function parseConfig(body: any): Promise<{ cfg: RunConfig; routeUsage?: Us
   }
   const cwd = path.resolve(String(body.cwd ?? '').trim() || paths.defaultCwd);
   if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return `Working directory not found: ${cwd}`;
-  if (body.mode === 'auto') {
-    const { route, usage, ...decision } = await autoRoute(prompt);
-    const cfg = manualConfig({ ...body, ...decision, maxRounds: Number(body.maxRounds) || decision.maxRounds }, prompt, cwd);
-    return { cfg: { ...cfg, route }, routeUsage: usage };
-  }
-  return { cfg: manualConfig(body, prompt, cwd) };
+  const { route, usage, ...decision } = await autoRoute(prompt, { mode: body.mode });
+  const cfg = manualConfig({ ...body, ...decision }, prompt, cwd);
+  return { cfg: { ...cfg, route }, routeUsage: usage };
 }
 
 function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
-  const maxRounds = clampRounds(Number(body.maxRounds) || (body.mode === 'plan' ? 1 : body.mode === 'debate' ? 2 : 3));
+  const maxRounds = 2;
   const coder = isAgent(body.coder) ? body.coder : 'codex';
   return {
     mode: body.mode,
@@ -256,10 +252,12 @@ app.get('/api/runs/:id/messages/:messageId/images/:index', async (c) => {
 
 /** Rules-only preview for the form: free and instant; says whether Haiku would be asked. */
 app.post('/api/route/preview', async (c) => {
-  const prompt = String((await c.req.json().catch(() => null))?.prompt ?? '').trim();
+  const body = await c.req.json().catch(() => null);
+  const prompt = String(body?.prompt ?? '').trim();
   if (!prompt) return c.json({ error: 'prompt is required' }, 400);
-  const { route, mode, coder, judge, maxRounds } = await autoRoute(prompt, { classify: false });
-  return c.json({ mode, coder, judge, maxRounds, route, askHaiku: classifyByRules(prompt).confidence < CONFIDENT });
+  const mode = body?.mode === 'plan' ? 'plan' : 'code';
+  const { route, coder, reviewer, maxRounds } = await autoRoute(prompt, { classify: false, mode });
+  return c.json({ mode, coder, reviewer, maxRounds, route, askHaiku: classifyByRules(prompt).confidence < CONFIDENT });
 });
 
 function launchRun(ctx: RunContext, pairRepoKey?: string) {
@@ -269,17 +267,21 @@ function launchRun(ctx: RunContext, pairRepoKey?: string) {
     let status: 'done' | 'error' | 'cancelled' = 'done';
     let error: string | undefined;
     try {
-      if (cfg.mode === 'debate') await runDebate(ctx);
-      else if (cfg.mode === 'pair') await runPair(ctx);
-      else {
-        const agent = isAgent(cfg.coder) ? cfg.coder : 'codex';
-        const result = await ctx.turn({
-          agent, role: 'thinker', phase: 'plan', round: 1,
-          title: `${agent === 'claude' ? 'Claude' : 'Codex'} lập kế hoạch`,
-          sessionKey: 'plan',
-          prompt: `You are a software architect working in read-only planning mode. Inspect the repository at ${cfg.cwd} as needed. Do not edit files or run commands that modify data. Create a concrete implementation plan for this task:\n\n${ctx.prompt}\n\nReturn a concise plan with: current context and relevant files, ordered implementation steps, edge cases or risks, and how to verify the work. Do not implement the changes.`,
-        });
-        ctx.update({ final: result.text });
+      if (cfg.mode === 'debate') await runDebate(ctx); // Existing saved threads remain resumable.
+      else if (cfg.mode === 'plan') {
+        const approved = await runPlan(ctx);
+        if (approved && !ctx.cancelled) {
+          const approvedPlan = ctx.run.final ?? '';
+          const task = ctx.run.config.prompt;
+          const implementationPrompt = `Implement the approved plan for this task. Follow the plan and verify the changes.\n\nOriginal task:\n${task}\n\nUser-approved plan:\n${approvedPlan}`;
+          ctx.followUp(implementationPrompt);
+          const { route, usage, mode, coder, reviewer, judge } = await autoRoute(implementationPrompt, { mode: 'code', signal: ctx.abort.signal });
+          Object.assign(ctx.run.config, { mode, coder, reviewer, judge, maxRounds: 2, route });
+          ctx.note('Đã duyệt kế hoạch · bắt đầu Code', route.reason, 'info', 0, usage);
+          await runPair(ctx);
+        }
+      } else {
+        await runPair(ctx);
       }
       if (ctx.cancelled) status = 'cancelled';
     } catch (err) {
@@ -309,7 +311,7 @@ app.post('/api/runs', async (c) => {
   if (parsedImages.images.length) cfg.images = parsedImages.images;
 
   let pairRepoKey: string | undefined;
-  if (cfg.mode === 'pair') {
+  if (cfg.mode === 'code' || cfg.mode === 'plan' || cfg.mode === 'pair') {
     let repo: string;
     try {
       repo = realpathSync.native(cfg.cwd);
@@ -317,7 +319,7 @@ app.post('/api/runs', async (c) => {
       return c.json({ error: `Cannot resolve working directory: ${(err as Error).message}` }, 400);
     }
     pairRepoKey = process.platform === 'win32' ? repo.toLowerCase() : repo;
-    if (activePairRepos.has(pairRepoKey)) return c.json({ error: 'A pair run is already active for this repository' }, 409);
+    if (activePairRepos.has(pairRepoKey)) return c.json({ error: 'A Code or Plan run is already active for this repository' }, 409);
     activePairRepos.add(pairRepoKey);
   }
 
@@ -358,42 +360,22 @@ app.post('/api/runs/:id/messages', async (c) => {
     if (!run) return c.json({ error: 'not found' }, 404);
     if (active.has(id)) return c.json({ error: 'Phiên đang chạy, hãy đợi hoàn tất.' }, 409);
     const nextPrompt = prompt || 'Hãy phân tích ảnh đính kèm.';
-    if (body?.mode !== undefined && body.mode !== 'auto' && body.mode !== 'pair' && body.mode !== 'debate' && body.mode !== 'plan') return c.json({ error: 'Invalid mode' }, 400);
-    const manualMode = body?.mode === 'pair' || body?.mode === 'debate' || body?.mode === 'plan' ? body.mode : null;
-    const parsedOptions = await parseConfig({ ...body, mode: manualMode ?? 'plan', cwd: run.config.cwd, prompt: nextPrompt });
+    if (body?.mode !== undefined && body.mode !== 'code' && body.mode !== 'plan') return c.json({ error: 'Invalid mode' }, 400);
+    const nextMode = body?.mode === 'plan' ? 'plan' : 'code';
+    const parsedOptions = await parseConfig({ ...body, mode: nextMode, cwd: run.config.cwd, prompt: nextPrompt });
     if (typeof parsedOptions === 'string') return c.json({ error: parsedOptions }, 400);
-    const { models, efforts, testCommand, turnTimeoutMin } = parsedOptions.cfg;
-    let routeUsage: Usage | undefined;
-    if (manualMode) {
-      run.config = {
-        ...run.config,
-        ...parsedOptions.cfg,
-        prompt: run.config.prompt,
-        cwd: run.config.cwd,
-        images: run.config.images,
-        route: undefined,
-      };
-    } else {
-      const decision = await autoRoute(nextPrompt);
-      routeUsage = decision.usage;
-      run.config = {
-        ...run.config,
-        mode: decision.mode,
-        coder: decision.coder,
-        reviewer: decision.reviewer,
-        judge: decision.judge,
-        maxRounds: decision.maxRounds,
-        route: decision.route,
-        models,
-        efforts,
-        testCommand,
-        turnTimeoutMin,
-      };
-    }
-    if (run.config.mode === 'pair') {
+    const { routeUsage } = parsedOptions;
+    run.config = {
+      ...run.config,
+      ...parsedOptions.cfg,
+      prompt: run.config.prompt,
+      cwd: run.config.cwd,
+      images: run.config.images,
+    };
+    if (run.config.mode === 'code' || run.config.mode === 'plan' || run.config.mode === 'pair') {
       const repo = realpathSync.native(run.config.cwd);
       pairRepoKey = process.platform === 'win32' ? repo.toLowerCase() : repo;
-      if (activePairRepos.has(pairRepoKey)) return c.json({ error: 'A pair run is already active for this repository' }, 409);
+      if (activePairRepos.has(pairRepoKey)) return c.json({ error: 'A Code or Plan run is already active for this repository' }, 409);
       activePairRepos.add(pairRepoKey);
     }
     const messageId = randomUUID();
@@ -438,6 +420,19 @@ app.post('/api/runs/:id/pair-decision', async (c) => {
   const body = await c.req.json().catch(() => null);
   if (typeof body?.continue !== 'boolean') return c.json({ error: 'continue must be a boolean' }, 400);
   if (!ctx.answerPairDecision(body.continue)) return c.json({ error: 'Pair decision is no longer waiting' }, 409);
+  return c.json({ ok: true });
+});
+
+app.post('/api/runs/:id/plan-decision', async (c) => {
+  const ctx = active.get(c.req.param('id'));
+  if (!ctx?.run.planDecision) return c.json({ error: 'no Plan decision is waiting' }, 409);
+  const body = await c.req.json().catch(() => null);
+  if (!['approve', 'stop', 'refine'].includes(body?.action)) return c.json({ error: 'action must be approve, stop or refine' }, 400);
+  if (body.action === 'refine' && (typeof body.feedback !== 'string' || !body.feedback.trim())) return c.json({ error: 'feedback is required to refine the plan' }, 400);
+  const answer = body.action === 'refine'
+    ? { action: 'refine' as const, feedback: body.feedback.trim().slice(0, 8000) }
+    : { action: body.action as 'approve' | 'stop' };
+  if (!ctx.answerPlanDecision(answer)) return c.json({ error: 'Plan decision is no longer waiting' }, 409);
   return c.json({ ok: true });
 });
 

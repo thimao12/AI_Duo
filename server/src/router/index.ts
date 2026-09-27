@@ -1,5 +1,5 @@
 import type { Usage } from '../agents/types.ts';
-import type { RoutePlan } from '../types.ts';
+import type { Mode, RoutePlan } from '../types.ts';
 import { loadCatalog, type Catalog } from './catalog.ts';
 import { classifyWithHaiku, type Classifier } from './classify.ts';
 import { decide, describe, type Decision } from './policy.ts';
@@ -15,10 +15,11 @@ export interface RouteOptions {
   classify?: Classifier | false;
   catalog?: Catalog;
   signal?: AbortSignal;
+  mode?: Mode;
 }
 
 /** Keyword rules first (free); only an unclear prompt costs one small Haiku call. */
-export async function autoRoute(prompt: string, { classify = classifyWithHaiku, catalog = loadCatalog(), signal }: RouteOptions = {}): Promise<RouteResult> {
+export async function autoRoute(prompt: string, { classify = classifyWithHaiku, catalog = loadCatalog(), signal, mode = 'code' }: RouteOptions = {}): Promise<RouteResult> {
   const rules = classifyByRules(prompt);
   let { taskType, complexity } = rules;
   let source: RoutePlan['source'] = 'rules';
@@ -30,7 +31,7 @@ export async function autoRoute(prompt: string, { classify = classifyWithHaiku, 
       source = 'haiku';
     }
   }
-  const { models, ...decision } = decide(taskType, complexity, catalog);
+  const { models, ...decision } = decide(taskType, complexity, catalog, mode);
   const via = source === 'haiku' ? 'Haiku phân loại (luật không chắc chắn)' : `luật từ khoá, độ tin cậy ${rules.confidence}`;
   return {
     ...decision,

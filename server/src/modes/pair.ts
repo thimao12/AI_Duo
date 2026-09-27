@@ -125,14 +125,14 @@ export async function runPair(ctx: RunContext) {
       );
     }
 
-    if (lastReview.tests === 'fail') {
+    if (lastReview.verdict !== 'APPROVE' && r >= reviewLimit) {
       ctx.note(
-        'Kiểm thử chưa đạt',
-        `Review vòng ${r} báo test fail. Bạn có muốn thêm 2 vòng sửa và review hay dừng lại?`,
+        'Chưa được approve sau 2 vòng review',
+        `Test: ${lastReview.tests ?? 'không rõ'}. Bạn có muốn cấp thêm 2 vòng sửa và review hay dừng lại?`,
         'review',
         r,
       );
-      const continueRun = await ctx.waitForPairDecision({ type: 'test-failure', round: r, extraRounds: 2 });
+      const continueRun = await ctx.waitForPairDecision({ type: 'review-limit', round: r, extraRounds: 2 });
       if (!continueRun) {
         if (!ctx.cancelled) ctx.note('Đã dừng theo lựa chọn', `Dừng sau vòng ${r}; không thêm vòng sửa.`, 'review', r);
         break;

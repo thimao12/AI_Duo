@@ -73,7 +73,7 @@ export const AGENT_LABEL: Record<Speaker, string> = { claude: 'Claude', codex: '
 export const AGENT_DOT: Record<Speaker, string> = { claude: 'bg-claude', codex: 'bg-codex', system: 'bg-faint', user: 'bg-faint' };
 export const AGENT_TEXT: Record<Speaker, string> = { claude: 'text-claude-fg', codex: 'text-codex-fg', system: 'text-muted', user: 'text-muted' };
 
-export const MODE_LABEL: Record<string, string> = { auto: 'Tự động', debate: 'Debate', pair: 'Pair', plan: 'Plan' };
+export const MODE_LABEL: Record<string, string> = { code: 'Code', plan: 'Plan', debate: 'Debate (cũ)', pair: 'Pair (cũ)' };
 
 export const PHASE_LABEL: Record<string, string> = {
   info: 'Chuẩn bị',
@@ -84,6 +84,8 @@ export const PHASE_LABEL: Record<string, string> = {
   review: 'Review & test',
   fix: 'Sửa theo review',
   plan: 'Lập kế hoạch',
+  'plan-review': 'Review kế hoạch',
+  'plan-revise': 'Chỉnh kế hoạch',
 };
 
 const STATUS: Record<Run['status'], { label: string; cls: string }> = {

@@ -4,7 +4,7 @@ import { agents, type AgentName, type Role, type Usage } from './agents/index.ts
 import { AbortedError } from './agents/process.ts';
 import { saveRun } from './store.ts';
 import { paths } from './paths.ts';
-import { addUsage, applyAgentEvent, type Message, type ModelRole, type PairDecision, type Run, type RunConfig, type RunEvent, type Speaker, type Verdict } from './types.ts';
+import { addUsage, applyAgentEvent, type Message, type ModelRole, type PairDecision, type PlanDecision, type PlanDecisionAnswer, type Run, type RunConfig, type RunEvent, type Speaker, type Verdict } from './types.ts';
 
 export interface TurnOptions {
   agent: AgentName;
@@ -54,6 +54,7 @@ export class RunContext {
   private saveTimer?: NodeJS.Timeout;
   private saveInFlight?: Promise<void>;
   private resolvePairDecision?: (continueRun: boolean) => void;
+  private resolvePlanDecision?: (answer: PlanDecisionAnswer) => void;
 
   constructor(config: RunConfig, existing?: Run) {
     this.run = existing ?? {
@@ -82,6 +83,7 @@ export class RunContext {
     this.run.diff = undefined;
     this.run.pairDecision = null;
     this.run.pairRoundsGranted = 0;
+    this.run.planDecision = null;
     const m: Message = { id: messageId, agent: 'user', phase: 'prompt', round: 0, title: 'Bạn', parts: [{ kind: 'text', content: prompt }], images, status: 'done', startedAt: Date.now(), endedAt: Date.now() };
     this.run.messages.push(m);
     this.currentImages = images.map((image, index) => path.join(paths.dataDir, 'images', this.run.id, `${m.id}-${index}.${image.mimeType.split('/')[1] === 'jpeg' ? 'jpg' : image.mimeType.split('/')[1]}`));
@@ -258,6 +260,32 @@ export class RunContext {
   answerPairDecision(continueRun: boolean): boolean {
     if (!this.run.pairDecision || !this.resolvePairDecision) return false;
     this.resolvePairDecision(continueRun);
+    return true;
+  }
+
+  waitForPlanDecision(decision: PlanDecision): Promise<PlanDecisionAnswer> {
+    if (this.abort.signal.aborted) return Promise.resolve({ action: 'stop' });
+    return new Promise((resolve) => {
+      let settled = false;
+      const finish = (answer: PlanDecisionAnswer) => {
+        if (settled) return;
+        settled = true;
+        this.abort.signal.removeEventListener('abort', onAbort);
+        this.resolvePlanDecision = undefined;
+        this.update({ planDecision: null });
+        resolve(answer);
+      };
+      const onAbort = () => finish({ action: 'stop' });
+      this.resolvePlanDecision = finish;
+      this.abort.signal.addEventListener('abort', onAbort, { once: true });
+      this.update({ planDecision: decision });
+      if (this.abort.signal.aborted) onAbort();
+    });
+  }
+
+  answerPlanDecision(answer: PlanDecisionAnswer): boolean {
+    if (!this.run.planDecision || !this.resolvePlanDecision) return false;
+    this.resolvePlanDecision(answer);
     return true;
   }
 

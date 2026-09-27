@@ -1,8 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ArrowUp, CircleAlert, Folder, FolderOpen, GitMerge, ImagePlus, ListTodo, MessagesSquare, SlidersHorizontal, Sparkles, Waypoints, X } from 'lucide-react';
+import { ArrowUp, CircleAlert, Folder, FolderOpen, GitMerge, ImagePlus, ListTodo, SlidersHorizontal, Sparkles, Waypoints, X } from 'lucide-react';
 import { api, type AgentName, type AgentStatus, type ModelCatalog, type NewRunRequest, type RoutePreview, type RunConfig } from '../api.ts';
 import ModelPicker from './ModelPicker.tsx';
-import { AgentDot, AGENT_LABEL, basename, MenuItem, MenuLabel, MODE_LABEL, Popover, Spinner } from './ui.tsx';
+import { AGENT_LABEL, basename, MenuItem, MenuLabel, MODE_LABEL, Popover, Spinner } from './ui.tsx';
 import { loadDraftImages, saveDraftImages, type DraftImage } from '../draft-images.ts';
 
 type Mode = NewRunRequest['mode'];
@@ -16,7 +16,7 @@ const STORAGE_KEY = 'ai-duo:new-run';
 const desktop = (window as { aiDuo?: { pickFolder: (defaultPath?: string) => Promise<string | null> } }).aiDuo;
 
 const DEFAULTS: Form = {
-  mode: 'auto',
+  mode: 'code',
   prompt: '',
   cwd: '',
   maxRounds: 2,
@@ -31,23 +31,21 @@ const DEFAULTS: Form = {
 function loadForm(): Form {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    return { ...DEFAULTS, ...saved, prompt: typeof saved.prompt === 'string' ? saved.prompt : '', models: { ...DEFAULTS.models, ...saved.models }, efforts: { ...DEFAULTS.efforts, ...saved.efforts } };
+    return { ...DEFAULTS, ...saved, mode: saved.mode === 'plan' ? 'plan' : 'code', prompt: typeof saved.prompt === 'string' ? saved.prompt : '', models: { ...DEFAULTS.models, ...saved.models }, efforts: { ...DEFAULTS.efforts, ...saved.efforts } };
   } catch {
     return DEFAULTS;
   }
 }
 
 export const MODES: { id: Mode; icon: typeof Sparkles; hint: string }[] = [
-  { id: 'auto', icon: Sparkles, hint: 'Router chọn chế độ, AI nào code và model theo độ khó, ưu tiên ít token.' },
-  { id: 'debate', icon: MessagesSquare, hint: 'Cả hai đề xuất, review chéo, rồi chốt một giải pháp. Chỉ đọc repo.' },
-  { id: 'pair', icon: GitMerge, hint: 'Một con code trong repo, con kia review diff và chạy test tới khi approve.' },
-  { id: 'plan', icon: ListTodo, hint: 'Một agent khảo sát repo ở chế độ chỉ đọc và lập kế hoạch triển khai, không sửa file.' },
+  { id: 'code', icon: GitMerge, hint: 'Router tự chọn agent code và review. Hỏi bạn sau 2 vòng nếu vẫn chưa approve.' },
+  { id: 'plan', icon: ListTodo, hint: 'Hai vai trò lập và review kế hoạch; chỉ bắt đầu code sau khi bạn duyệt.' },
 ];
 export const MODE_ICON = Object.fromEntries(MODES.map((m) => [m.id, m.icon])) as Record<Mode, typeof Sparkles>;
 
 /** The new-run form: persisted settings, router preview, CLI status and submit. */
-function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, threadId?: string, onContinue?: () => void) {
-  const [form, setForm] = useState<Form>(() => ({ ...loadForm(), ...(threadId && { mode: 'auto' as const }) }));
+function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, threadId?: string, threadMode?: RunConfig['mode'], onContinue?: () => void) {
+  const [form, setForm] = useState<Form>(loadForm);
   const [agents, setAgents] = useState<AgentStatus | null>(null);
   const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
   const [preview, setPreview] = useState<RoutePreview | null>(null);
@@ -58,7 +56,7 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
   const imageRef = useRef<DraftImage[]>([]);
   const imagesTouched = useRef(false);
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
-  const auto = form.mode === 'auto';
+  const auto = true;
 
   useEffect(() => {
     let mounted = true;
@@ -80,17 +78,23 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
     if (threadCwd) setForm((f) => ({ ...f, cwd: threadCwd }));
   }, [threadCwd]);
 
+  useEffect(() => {
+    if (!threadId || !threadMode) return;
+    const mode: Mode = threadMode === 'plan' ? 'plan' : 'code';
+    setForm((f) => f.mode === mode ? f : { ...f, mode });
+  }, [threadId, threadMode]);
+
   // Rules-only preview (free): what the router would pick for the prompt as typed.
   useEffect(() => {
     const prompt = form.prompt.trim();
-    if (!auto || !prompt) return setPreview(null);
+    if (!prompt) return setPreview(null);
     const ctl = new AbortController();
-    const t = setTimeout(() => api.previewRoute(prompt, ctl.signal).then(setPreview, () => {}), 400);
+    const t = setTimeout(() => api.previewRoute(prompt, form.mode, ctl.signal).then(setPreview, () => {}), 400);
     return () => {
       clearTimeout(t);
       ctl.abort();
     };
-  }, [auto, form.prompt]);
+  }, [form.mode, form.prompt]);
 
   useEffect(() => {
     api
@@ -114,11 +118,11 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
     setBusy(true);
     setError(null);
     try {
-      // Auto: the router picks mode, agents and rounds; sending them would override it.
-      const { maxRounds: _r, judge: _j, coder: _c, ...rest } = form;
+      // The router always selects the agents and the two-round review policy.
+      const { maxRounds: _r, judge: _j, coder: _c, reviewer: _reviewer, ...rest } = form;
       const { id } = threadId
         ? await api.continue(threadId, form.prompt, images, form)
-        : await api.create({ ...(auto ? rest : form), images });
+        : await api.create({ ...rest, images });
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...form, prompt: '' }));
       } catch {}
@@ -181,6 +185,7 @@ interface ComposerProps {
   onCreated: (id: string) => void;
   threadCwd?: string;
   threadId?: string;
+  threadMode?: RunConfig['mode'];
   onContinue?: () => void;
   seed?: ComposerSeed;
   onAgents?: (a: AgentStatus | null) => void;
@@ -189,8 +194,8 @@ interface ComposerProps {
 const field =
   'w-full rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[13px] text-fg placeholder:text-faint transition-colors hover:border-line-strong focus:border-focus focus:outline-none placeholder:font-sans';
 
-export default function Composer({ variant, projects, onCreated, threadCwd, threadId, onContinue, seed, onAgents }: ComposerProps) {
-  const { form, set, setForm, agents, catalog, preview, error, busy, submit, auto, images, imagesReady, removeImage, addImages } = useNewRunForm(onCreated, threadCwd, threadId, onContinue);
+export default function Composer({ variant, projects, onCreated, threadCwd, threadId, threadMode, onContinue, seed, onAgents }: ComposerProps) {
+  const { form, set, setForm, agents, catalog, preview, error, busy, submit, auto, images, imagesReady, removeImage, addImages } = useNewRunForm(onCreated, threadCwd, threadId, threadMode, onContinue);
   const text = useRef<HTMLTextAreaElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const [typingPath, setTypingPath] = useState(false);
@@ -213,7 +218,6 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
     el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * (hero ? 0.42 : 0.32))}px`;
   }, [form.prompt, hero]);
 
-  const reviewer: AgentName = form.coder === 'claude' ? 'codex' : 'claude';
   const ModeIcon = MODE_ICON[form.mode];
   const recent = [...new Set([form.cwd, ...projects].filter(Boolean))].slice(0, 8);
   const canSend = imagesReady && (!!form.prompt.trim() || images.length > 0) && !busy;
@@ -350,7 +354,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
                     <MenuItem label="Nhập đường dẫn…" onSelect={() => setTypingPath(true)} />
                   )}
                   <p className="px-2.5 pt-1 pb-1.5 text-[11.5px] leading-snug text-faint">
-                    Pair sửa file thật trong project (cần git repo, không tự commit). Debate chỉ đọc.
+                    Code có thể sửa file trong repo Git (không tự commit). Plan chỉ đọc cho tới khi bạn duyệt kế hoạch.
                   </p>
                 </>
               )}
@@ -378,7 +382,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
                       label={MODE_LABEL[m.id]}
                       hint={m.hint}
                       onSelect={() => {
-                        setForm((f) => ({ ...f, mode: m.id, maxRounds: m.id === 'pair' ? 3 : 2 }));
+                        setForm((f) => ({ ...f, mode: m.id, maxRounds: 2 }));
                         close();
                       }}
                     />
@@ -386,59 +390,6 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
                 </>
               )}
             </Popover>
-
-            {!auto && (
-              <Popover
-                side={side}
-                width="w-64"
-                label={
-                  <>
-                    <AgentDot agent={form.mode === 'pair' ? form.coder : form.judge} />
-                    {form.mode === 'pair' ? `${AGENT_LABEL[form.coder]} code` : form.mode === 'plan' ? `${AGENT_LABEL[form.coder]} lập kế hoạch` : `${AGENT_LABEL[form.judge]} chốt`}
-                  </>
-                }
-              >
-                {(close) => (
-                  <>
-                    <MenuLabel>{form.mode === 'pair' ? 'Ai viết code?' : form.mode === 'plan' ? 'Agent lập kế hoạch' : 'Ai viết giải pháp cuối?'}</MenuLabel>
-                    {(['claude', 'codex'] as const).map((a) => (
-                      <MenuItem
-                        key={a}
-                        selected={(form.mode === 'pair' || form.mode === 'plan' ? form.coder : form.judge) === a}
-                        icon={<AgentDot agent={a} className="mt-1" />}
-                        label={AGENT_LABEL[a]}
-                        hint={form.mode === 'pair' ? `${AGENT_LABEL[a === 'claude' ? 'codex' : 'claude']} sẽ review và chạy test` : undefined}
-                        onSelect={() => {
-                          set(form.mode === 'pair' || form.mode === 'plan' ? 'coder' : 'judge', a);
-                          close();
-                        }}
-                      />
-                    ))}
-                  </>
-                )}
-              </Popover>
-            )}
-
-            {!auto && form.mode !== 'plan' && (
-              <Popover side={side} width="w-44" label={`${form.maxRounds} vòng`}>
-                {(close) => (
-                  <>
-                    <MenuLabel>{form.mode === 'pair' ? 'Số vòng review' : 'Số vòng review chéo'}</MenuLabel>
-                    {[1, 2, 3, 4, 5, 6, 8].map((n) => (
-                      <MenuItem
-                        key={n}
-                        selected={form.maxRounds === n}
-                        label={`${n} vòng`}
-                        onSelect={() => {
-                          set('maxRounds', n);
-                          close();
-                        }}
-                      />
-                    ))}
-                  </>
-                )}
-              </Popover>
-            )}
 
             {(['codex', 'claude'] as const).map((a) => (
               <ModelPicker
@@ -470,12 +421,10 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
               {() => (
                 <div className="space-y-3 p-2">
                   <p className="text-[12px] font-medium text-faint">Tùy chọn nâng cao</p>
-                  {form.mode !== 'debate' && (
-                    <label className="block space-y-1">
-                      <span className="text-[12.5px] text-muted">Lệnh test</span>
-                      <input className={`${field} font-mono`} value={form.testCommand} onChange={(e) => set('testCommand', e.target.value)} placeholder="Trống = reviewer tự tìm" />
-                    </label>
-                  )}
+                  <label className="block space-y-1">
+                    <span className="text-[12.5px] text-muted">Lệnh test</span>
+                    <input className={`${field} font-mono`} value={form.testCommand} onChange={(e) => set('testCommand', e.target.value)} placeholder="Trống = reviewer tự tìm" />
+                  </label>
                   <label className="block space-y-1">
                     <span className="text-[12.5px] text-muted">Giới hạn mỗi lượt (phút)</span>
                     <input
@@ -513,9 +462,10 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
       )}
       {hero && (
         <p className="mt-2.5 px-2 text-[12px] text-faint">
-          {form.mode === 'pair'
-            ? `${AGENT_LABEL[form.coder]} viết code, ${AGENT_LABEL[reviewer]} review và chạy test. Không tự commit.`
-            : 'Enter để gửi, Shift + Enter để xuống dòng.'}
+            {form.mode === 'code'
+              ? preview ? `${AGENT_LABEL[preview.coder]} code, ${AGENT_LABEL[preview.reviewer]} review và chạy test. Hỏi bạn sau 2 vòng chưa approve.` : 'Router tự chọn agent code và review theo task.'
+              : preview ? `${AGENT_LABEL[preview.coder]} lập kế hoạch, ${AGENT_LABEL[preview.reviewer]} review. Chỉ sửa repo sau khi bạn duyệt.` : 'Hai agent sẽ lập và review kế hoạch trước khi hỏi bạn.'}
+            {' '}Enter để gửi, Shift + Enter để xuống dòng.
         </p>
       )}
     </div>

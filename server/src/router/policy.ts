@@ -26,31 +26,24 @@ export const TIER_LABEL: Record<Tier, string> = { light: 'nhẹ', standard: 'v�
 /**
  * Token-first policy: the cheapest tier that fits the task, fewer rounds on small tasks, and
  * each role keeps one model for its whole session so the CLI's prompt cache stays warm.
- * - Changing code → pair. Codex codes well-scoped edits and bugs; Claude takes refactors and
- *   big cross-file changes. Light edits can use the same agent and model for review; larger tasks use the other agent one tier lower.
- * - Questions → debate. Explanations get a single critique round.
+ * - Both Code and Plan use the same task-aware agent choice. Light work can use one agent for
+ *   both roles; larger work uses the other agent one tier lower for review.
  */
-export function decide(taskType: TaskType, complexity: Tier, catalog: Catalog): Decision {
+export function decide(taskType: TaskType, complexity: Tier, catalog: Catalog, mode: Mode = 'code'): Decision {
   const pick = (agent: AgentName, tier: Tier): ModelChoice => ({ ...catalog[agent][tier], tier });
   const models: RoutePlan['models'] = {};
   const set = (agent: AgentName, role: ModelRole, tier: Tier) => ((models[agent] ??= {})[role] = pick(agent, tier));
 
-  if (taskType === 'design' || taskType === 'explain') {
-    const tier: Tier = taskType === 'explain' && complexity === 'heavy' ? 'standard' : complexity;
-    const judge: AgentName = 'claude';
-    set('claude', 'thinker', tier);
-    set('codex', 'thinker', tier);
-    set(judge, 'judge', tier === 'light' ? 'light' : 'standard');
-    const maxRounds = taskType === 'explain' || complexity === 'light' ? 1 : 2;
-    return { mode: 'debate', coder: 'codex', reviewer: 'claude', judge, maxRounds, models };
-  }
-
   const coder: AgentName = taskType === 'refactor' || (complexity === 'heavy' && taskType !== 'bugfix') ? 'claude' : 'codex';
   const reviewer = complexity === 'light' ? coder : other(coder);
-  set(coder, 'coder', complexity);
-  set(reviewer, 'reviewer', reviewer === coder ? complexity : down(complexity));
-  const maxRounds = complexity === 'light' ? 2 : complexity === 'standard' ? 3 : 4;
-  return { mode: 'pair', coder, reviewer, judge: 'claude', maxRounds, models };
+  if (mode === 'plan') {
+    set(coder, 'thinker', complexity);
+    set(reviewer, 'thinker', reviewer === coder ? complexity : down(complexity));
+  } else {
+    set(coder, 'coder', complexity);
+    set(reviewer, 'reviewer', reviewer === coder ? complexity : down(complexity));
+  }
+  return { mode, coder, reviewer, judge: 'claude', maxRounds: 2, models };
 }
 
 const choice = (c?: ModelChoice) => (c ? [c.model ?? 'mặc định', c.effort].filter(Boolean).join('/') : 'mặc định');
@@ -58,9 +51,9 @@ const choice = (c?: ModelChoice) => (c ? [c.model ?? 'mặc định', c.effort].
 /** One line for the run's "Định tuyến" note. */
 export function describe(taskType: TaskType, complexity: Tier, d: Decision): string {
   const head = `Loại việc: ${TASK_LABEL[taskType]} · độ phức tạp: ${TIER_LABEL[complexity]}`;
-  if (d.mode === 'pair') {
+  if (d.mode === 'code') {
     const reviewer = d.reviewer;
-    return `${head} → Pair: ${label(d.coder)} code (${choice(d.models[d.coder]?.coder)}), ${label(reviewer)} review (${choice(d.models[reviewer]?.reviewer)}), tối đa ${d.maxRounds} vòng`;
+    return `${head} → Code: ${label(d.coder)} code (${choice(d.models[d.coder]?.coder)}), ${label(reviewer)} review (${choice(d.models[reviewer]?.reviewer)}), hỏi sau ${d.maxRounds} vòng chưa approve`;
   }
-  return `${head} → Debate: Claude (${choice(d.models.claude?.thinker)}) và Codex (${choice(d.models.codex?.thinker)}), ${label(d.judge)} chốt (${choice(d.models[d.judge]?.judge)}), tối đa ${d.maxRounds} vòng`;
+  return `${head} → Plan: ${label(d.coder)} lập kế hoạch (${choice(d.models[d.coder]?.thinker)}), ${label(d.reviewer)} review (${choice(d.models[d.reviewer]?.thinker)}), tối đa ${d.maxRounds} lượt`;
 }

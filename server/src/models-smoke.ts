@@ -35,7 +35,7 @@ try {
   assert.deepEqual(listModels({ ...process.env, CODEX_HOME: path.join(temp, 'missing') }).codex, { models: [], default: {} });
 
   const route = { taskType: 'edit', complexity: 'standard', source: 'rules', reason: '', models: { codex: { coder: { model: 'routed', effort: 'low', tier: 'standard' } } } } as const;
-  const base = { mode: 'pair', prompt: 'x', cwd: temp, maxRounds: 1, judge: 'claude', coder: 'codex', turnTimeoutMin: 1, route } as const;
+  const base = { mode: 'code', prompt: 'x', cwd: temp, maxRounds: 1, judge: 'claude', coder: 'codex', turnTimeoutMin: 1, route } as const;
   const pick = (extra: object) => new RunContext({ ...base, ...extra } as any).modelFor('codex', 'coder');
   assert.deepEqual(pick({}), { model: 'routed', effort: 'low' }, 'router pick by default');
   assert.deepEqual(pick({ efforts: { codex: 'high' } }), { model: 'routed', effort: 'high' }, 'manual effort overrides routed effort');
@@ -48,7 +48,7 @@ try {
       fetch(`${server.url}/api/runs`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ mode: 'pair', prompt: 'x', cwd: path.join(temp, 'no such dir'), efforts }),
+        body: JSON.stringify({ mode: 'code', prompt: 'x', cwd: path.join(temp, 'no such dir'), efforts }),
       });
     for (const bad of [{ codex: 'high; rm -rf' }, { claude: '--max' }, { codex: 5 }]) {
       const res = await post(bad);

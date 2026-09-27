@@ -41,14 +41,19 @@ async function makeRepo() {
   return cwd;
 }
 
-function fakeContext(cwd: string, coder: 'claude' | 'codex', maxRounds: number, respond: (turn: any) => Promise<string>) {
+function fakeContext(cwd: string, coder: 'claude' | 'codex', maxRounds: number, respond: (turn: any) => Promise<string>, decisions: boolean[] = []) {
   const notes: { title: string; text: string }[] = [];
   const updates: Record<string, unknown>[] = [];
+  const decisionsAsked: unknown[] = [];
   const turns: { phase: string; prompt: string; verdict?: string }[] = [];
   const ctx = {
     run: { config: { mode: 'pair', cwd, prompt: 'smoke task', maxRounds, coder, judge: 'claude', turnTimeoutMin: 1 } },
     note: (title: string, text: string) => notes.push({ title, text }),
     update: (patch: Record<string, unknown>) => updates.push(patch),
+    waitForPairDecision: async (decision: unknown) => {
+      decisionsAsked.push(decision);
+      return decisions.shift() ?? false;
+    },
     turn: async (turn: { phase: string; prompt: string; parseVerdict?: (text: string) => string | undefined | Promise<string | undefined> }) => {
       const text = await respond(turn);
       const verdict = await turn.parseVerdict?.(text);
@@ -56,7 +61,7 @@ function fakeContext(cwd: string, coder: 'claude' | 'codex', maxRounds: number, 
       return { text, verdict };
     },
   } as unknown as RunContextType;
-  return { ctx, notes, updates, turns };
+  return { ctx, notes, updates, turns, decisionsAsked };
 }
 
 try {
@@ -129,6 +134,20 @@ try {
   assert.match(String(invalid.updates.at(-1)?.final), /Chưa được approve sau 1 vòng review/);
   assert.equal(invalid.turns.find((turn) => turn.phase === 'review')?.verdict, 'CHANGES_REQUESTED');
   assert.ok(invalid.notes.some(({ title, text }) => title === 'Reviewer không trả verdict hợp lệ' && text === '→ coi như CHANGES_REQUESTED'));
+  assert.equal(invalid.decisionsAsked.length, 1, 'a failed review pauses at the configured review limit');
+
+  const extensionRepo = await makeRepo();
+  let extensionReview = 0;
+  const extension = fakeContext(extensionRepo, 'codex', 2, async (turn) => {
+    if (turn.phase === 'code' || turn.phase === 'fix') return 'Processed implementation feedback.';
+    extensionReview++;
+    return fencedReview('CHANGES_REQUESTED', '');
+  }, [true, false]);
+  await runPair(extension.ctx);
+  assert.equal(extensionReview, 4);
+  assert.equal(extension.decisionsAsked.length, 2, 'the run asks again after each additional two reviews');
+  assert.deepEqual(extension.updates.filter((patch) => 'pairRoundsGranted' in patch).map((patch) => patch.pairRoundsGranted), [2]);
+  assert.match(String(extension.updates.at(-1)?.final), /Chưa được approve sau 4 vòng review/);
 
   // Both reviewer identities are watched. Their tracked writes warn, block approval,
   // and are named explicitly in the next coder fix prompt.
