@@ -281,6 +281,7 @@ function launchRun(ctx: RunContext, pairRepoKey?: string) {
         });
         ctx.update({ final: result.text });
       }
+      if (ctx.cancelled) status = 'cancelled';
     } catch (err) {
       status = ctx.cancelled ? 'cancelled' : 'error';
       error = status === 'error' ? (err as Error).message : undefined;
@@ -428,6 +429,15 @@ app.post('/api/runs/:id/cancel', (c) => {
   if (!ctx) return c.json({ error: 'run is not active' }, 404);
   ctx.userCancelled = true;
   ctx.abort.abort();
+  return c.json({ ok: true });
+});
+
+app.post('/api/runs/:id/pair-decision', async (c) => {
+  const ctx = active.get(c.req.param('id'));
+  if (!ctx?.run.pairDecision) return c.json({ error: 'no Pair decision is waiting' }, 409);
+  const body = await c.req.json().catch(() => null);
+  if (typeof body?.continue !== 'boolean') return c.json({ error: 'continue must be a boolean' }, 400);
+  if (!ctx.answerPairDecision(body.continue)) return c.json({ error: 'Pair decision is no longer waiting' }, 409);
   return c.json({ ok: true });
 });
 

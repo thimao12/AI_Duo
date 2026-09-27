@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, Check, CircleAlert, Copy, FileDiff, ListChevronsDownUp, ListChevronsUpDown, PanelLeft, Square, WifiOff } from 'lucide-react';
-import { api, useRun, type Message, type Run } from './api.ts';
+import { api, useRun, type Message, type PairDecision, type Run } from './api.ts';
 import ChangesPanel from './components/ChangesPanel.tsx';
 import ChoiceQuestion from './components/ChoiceQuestion.tsx';
 import Composer, { MODE_ICON } from './components/Composer.tsx';
@@ -15,7 +15,7 @@ function phaseTitle(m: Message, run: Run): string {
   if (m.round <= 0 || m.phase === 'synthesize' || m.phase === 'propose') return label;
   // A fix turn answers the review of the previous round (the server numbers it round + 1).
   const round = m.phase === 'fix' ? m.round - 1 : m.round;
-  return `${label} · vòng ${round}/${run.config.maxRounds}`;
+  return `${label} · vòng ${round}/${run.config.maxRounds + (run.pairRoundsGranted ?? 0)}`;
 }
 
 /** "Review & test · vòng 2/3", from the latest agent turn. */
@@ -94,6 +94,40 @@ function FinalBlock({ run, files, onShowChanges }: { run: Run; files: number; on
   );
 }
 
+function PairFailureDecision({ runId, decision }: { runId: string; decision: PairDecision }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function choose(continueRun: boolean) {
+    if (busy) return;
+    setBusy(true);
+    setError('');
+    try {
+      await api.pairDecision(runId, continueRun);
+    } catch (cause) {
+      setError((cause as Error).message);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section aria-label="Test thất bại" aria-live="polite" className="mt-6 rounded-2xl border border-warn/30 bg-warn/5 p-4">
+      <h2 className="text-[13.5px] font-semibold">Test fail ở vòng {decision.round}</h2>
+      <p className="mt-1 text-[13px] text-muted">Bạn muốn cho agent thêm 2 vòng sửa và review hay dừng tại đây?</p>
+      {error && <p role="alert" className="mt-3 flex items-center gap-1.5 text-[12.5px] text-danger"><CircleAlert aria-hidden className="size-3.5" />{error}</p>}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button type="button" onClick={() => void choose(true)} disabled={busy} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[12.5px] font-medium text-primary-fg hover:opacity-85 disabled:opacity-50">
+          {busy ? <Spinner className="size-3.5" /> : <Check aria-hidden className="size-3.5" />}
+          Tiếp tục thêm 2 vòng
+        </button>
+        <button type="button" onClick={() => void choose(false)} disabled={busy} className="h-8 rounded-lg border border-line px-3 text-[12.5px] text-muted transition-colors hover:bg-surface hover:text-fg disabled:opacity-50">
+          Dừng
+        </button>
+      </div>
+    </section>
+  );
+}
+
 interface ThreadProps {
   id: string;
   title?: string;
@@ -107,7 +141,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
   const [revision, setRevision] = useState(0);
   const { run, reconnecting, error } = useRun(id, revision);
   const [compact, setCompact] = useState(false);
-  const [panel, setPanel] = useState<boolean | null>(null);
+  const [panelOpen, setPanelOpen] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const scroller = useRef<HTMLDivElement>(null);
   const positioned = useRef(false);
@@ -115,8 +149,6 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
   const files = useMemo(() => parseDiff(run?.diff ?? ''), [run?.diff]);
   const added = files.reduce((s, f) => s + f.added, 0);
   const removed = files.reduce((s, f) => s + f.removed, 0);
-  // The changes panel opens by itself once there is a diff on a wide window, until the user decides.
-  const panelOpen = panel ?? (files.length > 0 && typeof window !== 'undefined' && window.innerWidth >= 1180);
   const running = run?.status === 'running';
 
   const lastLen = run?.messages.at(-1)?.parts.reduce((n, p) => n + p.content.length, 0);
@@ -135,7 +167,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
 
   useEffect(() => {
     positioned.current = false;
-    setPanel(null);
+    setPanelOpen(false);
     setCompact(false);
   }, [id]);
 
@@ -211,9 +243,10 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
               {files.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setPanel(!panelOpen)}
+                  onClick={() => setPanelOpen((open) => !open)}
                   aria-pressed={panelOpen}
-                  title="Thay đổi"
+                  aria-label={panelOpen ? 'Ẩn bảng thay đổi' : 'Hiện bảng thay đổi'}
+                  title={panelOpen ? 'Ẩn bảng thay đổi' : 'Hiện bảng thay đổi'}
                   className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[12px] transition-colors hover:bg-surface ${panelOpen ? 'bg-surface text-fg' : 'text-muted'}`}
                 >
                   <FileDiff aria-hidden className="size-4" />
@@ -277,6 +310,8 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
                 })}
               </div>
 
+              {run.pairDecision?.type === 'test-failure' && <PairFailureDecision runId={run.id} decision={run.pairDecision} />}
+
               {run.error && (
                 <p role="alert" className="mt-8 flex gap-2 rounded-xl bg-danger/8 px-4 py-3 text-[13px] text-danger">
                   <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
@@ -284,7 +319,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
                 </p>
               )}
               {run.status === 'cancelled' && <p className="mt-8 text-center text-[12.5px] text-faint">Phiên đã dừng.</p>}
-              {run.final && <FinalBlock run={run} files={files.length} onShowChanges={() => setPanel(true)} />}
+              {run.final && <FinalBlock run={run} files={files.length} onShowChanges={() => setPanelOpen(true)} />}
               {run.status === 'done' && run.final && (
                 <ChoiceQuestion
                   key={run.messages.at(-1)?.id}
@@ -317,7 +352,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
       {panelOpen && run?.diff !== undefined && (
         <>
           <div className="fixed inset-0 z-40 lg:static lg:z-auto lg:w-[min(40vw,560px)] lg:shrink-0 lg:border-l lg:border-line">
-            <ChangesPanel files={files} diff={run.diff ?? ''} onClose={() => setPanel(false)} />
+            <ChangesPanel files={files} diff={run.diff ?? ''} onClose={() => setPanelOpen(false)} />
           </div>
         </>
       )}

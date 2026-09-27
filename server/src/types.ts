@@ -50,6 +50,12 @@ export interface RunConfig {
 
 export type Verdict = 'AGREE' | 'REVISE' | 'APPROVE' | 'CHANGES_REQUESTED';
 
+export interface PairDecision {
+  type: 'test-failure';
+  round: number;
+  extraRounds: number;
+}
+
 export interface Part {
   kind: 'text' | 'tool' | 'tool_result' | 'raw' | 'error';
   content: string;
@@ -86,6 +92,9 @@ export interface Run {
   final?: string;
   diff?: string;
   error?: string;
+  /** A Pair run is paused until the user chooses whether to continue after failed tests. */
+  pairDecision?: PairDecision | null;
+  pairRoundsGranted?: number;
   /** Sum over all turns that reported usage. */
   usage?: Usage;
   /** Most recently observed Claude account limit windows. */
@@ -97,7 +106,7 @@ export type RunEvent =
   | { type: 'message.start'; message: Message }
   | { type: 'message.event'; id: string; event: AgentEvent }
   | { type: 'message.end'; id: string; status: Message['status']; verdict?: Verdict; usage?: Usage; endedAt: number }
-  | { type: 'run.update'; patch: Partial<Pick<Run, 'status' | 'final' | 'diff' | 'error' | 'endedAt' | 'usage' | 'claudeLimits'>> };
+  | { type: 'run.update'; patch: Partial<Pick<Run, 'status' | 'final' | 'diff' | 'error' | 'endedAt' | 'usage' | 'claudeLimits' | 'pairDecision' | 'pairRoundsGranted'>> };
 
 export function addUsage(a: Usage | undefined, b: Usage): Usage {
   const costUsd = a?.costUsd !== undefined || b.costUsd !== undefined ? (a?.costUsd ?? 0) + (b.costUsd ?? 0) : undefined;

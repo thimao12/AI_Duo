@@ -9,7 +9,7 @@ const MAX_DIFF_CHARS = 60_000;
 
 export interface ReviewResult {
   verdict?: 'APPROVE' | 'CHANGES_REQUESTED';
-  tests?: string;
+  tests?: 'pass' | 'fail' | 'none';
   issues?: { severity?: string; file?: string; description?: string }[];
 }
 
@@ -21,6 +21,9 @@ export function parseReview(text: string): ReviewResult {
       if (!obj || typeof obj !== 'object' || Array.isArray(obj) || typeof obj.verdict !== 'string') continue;
       const verdict = obj.verdict.trim().toUpperCase();
       if (verdict !== 'APPROVE' && verdict !== 'CHANGES_REQUESTED') continue;
+      const tests = typeof obj.tests === 'string' && /^(pass|fail|none)$/i.test(obj.tests.trim())
+        ? obj.tests.trim().toLowerCase() as ReviewResult['tests']
+        : undefined;
 
       const issues = Array.isArray(obj.issues)
         ? obj.issues
@@ -32,8 +35,9 @@ export function parseReview(text: string): ReviewResult {
             }))
         : [];
       return {
-        verdict,
-        ...(typeof obj.tests === 'string' ? { tests: obj.tests } : {}),
+        // A reviewer cannot approve code while also reporting a failed test suite.
+        verdict: tests === 'fail' ? 'CHANGES_REQUESTED' : verdict,
+        ...(tests && { tests }),
         issues,
       };
     } catch {}
@@ -81,7 +85,8 @@ export async function runPair(ctx: RunContext) {
   let approved = false;
   let lastReview: ReviewResult = {};
   let rounds = 0;
-  for (let r = 1; r <= maxRounds; r++) {
+  let reviewLimit = maxRounds + (ctx.run.pairRoundsGranted ?? 0);
+  for (let r = 1; r <= reviewLimit; r++) {
     rounds = r;
     const diff = await diffSince(cwd, base);
     ctx.update({ diff });
@@ -120,11 +125,29 @@ export async function runPair(ctx: RunContext) {
       );
     }
 
+    if (lastReview.tests === 'fail') {
+      ctx.note(
+        'Kiểm thử chưa đạt',
+        `Review vòng ${r} báo test fail. Bạn có muốn thêm 2 vòng sửa và review hay dừng lại?`,
+        'review',
+        r,
+      );
+      const continueRun = await ctx.waitForPairDecision({ type: 'test-failure', round: r, extraRounds: 2 });
+      if (!continueRun) {
+        if (!ctx.cancelled) ctx.note('Đã dừng theo lựa chọn', `Dừng sau vòng ${r}; không thêm vòng sửa.`, 'review', r);
+        break;
+      }
+      const granted = (ctx.run.pairRoundsGranted ?? 0) + 2;
+      reviewLimit = maxRounds + granted;
+      ctx.update({ pairRoundsGranted: granted });
+      ctx.note('Tiếp tục Pair', `Đã thêm 2 vòng. Tổng giới hạn hiện tại: ${reviewLimit} vòng review.`, 'review', r);
+    }
+
     if (lastReview.verdict === 'APPROVE' && !reviewerChanges) {
       approved = true;
       break;
     }
-    if (r === maxRounds) break;
+    if (r >= reviewLimit) break;
 
     summary = (
       await ctx.turn({

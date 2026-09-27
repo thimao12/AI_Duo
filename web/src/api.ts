@@ -4,7 +4,7 @@ import type { Run, RunConfig, RoutePlan } from '../../server/src/types.ts';
 import type { ModelCatalog } from '../../server/src/types.ts';
 import { startRunStream } from './run-events.ts';
 
-export type { Message, ModelChoice, Part, RoutePlan, Run, RunConfig, Verdict, Speaker } from '../../server/src/types.ts';
+export type { Message, ModelChoice, PairDecision, Part, RoutePlan, Run, RunConfig, Verdict, Speaker } from '../../server/src/types.ts';
 export type { AgentName, Usage } from '../../server/src/agents/types.ts';
 export type { ModelCatalog, ModelInfo } from '../../server/src/types.ts';
 
@@ -72,6 +72,10 @@ export const api = {
   cancel: (id: string) =>
     fetch(`/api/runs/${id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((r) =>
       json(r),
+    ),
+  pairDecision: (id: string, continueRun: boolean) =>
+    fetch(`/api/runs/${id}/pair-decision`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ continue: continueRun }) }).then((r) =>
+      json<{ ok: boolean }>(r),
     ),
 };
 
