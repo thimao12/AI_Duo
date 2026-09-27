@@ -31,7 +31,8 @@ const DEFAULTS: Form = {
 function loadForm(): Form {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    return { ...DEFAULTS, ...saved, mode: saved.mode === 'plan' ? 'plan' : 'code', prompt: typeof saved.prompt === 'string' ? saved.prompt : '', models: { ...DEFAULTS.models, ...saved.models }, efforts: { ...DEFAULTS.efforts, ...saved.efforts } };
+    // Every new composer starts in Code; Plan is only entered with Shift+Tab.
+    return { ...DEFAULTS, ...saved, mode: 'code', prompt: typeof saved.prompt === 'string' ? saved.prompt : '', models: { ...DEFAULTS.models, ...saved.models }, efforts: { ...DEFAULTS.efforts, ...saved.efforts } };
   } catch {
     return DEFAULTS;
   }
@@ -218,7 +219,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
     el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * (hero ? 0.42 : 0.32))}px`;
   }, [form.prompt, hero]);
 
-  const ModeIcon = MODE_ICON[form.mode];
+  const PlanIcon = MODE_ICON.plan;
   const recent = [...new Set([form.cwd, ...projects].filter(Boolean))].slice(0, 8);
   const canSend = imagesReady && (!!form.prompt.trim() || images.length > 0) && !busy;
 
@@ -271,6 +272,11 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
               e.preventDefault();
               void submit();
+            }
+            // Shift+Tab toggles Code ↔ Plan; plain Tab still moves focus.
+            if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.repeat && !e.nativeEvent.isComposing && e.keyCode !== 229) {
+              e.preventDefault();
+              setForm((f) => ({ ...f, mode: f.mode === 'plan' ? 'code' : 'plan', maxRounds: 2 }));
             }
           }}
           placeholder={
@@ -361,35 +367,12 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
             </Popover>
             )}
 
-            <Popover
-              side={side}
-              width="w-72"
-              label={
-                <>
-                  <ModeIcon aria-hidden className="size-3.5 shrink-0" />
-                  {MODE_LABEL[form.mode]}
-                </>
-              }
-            >
-              {(close) => (
-                <>
-                  <MenuLabel>Chế độ</MenuLabel>
-                  {MODES.map((m) => (
-                    <MenuItem
-                      key={m.id}
-                      selected={form.mode === m.id}
-                      icon={<m.icon className="size-3.5" />}
-                      label={MODE_LABEL[m.id]}
-                      hint={m.hint}
-                      onSelect={() => {
-                        setForm((f) => ({ ...f, mode: m.id, maxRounds: 2 }));
-                        close();
-                      }}
-                    />
-                  ))}
-                </>
-              )}
-            </Popover>
+            {form.mode === 'plan' && (
+              <span role="status" title="Shift + Tab để quay lại Code" className="inline-flex h-8 items-center gap-1.5 px-2 text-[12.5px] font-medium text-fg">
+                <PlanIcon aria-hidden className="size-3.5 shrink-0" />
+                {MODE_LABEL.plan}
+              </span>
+            )}
 
             {(['codex', 'claude'] as const).map((a) => (
               <ModelPicker
@@ -465,7 +448,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
             {form.mode === 'code'
               ? preview ? `${AGENT_LABEL[preview.coder]} code, ${AGENT_LABEL[preview.reviewer]} review và chạy test. Hỏi bạn sau 2 vòng chưa approve.` : 'Router tự chọn agent code và review theo task.'
               : preview ? `${AGENT_LABEL[preview.coder]} lập kế hoạch, ${AGENT_LABEL[preview.reviewer]} review. Chỉ sửa repo sau khi bạn duyệt.` : 'Hai agent sẽ lập và review kế hoạch trước khi hỏi bạn.'}
-            {' '}Enter để gửi, Shift + Enter để xuống dòng.
+            {' '}Enter để gửi, Shift + Enter để xuống dòng, Shift + Tab để chuyển Code/Plan.
         </p>
       )}
     </div>

@@ -11,6 +11,8 @@ export function parseChoiceQuestion(text: string): { question: string; options: 
     index--;
   }
   if (options.length !== 3 || !options.every(Boolean)) return null;
+  // The three choices must not be the tail of a longer numbered list.
+  if (index >= 0 && /^(\*\*)?\d+[.)](\*\*)?\s+/.test(lines[index].trim())) return null;
   const question = lines.slice(Math.max(0, index - 3), index + 1).reverse().map((line) => line.trim().replace(/^#{1,6}\s*/, '').replace(/\*\*/g, '')).find((line) => /[?？]\s*$/.test(line));
   return question ? { question, options } : null;
 }
