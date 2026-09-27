@@ -3,10 +3,10 @@ import { ArrowUp, CircleAlert, Folder, FolderOpen, GitMerge, ImagePlus, ListTodo
 import { api, type AgentName, type AgentStatus, type ModelCatalog, type NewRunRequest, type RoutePreview, type RunConfig } from '../api.ts';
 import ModelPicker from './ModelPicker.tsx';
 import { AgentDot, AGENT_LABEL, basename, MenuItem, MenuLabel, MODE_LABEL, Popover, Spinner } from './ui.tsx';
+import { loadDraftImages, saveDraftImages, type DraftImage } from '../draft-images.ts';
 
 type Mode = NewRunRequest['mode'];
 type Form = Omit<RunConfig, 'models' | 'efforts' | 'mode' | 'route' | 'images'> & { mode: Mode; models: Record<AgentName, string>; efforts: Record<AgentName, string> };
-type DraftImage = { name: string; dataUrl: string };
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -54,8 +54,26 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [images, setImages] = useState<DraftImage[]>([]);
+  const [imagesReady, setImagesReady] = useState(false);
+  const imageRef = useRef<DraftImage[]>([]);
+  const imagesTouched = useRef(false);
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
   const auto = form.mode === 'auto';
+
+  useEffect(() => {
+    let mounted = true;
+    void loadDraftImages().then((saved) => {
+      if (mounted && !imagesTouched.current) {
+        imageRef.current = saved;
+        setImages(saved);
+      }
+    }).catch(() => {
+      if (mounted) setError('Không thể khôi phục ảnh nháp.');
+    }).finally(() => {
+      if (mounted) setImagesReady(true);
+    });
+    return () => { mounted = false; };
+  }, []);
 
   // Inside a thread the composer targets that thread's project.
   useEffect(() => {
@@ -92,20 +110,22 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
   }, [form]);
 
   const submit = async () => {
-    if (busy || (!form.prompt.trim() && !images.length)) return;
+    if (busy || !imagesReady || (!form.prompt.trim() && !images.length)) return;
     setBusy(true);
     setError(null);
     try {
       // Auto: the router picks mode, agents and rounds; sending them would override it.
       const { maxRounds: _r, judge: _j, coder: _c, ...rest } = form;
       const { id } = threadId
-        ? await api.continue(threadId, form.prompt, images, form.mode)
+        ? await api.continue(threadId, form.prompt, images, form)
         : await api.create({ ...(auto ? rest : form), images });
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...form, prompt: '' }));
       } catch {}
       setForm((f) => ({ ...f, prompt: '' }));
+      imageRef.current = [];
       setImages([]);
+      await saveDraftImages([]).catch(() => {});
       if (threadId) onContinue?.();
       else onCreated(id);
     } catch (err) {
@@ -117,7 +137,7 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
 
   const addImages = async (files: File[]) => {
     setError(null);
-    if (images.length + files.length > 4) return setError('Chỉ thêm tối đa 4 ảnh.');
+    if (imageRef.current.length + files.length > 4) return setError('Chỉ thêm tối đa 4 ảnh.');
     if (files.some((file) => !IMAGE_TYPES.has(file.type) || file.size > MAX_IMAGE_BYTES)) return setError('Chọn ảnh PNG, JPEG, WebP hoặc GIF, tối đa 5 MB mỗi ảnh.');
     try {
       const added = await Promise.all(files.map((file) => new Promise<DraftImage>((resolve, reject) => {
@@ -126,13 +146,26 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
         reader.onerror = () => reject(reader.error);
         reader.readAsDataURL(file);
       })));
-      setImages((current) => current.length + added.length <= 4 ? [...current, ...added] : current);
+      const next = [...imageRef.current, ...added];
+      if (next.length > 4) return setError('Chá»‰ thÃªm tá»‘i Ä‘a 4 áº£nh.');
+      imagesTouched.current = true;
+      imageRef.current = next;
+      setImages(next);
+      await saveDraftImages(next);
     } catch {
       setError('Không đọc được ảnh.');
     }
   };
 
-  return { form, set, setForm, agents, catalog, preview, error, busy, submit, auto, images, setImages, addImages };
+  const removeImage = async (index: number) => {
+    const next = imageRef.current.filter((_, i) => i !== index);
+    imagesTouched.current = true;
+    imageRef.current = next;
+    setImages(next);
+    await saveDraftImages(next).catch(() => setError('Không thể lưu ảnh nháp.'));
+  };
+
+  return { form, set, setForm, agents, catalog, preview, error, busy, submit, auto, images, imagesReady, removeImage, addImages };
 }
 
 export interface ComposerSeed {
@@ -157,7 +190,7 @@ const field =
   'w-full rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[13px] text-fg placeholder:text-faint transition-colors hover:border-line-strong focus:border-focus focus:outline-none placeholder:font-sans';
 
 export default function Composer({ variant, projects, onCreated, threadCwd, threadId, onContinue, seed, onAgents }: ComposerProps) {
-  const { form, set, setForm, agents, catalog, preview, error, busy, submit, auto, images, setImages, addImages } = useNewRunForm(onCreated, threadCwd, threadId, onContinue);
+  const { form, set, setForm, agents, catalog, preview, error, busy, submit, auto, images, imagesReady, removeImage, addImages } = useNewRunForm(onCreated, threadCwd, threadId, onContinue);
   const text = useRef<HTMLTextAreaElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const [typingPath, setTypingPath] = useState(false);
@@ -183,7 +216,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
   const reviewer: AgentName = form.coder === 'claude' ? 'codex' : 'claude';
   const ModeIcon = MODE_ICON[form.mode];
   const recent = [...new Set([form.cwd, ...projects].filter(Boolean))].slice(0, 8);
-  const canSend = (!!form.prompt.trim() || images.length > 0) && !busy;
+  const canSend = imagesReady && (!!form.prompt.trim() || images.length > 0) && !busy;
 
   const pick = async (close: () => void) => {
     const dir = await desktop?.pickFolder(form.cwd);
@@ -198,7 +231,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
           {images.map((image, index) => (
             <div key={`${image.name}-${index}`} className="relative size-16 overflow-hidden rounded-lg border border-line bg-surface" title={image.name}>
               <img src={image.dataUrl} alt={image.name} className="size-full object-cover" />
-              <button type="button" onClick={() => setImages((current) => current.filter((_, i) => i !== index))} aria-label={`Xóa ảnh ${image.name}`} className="absolute top-0 right-0 rounded-bl bg-bg/90 p-0.5 text-fg">
+              <button type="button" onClick={() => void removeImage(index)} aria-label={`Xóa ảnh ${image.name}`} className="absolute top-0 right-0 rounded-bl bg-bg/90 p-0.5 text-fg">
                 <X aria-hidden className="size-3.5" />
               </button>
             </div>
@@ -256,11 +289,17 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
 
         <div className="flex items-center gap-0.5 px-2 pt-1 pb-2">
           <div className="flex min-w-0 flex-1 flex-wrap items-center gap-0.5">
-            <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple className="sr-only" aria-label="Chọn ảnh" onChange={(e) => { void addImages(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
-            <button type="button" onClick={() => imageInput.current?.click()} aria-label="Thêm ảnh" title="Thêm ảnh" className="grid size-8 shrink-0 place-items-center rounded-lg text-muted hover:bg-surface hover:text-fg">
+            <input ref={imageInput} type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple disabled={!imagesReady} className="sr-only" aria-label="Chọn ảnh" onChange={(e) => { void addImages(Array.from(e.target.files ?? [])); e.target.value = ''; }} />
+            <button type="button" onClick={() => imageInput.current?.click()} aria-label="Thêm ảnh" title="Thêm ảnh" disabled={!imagesReady} className="grid size-8 shrink-0 place-items-center rounded-lg text-muted hover:bg-surface hover:text-fg disabled:opacity-50">
               <ImagePlus aria-hidden className="size-4" />
             </button>
-            {!threadId && <>
+            <>
+            {threadId ? (
+              <span title={threadCwd || form.cwd} className="inline-flex h-8 max-w-40 items-center gap-1.5 px-2 text-[12.5px] text-muted">
+                <Folder aria-hidden className="size-3.5 shrink-0" />
+                <span className="truncate">{basename(threadCwd || form.cwd || 'Project')}</span>
+              </span>
+            ) : (
             <Popover
               side={side}
               width="w-80"
@@ -316,6 +355,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
                 </>
               )}
             </Popover>
+            )}
 
             <Popover
               side={side}
@@ -450,7 +490,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
                 </div>
               )}
             </Popover>
-            </>}
+            </>
           </div>
 
           <button

@@ -4,13 +4,16 @@
  */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { RunEvent } from './types.ts';
 
 const dataDir = await mkdtemp(path.join(tmpdir(), 'ai-duo-lifecycle-runs-'));
+const routeCwd = await mkdtemp(path.join(tmpdir(), 'ai-duo-lifecycle-route-'));
 process.env.AI_DUO_DATA_DIR = dataDir;
+execFileSync('git', ['init', '-q'], { cwd: routeCwd });
+await writeFile(path.join(routeCwd, 'baseline.txt'), 'baseline\n');
 
 const [{ agents }, { AbortedError, spawnJsonl }, { startServer, abortAll }, { active }] = await Promise.all([
   import('./agents/index.ts'),
@@ -74,6 +77,21 @@ try {
   assert.equal(rerouted.config.mode, 'debate');
   assert.equal(rerouted.config.route.taskType, 'explain');
   assert.ok(rerouted.messages.some((message: { title: string }) => message.title === 'Định tuyến tự động'));
+
+  // Auto routing must retain its selected coder and reviewer, not plan-validation defaults.
+  const refactorStart = await postRun({ mode: 'plan', cwd: routeCwd, prompt: 'initial plan' });
+  const { id: refactorId } = await refactorStart.json();
+  await waitForRun(refactorId);
+  agents.claude.run = async () => ({ finalText: 'Implemented refactor.' });
+  agents.codex.run = async () => ({ finalText: '```json\n{"verdict":"APPROVE","tests":"pass","issues":[]}\n```' });
+  const refactorResponse = await request('/api/runs/' + refactorId + '/messages', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt: 'Refactor toàn bộ module auth, tách file và migrate sang kiến trúc mới', mode: 'auto' }) });
+  assert.equal(refactorResponse.status, 200);
+  const refactored = await waitForRun(refactorId);
+  assert.equal(refactored.config.mode, 'pair');
+  assert.equal(refactored.config.coder, 'claude');
+  assert.equal(refactored.config.reviewer, 'codex');
+  assert.ok(refactored.messages.some((message: { agent: string; phase: string }) => message.agent === 'claude' && message.phase === 'code'));
+  assert.ok(refactored.messages.some((message: { agent: string; phase: string }) => message.agent === 'codex' && message.phase === 'review'));
 
   // A failed agent aborts and waits for its sibling before the final run is saved.
   agents.claude.run = ({ signal }) =>
@@ -148,4 +166,5 @@ try {
   while (active.size && Date.now() < cleanupDeadline) await new Promise((resolve) => setTimeout(resolve, 25));
   await server.close();
   await rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(console.error);
+  await rm(routeCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(console.error);
 }

@@ -63,8 +63,8 @@ export const api = {
     fetch('/api/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }).then((r) =>
       json<{ id: string }>(r),
     ),
-  continue: (id: string, prompt: string, images: NonNullable<NewRunRequest['images']>, mode: NewRunRequest['mode'] = 'auto') =>
-    fetch(`/api/runs/${id}/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, images, mode }) }).then((r) => json<{ id: string }>(r)),
+  continue: (id: string, prompt: string, images: NonNullable<NewRunRequest['images']>, config: Partial<NewRunRequest> = {}) =>
+    fetch(`/api/runs/${id}/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...config, prompt, images, mode: config.mode ?? 'auto' }) }).then((r) => json<{ id: string }>(r)),
   previewRoute: (prompt: string, signal?: AbortSignal) =>
     fetch('/api/route/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt }), signal }).then((r) =>
       json<RoutePreview>(r),

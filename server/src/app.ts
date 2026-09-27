@@ -357,10 +357,21 @@ app.post('/api/runs/:id/messages', async (c) => {
     if (!run) return c.json({ error: 'not found' }, 404);
     if (active.has(id)) return c.json({ error: 'Phiên đang chạy, hãy đợi hoàn tất.' }, 409);
     const nextPrompt = prompt || 'Hãy phân tích ảnh đính kèm.';
+    if (body?.mode !== undefined && body.mode !== 'auto' && body.mode !== 'pair' && body.mode !== 'debate' && body.mode !== 'plan') return c.json({ error: 'Invalid mode' }, 400);
     const manualMode = body?.mode === 'pair' || body?.mode === 'debate' || body?.mode === 'plan' ? body.mode : null;
+    const parsedOptions = await parseConfig({ ...body, mode: manualMode ?? 'plan', cwd: run.config.cwd, prompt: nextPrompt });
+    if (typeof parsedOptions === 'string') return c.json({ error: parsedOptions }, 400);
+    const { models, efforts, testCommand, turnTimeoutMin } = parsedOptions.cfg;
     let routeUsage: Usage | undefined;
     if (manualMode) {
-      run.config = { ...run.config, mode: manualMode, route: undefined };
+      run.config = {
+        ...run.config,
+        ...parsedOptions.cfg,
+        prompt: run.config.prompt,
+        cwd: run.config.cwd,
+        images: run.config.images,
+        route: undefined,
+      };
     } else {
       const decision = await autoRoute(nextPrompt);
       routeUsage = decision.usage;
@@ -372,8 +383,10 @@ app.post('/api/runs/:id/messages', async (c) => {
         judge: decision.judge,
         maxRounds: decision.maxRounds,
         route: decision.route,
-        models: {},
-        efforts: {},
+        models,
+        efforts,
+        testCommand,
+        turnTimeoutMin,
       };
     }
     if (run.config.mode === 'pair') {
@@ -395,7 +408,11 @@ app.post('/api/runs/:id/messages', async (c) => {
     }
     const ctx = new RunContext(run.config, run);
     ctx.followUp(nextPrompt, parsedImages.images, messageId);
-    if (run.config.route) ctx.note('Định tuyến tự động', run.config.route.reason, 'info', 0, routeUsage);
+    if (run.config.route) {
+      const manual = Object.entries(run.config.models ?? {}).filter(([, model]) => model);
+      const override = manual.length ? `\nModel đặt tay (ưu tiên hơn router): ${manual.map(([agent, model]) => `${agent}=${model}`).join(', ')}` : '';
+      ctx.note('Định tuyến tự động', run.config.route.reason + override, 'info', 0, routeUsage);
+    }
     launchRun(ctx, pairRepoKey);
     return c.json({ id });
   } catch (err) {
