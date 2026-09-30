@@ -9,10 +9,11 @@ const temp = await mkdtemp(path.join(tmpdir(), 'ai duo path smoke '));
 const dataDir = path.join(temp, 'runs');
 const outside = path.join(temp, 'outside');
 process.env.AI_DUO_DATA_DIR = dataDir;
+process.env.AI_DUO_ALLOWED_ROOTS = JSON.stringify([temp]);
 await mkdir(outside);
 
 try {
-  const [{ dataPath }, { saveRun, loadRun, deleteRun }, { startServer }, git] = await Promise.all([
+  const [{ readRunImage, writeRunImages }, { saveRun, loadRun, deleteRun }, { startServer }, git] = await Promise.all([
     import('./data-path.ts'), import('./store.ts'), import('./app.ts'), import('./git.ts'),
   ]);
   const run: Run = {
@@ -23,17 +24,19 @@ try {
   await saveRun(run);
   const sentinel = path.join(outside, 'keep.txt');
   await writeFile(sentinel, 'outside untouched');
-  for (const id of ['../outside', '..\\outside', '/absolute', 'C:\\absolute', '%2e%2e', 'a/b', 'a\\b', '.', '..', 'a\u0000b']) {
+  for (const id of ['../outside', '..\\outside', '/absolute', 'C:\\absolute', '%2e%2e', 'a/b', 'a\\b', '.', '..', 'a\u0000b', 'a\n']) {
     assert.equal(await loadRun(id), undefined, id);
     assert.equal(await deleteRun(id), false, id);
     await assert.rejects(saveRun({ ...run, id }), /Invalid.*ID/, id);
-    await assert.rejects(dataPath('images', id), /Invalid data path|Data path must/, id);
+    await assert.rejects(writeRunImages(id, [{ mimeType: 'image/png', bytes: Buffer.from('bad') }]), /Invalid.*ID/, id);
   }
   assert.deepEqual((await readdir(dataDir)).filter((name) => name.endsWith('.tmp')), []);
   const images = path.join(dataDir, 'images', run.id);
-  await mkdir(images, { recursive: true });
-  await writeFile(path.join(images, '0.png'), 'initial image');
-  await writeFile(path.join(images, 'message-1-0.png'), 'follow-up image');
+  await writeRunImages(run.id, [{ mimeType: 'image/png', bytes: Buffer.from('initial image') }]);
+  await writeRunImages(run.id, [{ mimeType: 'image/png', bytes: Buffer.from('follow-up image') }], 'message-1');
+  await assert.rejects(readRunImage(run.id, 0, 'constructor'), /Invalid image/);
+  await assert.rejects(readRunImage(run.id, 0.5, 'image/png'), /Invalid image/);
+  await assert.rejects(readRunImage(run.id, 0, 'image/png', '../outside'), /Invalid.*ID/);
   const server = await startServer({ port: 0 });
   try {
     const initial = await fetch(`${server.url}/api/runs/${run.id}/images/0`);
@@ -55,7 +58,7 @@ try {
     assert.equal((await fetch(`${server.url}/api/runs/${run.id}/images/0`)).status, 404);
     await assert.rejects(deleteRun(run.id), /Data path must stay/);
     assert.equal((await loadRun(run.id))?.id, run.id, 'unsafe deletion must not partially remove the run');
-    await assert.rejects(dataPath('images', run.id, 'new.png'), /Data path must stay/);
+    await assert.rejects(writeRunImages(run.id, [{ mimeType: 'image/png', bytes: Buffer.from('new') }]), /Data path must stay/);
     await rm(images);
   } finally {
     await server.close();

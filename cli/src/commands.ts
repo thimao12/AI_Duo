@@ -7,6 +7,7 @@ import type { AgentCheck, AgentName } from '../../server/src/agents/types.ts';
 import { gitRequiredMessage, gitToplevel, isGitRepo } from '../../server/src/git.ts';
 import { describeOwner, listLocks, lockTarget, ownerState, readLockOwner, unlockRepo } from '../../server/src/lock.ts';
 import { paths } from '../../server/src/paths.ts';
+import { authorizeDirectory, DirectoryAccessError } from '../../server/src/project-directories.ts';
 import { evaluatePreflight, RunService, ServiceError, type RunHandle, type RunRequest, type ServiceErrorCode, type StartOptions } from '../../server/src/service.ts';
 import type { Mode, Run } from '../../server/src/types.ts';
 import { DecisionController } from './decisions.ts';
@@ -56,6 +57,9 @@ Exit codes: 0 done · 1 run failed · 2 invalid request · 3 agent check failed 
 Data (shared with the desktop app; override with AI_DUO_DATA_DIR / AI_DUO_PROMPTS_DIR):
   runs     ${paths.dataDir}
   prompts  ${paths.promptsDir}
+
+Projects: AI_DUO_ALLOWED_ROOTS is a JSON array of absolute folders. By default only the
+startup working folder and its descendants are allowed. Restart after changing the roots.
 `;
 
 const OPTIONS = {
@@ -186,7 +190,8 @@ class Cli {
 
   /** Report a service failure; returns the exit code. */
   failure(err: unknown): number {
-    if (err instanceof UsageError) {
+    if (err instanceof UsageError || err instanceof DirectoryAccessError) {
+      if (this.flags.json) this.json({ error: err.message, code: 'invalid' });
       this.err(this.style.red(err.message));
       this.err('Run `ai-duo --help` for usage.');
       return EXIT.usage;
@@ -293,7 +298,7 @@ class Cli {
     if (prompt === '-') prompt = (await readStdin(io.stdin)).trim();
     if (!prompt) throw new UsageError('Missing request: ai-duo run "<request>" (or `-` to read it from stdin)');
     const mode = oneOf('mode', flags.mode, ['code', 'plan'] as const) ?? 'code';
-    const cwd = path.resolve(io.cwd, flags.cwd ?? '.');
+    const cwd = authorizeDirectory(path.resolve(io.cwd, flags.cwd ?? '.'));
     const request: RunRequest = { ...requestFrom(flags), mode, prompt, cwd };
     await this.assertApprovable(mode, cwd);
     await seedPrompts();
@@ -312,7 +317,7 @@ class Cli {
     if (!previous) throw new ServiceError('not_found', `Run not found: ${id}`);
     const current = previous.config.mode;
     const mode: Mode = oneOf('mode', flags.mode, ['code', 'plan'] as const) ?? (current === 'plan' ? 'plan' : 'code');
-    await this.assertApprovable(mode, previous.config.cwd);
+    await this.assertApprovable(mode, authorizeDirectory(previous.config.cwd));
     await seedPrompts();
     return this.follow((options) => service.continue(id, { ...requestFrom(flags), mode, prompt }, options));
   }
@@ -365,7 +370,7 @@ class Cli {
 
   async doctor(): Promise<number> {
     const { flags, io, style } = this;
-    const cwd = path.resolve(io.cwd, flags.cwd ?? '.');
+    const cwd = authorizeDirectory(path.resolve(io.cwd, flags.cwd ?? '.'));
     const promptsReady = await seedPrompts().then(() => null, (err: Error) => err.message);
     const prompts = await readdir(paths.promptsDir).catch(() => [] as string[]);
     const runsCount = (await readdir(paths.dataDir).catch(() => [] as string[])).filter((n) => n.endsWith('.json')).length;
@@ -436,7 +441,7 @@ class Cli {
 
   async unlock(positionals: string[]): Promise<number> {
     const { flags, io, style } = this;
-    const cwd = path.resolve(io.cwd, positionals[0] ?? flags.cwd ?? '.');
+    const cwd = authorizeDirectory(path.resolve(io.cwd, positionals[0] ?? flags.cwd ?? '.'));
     if (!existsSync(cwd)) throw new UsageError(`Folder not found: ${cwd}`);
     const result = await unlockRepo(cwd, { force: flags.force === true });
     if (flags.json) this.json(result);

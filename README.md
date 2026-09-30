@@ -45,6 +45,17 @@ CLI chạy trực tiếp trên cùng lõi `RunService` với server (routing, ki
 
 Link trong output agent mở thư mục và các file `.md`, `.txt`, `.log`, `.json`, `.diff`, `.patch`, `.csv`, `.png`, `.jpg`, `.jpeg`, `.gif`, `.svg` hoặc `.pdf` bằng ứng dụng mặc định. Các loại file khác chỉ mở Explorer và chọn file.
 
+**Thư mục dự án được phép:** `AI_DUO_ALLOWED_ROOTS` là một mảng JSON gồm các đường dẫn tuyệt đối tới thư mục có sẵn. Server, desktop và CLI đọc cấu hình khi khởi động; thay đổi biến này cần khởi động lại. Nếu không đặt, chỉ thư mục mặc định và các thư mục con được phép: web dùng nơi gọi `pnpm dev`, desktop dùng thư mục home, CLI dùng nơi gọi `ai-duo` (`AI_DUO_DEFAULT_CWD` ghi đè thư mục mặc định). Chọn thư mục trên giao diện hoặc truyền `--cwd` chỉ chọn trong phạm vi này. Symlink/junction trỏ ra ngoài bị từ chối; Code cần cả Git root nằm trong phạm vi để snapshot không đọc repo cha. Lịch sử ngoài phạm vi vẫn xem được nhưng không thể chạy tiếp hoặc chuyển Plan sang Code.
+
+Ví dụ PowerShell, cho phép các dự án trong thư mục `Mao`:
+
+```powershell
+$env:AI_DUO_ALLOWED_ROOTS = '["C:/Users/Admin/Desktop/Mao"]'
+pnpm dev             # hoặc pnpm desktop / pnpm cli run "…" --cwd <dir>
+```
+
+Trên macOS/Linux: `export AI_DUO_ALLOWED_ROOTS='["/home/me/projects"]'` rồi chạy ứng dụng. Mọi thư mục cấu hình phải tồn tại; JSON sai hoặc đường dẫn tương đối làm ứng dụng dừng khởi động. Mảng rỗng `[]` không cho chạy dự án nào.
+
 **Chế độ dev (chạy trong browser, hot reload):**
 
 ```bash

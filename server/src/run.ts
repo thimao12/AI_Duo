@@ -4,6 +4,7 @@ import { agents, type AgentName, type Role, type Usage } from './agents/index.ts
 import { AbortedError } from './agents/process.ts';
 import { saveRun } from './store.ts';
 import { paths } from './paths.ts';
+import { authorizeDirectory } from './project-directories.ts';
 import { addUsage, applyAgentEvent, type Message, type ModelRole, type PairDecision, type PlanDecision, type PlanDecisionAnswer, type Run, type RunConfig, type RunEvent, type Speaker, type Verdict } from './types.ts';
 
 export interface TurnOptions {
@@ -204,7 +205,7 @@ export class RunContext {
       const res = await agents[t.agent].run({
         prompt: t.prompt,
         images: this.currentImages ?? this.run.config.images?.map((image, index) => path.join(paths.dataDir, 'images', this.run.id, `${index}.${image.mimeType.split('/')[1] === 'jpeg' ? 'jpg' : image.mimeType.split('/')[1]}`)),
-        cwd: this.run.config.cwd,
+        cwd: authorizeDirectory(this.run.config.cwd),
         role: t.role,
         sessionId: key ? this.sessions.get(key) : undefined,
         model,

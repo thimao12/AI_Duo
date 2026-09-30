@@ -10,6 +10,7 @@ import path from 'node:path';
 
 const temp = await mkdtemp(path.join(tmpdir(), 'ai-duo-models-'));
 process.env.AI_DUO_DATA_DIR = path.join(temp, 'runs');
+process.env.AI_DUO_ALLOWED_ROOTS = JSON.stringify([temp]);
 const codexHome = path.join(temp, 'codex');
 await import('node:fs/promises').then((fs) => fs.mkdir(codexHome));
 

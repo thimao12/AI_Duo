@@ -12,6 +12,7 @@ import type { RunEvent } from './types.ts';
 const dataDir = await mkdtemp(path.join(tmpdir(), 'ai-duo-lifecycle-runs-'));
 const routeCwd = await mkdtemp(path.join(tmpdir(), 'ai-duo-lifecycle-route-'));
 process.env.AI_DUO_DATA_DIR = dataDir;
+process.env.AI_DUO_ALLOWED_ROOTS = JSON.stringify([tmpdir()]);
 execFileSync('git', ['init', '-q'], { cwd: routeCwd });
 await writeFile(path.join(routeCwd, 'baseline.txt'), 'baseline\n');
 

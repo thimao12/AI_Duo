@@ -1,16 +1,14 @@
 import { execFile } from 'node:child_process';
-import { realpathSync, statSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { authorizeDirectory } from './project-directories.ts';
 
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolve, reject) => {
-    if (!cwd || cwd.includes('\u0000')) throw new Error('Invalid Git working directory');
-    const directory = realpathSync.native(path.resolve(cwd));
-    if (!statSync(directory).isDirectory()) throw new Error('Git working directory must be a directory');
+    const directory = authorizeDirectory(cwd);
     execFile('git', args, { cwd: directory, shell: false, env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       if (err) reject(new Error(`git ${args.join(' ')}: ${stderr || err.message}`));
       else resolve(stdout);
@@ -24,22 +22,26 @@ function treeId(value: string): string {
 }
 
 export async function isGitRepo(cwd: string): Promise<boolean> {
-  try {
-    return (await git(cwd, ['rev-parse', '--is-inside-work-tree'])).trim() === 'true';
-  } catch {
-    return false;
-  }
+  return (await gitToplevel(cwd)) !== null;
 }
 
 /** Why Code cannot run in `cwd`, for every place that checks it (start, follow-up, Plan approval). */
 export function gitRequiredMessage(cwd: string) {
-  return `Code mode needs a git repository so changes can be diffed and reverted. "${cwd}" is not one (run \`git init\` there first).`;
+  return `Code mode needs a git repository so changes can be diffed and reverted. "${cwd}" has no allowed repository (run \`git init\` there if needed, or add its Git root to AI_DUO_ALLOWED_ROOTS).`;
 }
 
 /** Root of the working tree containing `cwd`, or null outside a repository. */
 export async function gitToplevel(cwd: string): Promise<string | null> {
+  const root = await gitRepositoryId(cwd);
+  try { return root ? authorizeDirectory(root) : null; }
+  catch { return null; }
+}
+
+/** Repository identity for shared locks; outside roots may identify a lock, never a filesystem operation. */
+export async function gitRepositoryId(cwd: string): Promise<string | null> {
   try {
-    return (await git(cwd, ['rev-parse', '--show-toplevel'])).trim() || null;
+    const root = (await git(cwd, ['rev-parse', '--show-toplevel'])).trim();
+    return root && path.isAbsolute(root) ? path.resolve(root) : null;
   } catch {
     return null;
   }
@@ -61,11 +63,13 @@ async function withTempIndex<T>(cwd: string, fn: (env: NodeJS.ProcessEnv) => Pro
  * git tree object. Pre-existing uncommitted changes become part of the baseline, so the
  * later diff only shows what the agents did.
  */
-export function snapshotTree(cwd: string): Promise<string> {
-  return withTempIndex(cwd, async (env) => {
-    await git(cwd, ['read-tree', '--empty'], env);
-    await git(cwd, ['add', '-A'], env);
-    return treeId((await git(cwd, ['write-tree'], env)).trim());
+export async function snapshotTree(cwd: string): Promise<string> {
+  const root = await gitToplevel(cwd);
+  if (!root) throw new Error('Snapshot requires a Git repository inside AI_DUO_ALLOWED_ROOTS');
+  return withTempIndex(root, async (env) => {
+    await git(root, ['read-tree', '--empty'], env);
+    await git(root, ['add', '-A'], env);
+    return treeId((await git(root, ['write-tree'], env)).trim());
   });
 }
 
@@ -78,9 +82,11 @@ export interface TreeDiffSummary {
 export async function diffTreeSummary(cwd: string, before: string, after: string): Promise<TreeDiffSummary> {
   const beforeTree = treeId(before);
   const afterTree = treeId(after);
+  const root = await gitToplevel(cwd);
+  if (!root) throw new Error('Diff requires a Git repository inside AI_DUO_ALLOWED_ROOTS');
   const [stat, names] = await Promise.all([
-    git(cwd, ['diff', '--no-color', '--no-renames', '--stat', beforeTree, afterTree, '--']),
-    git(cwd, ['diff', '--no-color', '--no-renames', '--name-only', '-z', beforeTree, afterTree, '--']),
+    git(root, ['diff', '--no-color', '--no-renames', '--stat', beforeTree, afterTree, '--']),
+    git(root, ['diff', '--no-color', '--no-renames', '--name-only', '-z', beforeTree, afterTree, '--']),
   ]);
   return { stat: stat.trim(), files: names.split('\0').filter(Boolean) };
 }

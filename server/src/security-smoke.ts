@@ -93,7 +93,7 @@ try {
 
   console.log('API security smoke checks passed.');
 } finally {
-  server.close();
+  await server.close();
   if (previousDevOrigins === undefined) delete process.env.AI_DUO_DEV_ORIGINS;
   else process.env.AI_DUO_DEV_ORIGINS = previousDevOrigins;
 }

@@ -34,7 +34,7 @@ assert.equal(Object.hasOwn(poisoned, '__proto__'), false);
 const valid = { ...defaults, mode: 'plan', prompt: 'my draft', cwd: 'C:\\my project', testCommand: 'pnpm test', turnTimeoutMin: 60, models: { claude: 'sonnet', codex: 'gpt-6-sol' }, efforts: { claude: 'high', codex: 'medium' } };
 assert.deepEqual(parseStoredForm(JSON.stringify(valid)), { ...valid, mode: 'code' });
 assert.deepEqual(normalizeForm(valid), valid);
-for (const timeout of [NaN, Infinity, -1, 181, '60']) assert.equal(normalizeForm({ turnTimeoutMin: timeout }).turnTimeoutMin, 30);
+for (const timeout of [Number.NaN, Infinity, -1, 181, '60']) assert.equal(normalizeForm({ turnTimeoutMin: timeout }).turnTimeoutMin, 30);
 
 const long = ' '.repeat(200_000);
 assert.deepEqual(fencedBlocks(`\`\`\`json${long}`), []);

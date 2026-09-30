@@ -98,7 +98,7 @@ for (const agent of ['claude', 'codex'] as const) {
   }
 }
 
-const baseEnv: NodeJS.ProcessEnv = { ...process.env, AI_DUO_DATA_DIR: dataDir, AI_DUO_PROMPTS_DIR: promptsDir, CLAUDE_BIN: binFor.claude, CODEX_BIN: binFor.codex, CODEX_HOME: path.join(temp, 'codex-home'), FAKE_LOG: log, NO_COLOR: '1' };
+const baseEnv: NodeJS.ProcessEnv = { ...process.env, AI_DUO_ALLOWED_ROOTS: JSON.stringify([temp]), AI_DUO_DATA_DIR: dataDir, AI_DUO_PROMPTS_DIR: promptsDir, CLAUDE_BIN: binFor.claude, CODEX_BIN: binFor.codex, CODEX_HOME: path.join(temp, 'codex-home'), FAKE_LOG: log, NO_COLOR: '1' };
 delete baseEnv.INIT_CWD;
 delete baseEnv.npm_package_name;
 delete baseEnv.FORCE_COLOR;
@@ -133,6 +133,22 @@ try {
   assert.equal((await cli(['bogus'])).code, 2);
   assert.equal((await cli(['run'])).code, 2, 'a request is required');
   assert.equal((await cli(['run', 'x', '--plan-decision', 'refine'])).code, 2, 'refine needs a terminal');
+
+  // Roots are fixed at startup. An explicit cwd cannot expand them or start any agent.
+  await resetCalls();
+  for (const args of [
+    ['run', 'Implement a change', '--cwd', plain],
+    ['doctor', '--cwd', plain],
+    ['unlock', plain],
+  ]) {
+    const denied = await cli(args, { env: { AI_DUO_ALLOWED_ROOTS: JSON.stringify([repo]) } });
+    assert.equal(denied.code, 2, show(denied));
+    assert.match(denied.stderr, /outside AI_DUO_ALLOWED_ROOTS/);
+  }
+  assert.equal((await calls()).length, 0);
+  const badRoots = await cli(['--help'], { env: { AI_DUO_ALLOWED_ROOTS: '["relative"]' } });
+  assert.notEqual(badRoots.code, 0, 'invalid root configuration prevents startup');
+  assert.match(badRoots.stderr, /AI_DUO_ALLOWED_ROOTS/);
 
   // ---- Preflight: missing login stops at once; an unverifiable login needs --skip-auth-check.
   await resetCalls();
@@ -195,6 +211,14 @@ try {
   assert.match(shown.stdout, /PLAN: create output\.txt/);
   assert.match((await cli(['show', result.id, '--diff'])).stdout, /output\.txt/);
   assert.equal((await cli(['show', 'no-such-run'])).code, 2);
+  await resetCalls();
+  const restrictedEnv = { AI_DUO_ALLOWED_ROOTS: JSON.stringify([plain]) };
+  assert.equal((await cli(['show', result.id], { env: restrictedEnv })).code, 0, 'old runs outside roots remain readable');
+  const deniedFollowUp = await cli(['continue', result.id, 'Continue', '--json'], { env: restrictedEnv });
+  assert.equal(deniedFollowUp.code, 2, show(deniedFollowUp));
+  assert.equal(JSON.parse(deniedFollowUp.stdout).code, 'invalid');
+  assert.match(deniedFollowUp.stderr, /outside AI_DUO_ALLOWED_ROOTS/);
+  assert.equal((await calls()).length, 0, 'denied follow-ups never start an agent');
   const followed = await cli(['continue', result.id, 'Also add a newline.', '--json']);
   assert.equal(followed.code, 0, show(followed));
   assert.equal(JSON.parse(followed.stdout).id, result.id);
@@ -235,6 +259,7 @@ try {
 if (!failed) {
   try {
     process.env.AI_DUO_DATA_DIR = dataDir;
+    process.env.AI_DUO_ALLOWED_ROOTS = JSON.stringify([temp]);
     process.env.AI_DUO_PROMPTS_DIR = promptsDir;
     process.env.CLAUDE_BIN = path.join(temp, 'missing-claude.exe');
     process.env.CODEX_BIN = path.join(temp, 'missing-codex.exe');

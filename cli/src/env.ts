@@ -9,6 +9,7 @@ import { appDataRoot } from '../../server/src/app-data.ts';
  */
 process.env.AI_DUO_DATA_DIR ||= path.join(appDataRoot(), 'runs');
 process.env.AI_DUO_PROMPTS_DIR ||= path.join(appDataRoot(), 'prompts');
+process.env.AI_DUO_DEFAULT_CWD ||= invocationCwd();
 
 const here = import.meta.dirname;
 // Bundle: dist/prompts next to ai-duo.mjs. Source checkout (pnpm --filter ai-duo-cli dev): server/src/prompts.

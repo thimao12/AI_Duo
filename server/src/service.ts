@@ -1,7 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, statSync } from 'node:fs';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
-import path from 'node:path';
 import { agents, other, type AgentCheck, type AgentName, type Usage } from './agents/index.ts';
 import { resolveBin } from './agents/bins.ts';
 import { binVersion } from './agents/check.ts';
@@ -12,7 +9,8 @@ import { runPair } from './modes/pair.ts';
 import { runPlan } from './modes/plan.ts';
 import { EFFORT } from './models.ts';
 import { paths } from './paths.ts';
-import { dataPath, isDataId, requireDataId } from './data-path.ts';
+import { isDataId, writeRunImages } from './data-path.ts';
+import { authorizeDirectory, projectDirectories } from './project-directories.ts';
 import { classifyWithHaiku, type Classifier } from './router/classify.ts';
 import { autoRoute } from './router/index.ts';
 import { classifyByRules, CONFIDENT } from './router/rules.ts';
@@ -38,7 +36,7 @@ export class ServiceError extends Error {
   }
 }
 
-export const IMAGE_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
+export { IMAGE_TYPES } from './data-path.ts';
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_ONLY_PROMPT = 'Hãy phân tích ảnh đính kèm.';
 
@@ -154,9 +152,12 @@ function validateRequest(body: any, prompt: string): { mode: Mode; cwd: string }
     if (value === undefined || value === null || value === '') continue;
     if (typeof value !== 'string' || !EFFORT.test(value)) return `Invalid efforts.${name}: use a level like low, medium or high`;
   }
-  const cwd = path.resolve(String(body.cwd ?? '').trim() || paths.defaultCwd);
-  if (!existsSync(cwd) || !statSync(cwd).isDirectory()) return `Working directory not found: ${cwd}`;
-  return { mode: body.mode, cwd };
+  try {
+    const cwd = authorizeDirectory(String(body.cwd ?? '').trim() || paths.defaultCwd);
+    return { mode: body.mode, cwd };
+  } catch (err) {
+    return (err as Error).message;
+  }
 }
 
 function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
@@ -205,7 +206,7 @@ export class RunService {
   private readonly handles = new Map<string, RunHandle>();
   private readonly pendingFollowUps = new Set<string>();
 
-  constructor(private readonly options: RunServiceOptions) {}
+  constructor(private readonly options: RunServiceOptions) { projectDirectories(paths.defaultCwd); }
 
   /* ---- Reading ---- */
 
@@ -279,7 +280,10 @@ export class RunService {
   /* ---- Preflight ---- */
 
   private checkAgent(agent: AgentName, cwd: string) {
-    return this.options.checkAgent ? this.options.checkAgent(agent, cwd) : agents[agent].check(cwd);
+    let directory: string;
+    try { directory = authorizeDirectory(cwd); }
+    catch (err) { throw new ServiceError('invalid', (err as Error).message); }
+    return this.options.checkAgent ? this.options.checkAgent(agent, directory) : agents[agent].check(directory);
   }
 
   /** Binary, version and login of each agent; never calls a model. */
@@ -327,17 +331,11 @@ export class RunService {
     }
   }
 
-  private async saveImages(runId: string, prefix: string, parsed: ParsedImages) {
+  private async saveImages(runId: string, messageId: string | undefined, parsed: ParsedImages) {
     if (!parsed.buffers.length) return;
-    requireDataId(runId);
-    if (prefix) requireDataId(prefix);
-    const dir = await dataPath('images', runId);
-    const files = await Promise.all(parsed.images.map((image, index) => dataPath('images', runId, `${prefix}${index}.${IMAGE_TYPES[image.mimeType]}`)));
     try {
-      await mkdir(dir, { recursive: true });
-      await Promise.all(parsed.buffers.map((bytes, index) => writeFile(files[index], bytes)));
+      await writeRunImages(runId, parsed.images.map((image, index) => ({ mimeType: image.mimeType, bytes: parsed.buffers[index] })), messageId);
     } catch (err) {
-      await Promise.all(files.map((file) => rm(file, { force: true }).catch(() => {})));
       throw new ServiceError('internal', `Could not save images: ${(err as Error).message}`);
     }
   }
@@ -352,7 +350,7 @@ export class RunService {
   }
 
   private async requireGit(mode: Mode, cwd: string) {
-    // Plan is read-only and works in any folder; Code diffs and reverts through Git.
+    // Plan is read-only and needs an allowed folder; Code also needs an allowed Git root.
     if (mode === 'code' && !(await isGitRepo(cwd))) throw new ServiceError('invalid', gitRequiredMessage(cwd));
   }
 
@@ -370,7 +368,7 @@ export class RunService {
     try {
       const checks: Checks = new Map();
       const { cfg, routeUsage } = await this.routeAndCheck(body, valid.mode, prompt, valid.cwd, checks);
-      await this.saveImages(id, '', images);
+      await this.saveImages(id, undefined, images);
       if (images.images.length) cfg.images = images.images;
       const ctx = new RunContext(cfg, undefined, id);
       onCreated?.(ctx.run);
@@ -413,7 +411,7 @@ export class RunService {
       const { cfg, routeUsage } = await this.routeAndCheck(request, valid.mode, nextPrompt, valid.cwd, checks);
       run.config = { ...run.config, ...cfg, prompt: run.config.prompt, cwd: run.config.cwd, images: run.config.images };
       const messageId = randomUUID();
-      await this.saveImages(id, `${messageId}-`, images);
+      await this.saveImages(id, messageId, images);
       const ctx = new RunContext(run.config, run);
       onCreated?.(ctx.run);
       if (onEvent) ctx.subscribe(onEvent);
@@ -491,6 +489,10 @@ export class RunService {
       },
       answerPlanDecision: async (answer) => {
         if (!ctx.run.planDecision) throw new ServiceError('conflict', 'no Plan decision is waiting');
+        if (answer.action === 'approve') {
+          try { authorizeDirectory(cfg.cwd); }
+          catch (err) { throw new ServiceError('invalid', (err as Error).message); }
+        }
         // Checked now, not only when asked: the user may have run `git init` meanwhile.
         if (answer.action === 'approve' && !(await isGitRepo(cfg.cwd))) {
           throw new ServiceError('invalid', `${gitRequiredMessage(cfg.cwd)} The plan is still waiting: refine or stop it, or approve again after \`git init\`.`);

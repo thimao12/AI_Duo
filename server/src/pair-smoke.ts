@@ -10,6 +10,7 @@ import type { RunContext as RunContextType } from './run.ts';
 
 const dataDir = await mkdtemp(path.join(tmpdir(), 'ai-duo-pair-review-runs-'));
 process.env.AI_DUO_DATA_DIR = dataDir;
+process.env.AI_DUO_ALLOWED_ROOTS = JSON.stringify([tmpdir()]);
 const [{ parseReview, runPair }, { RunContext }] = await Promise.all([import('./modes/pair.ts'), import('./run.ts')]);
 
 function fencedReview(verdict: string, extra = '') {
@@ -68,7 +69,7 @@ try {
   const originalClaudeRun = agents.claude.run;
   try {
     agents.claude.run = async () => ({ finalText: 'review complete' });
-    const run = new RunContext({ mode: 'pair', cwd: process.cwd(), prompt: 'smoke', maxRounds: 1, judge: 'claude', coder: 'codex', turnTimeoutMin: 1 });
+    const run = new RunContext({ mode: 'pair', cwd: dataDir, prompt: 'smoke', maxRounds: 1, judge: 'claude', coder: 'codex', turnTimeoutMin: 1 });
     (run as any).scheduleSave = () => {};
     const events: { type: string; verdict?: string }[] = [];
     run.subscribe((event) => {

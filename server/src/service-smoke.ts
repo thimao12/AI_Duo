@@ -43,6 +43,7 @@ async function main() {
   execFileSync('git', ['init', '-q'], { cwd: repo });
   await writeFile(path.join(repo, 'baseline.txt'), 'baseline\n');
   process.env.AI_DUO_DATA_DIR = dataDir;
+  process.env.AI_DUO_ALLOWED_ROOTS = JSON.stringify([temp]);
   // Nothing in this test may reach a real CLI (the router's Haiku call falls back to rules).
   process.env.CLAUDE_BIN = path.join(temp, 'missing-claude.exe');
   process.env.CODEX_BIN = path.join(temp, 'missing-codex.exe');

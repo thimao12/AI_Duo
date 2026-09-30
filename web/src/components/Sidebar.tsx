@@ -141,8 +141,8 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
   useEffect(() => {
     let mounted = true;
     const refresh = () => api.agents().then((value) => { if (mounted) setAgents(value); }, () => { if (mounted) setAgents(null); });
-    refresh();
-    const timer = setInterval(refresh, 60_000);
+    void refresh();
+    const timer = setInterval(() => { void refresh(); }, 60_000);
     return () => { mounted = false; clearInterval(timer); };
   }, []);
 

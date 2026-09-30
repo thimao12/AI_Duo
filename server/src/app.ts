@@ -1,5 +1,4 @@
 import { existsSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createAdaptorServer } from '@hono/node-server';
@@ -8,7 +7,7 @@ import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { listModels } from './models.ts';
 import { paths } from './paths.ts';
-import { dataPath, isDataId } from './data-path.ts';
+import { isDataId, readRunImage } from './data-path.ts';
 import { IMAGE_TYPES, RunService, ServiceError, type ServiceErrorCode } from './service.ts';
 import { loadRun } from './store.ts';
 import type { RunEvent } from './types.ts';
@@ -115,7 +114,7 @@ app.get('/api/runs/:id/images/:index', async (c) => {
   const image = run?.config.images?.[index];
   if (!image || !Object.hasOwn(IMAGE_TYPES, image.mimeType)) return c.json({ error: 'not found' }, 404);
   try {
-    const bytes = await readFile(await dataPath('images', id, `${index}.${IMAGE_TYPES[image.mimeType]}`));
+    const bytes = await readRunImage(id, index, image.mimeType);
     return c.body(bytes, 200, { 'content-type': image.mimeType, 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' });
   } catch {
     return c.json({ error: 'not found' }, 404);
@@ -130,7 +129,7 @@ app.get('/api/runs/:id/messages/:messageId/images/:index', async (c) => {
   const image = run?.messages.find((m) => m.id === messageId && m.agent === 'user')?.images?.[index];
   if (!image || !Object.hasOwn(IMAGE_TYPES, image.mimeType)) return c.json({ error: 'not found' }, 404);
   try {
-    const bytes = await readFile(await dataPath('images', id, `${messageId}-${index}.${IMAGE_TYPES[image.mimeType]}`));
+    const bytes = await readRunImage(id, index, image.mimeType, messageId);
     return c.body(bytes, 200, { 'content-type': image.mimeType, 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' });
   } catch {
     return c.json({ error: 'not found' }, 404);

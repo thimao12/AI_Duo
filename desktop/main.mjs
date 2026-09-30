@@ -4,6 +4,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron';
 import { openAgentLink } from './link-handler.mjs';
+import { stopRunsAndQuit } from './shutdown.mjs';
 
 const here = import.meta.dirname;
 const dist = path.join(here, 'dist');
@@ -110,7 +111,10 @@ function createWindow(url) {
 
   win.once('ready-to-show', () => win.show());
   win.on('closed', () => (win = null));
-  win.loadURL(url);
+  void win.loadURL(url).catch((err) => {
+    dialog.showErrorBox('AI Duo failed to load', String(err?.stack || err));
+    app.quit();
+  });
 }
 
 app.on('window-all-closed', () => app.quit());
@@ -121,6 +125,5 @@ app.on('before-quit', (e) => {
   if (!server || stopping) return;
   stopping = true;
   e.preventDefault();
-  const timeout = new Promise((resolve) => setTimeout(resolve, 8000));
-  Promise.race([server.abortAll(), timeout]).finally(() => app.quit());
+  void stopRunsAndQuit(() => server.abortAll(), () => app.quit());
 });

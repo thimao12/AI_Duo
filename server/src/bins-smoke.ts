@@ -13,6 +13,7 @@ const repoDir = path.join(temp, 'working directory');
 const emptyBinDir = path.join(temp, 'empty PATH');
 await Promise.all([mkdir(runsDir), mkdir(repoDir), mkdir(emptyBinDir)]);
 process.env.AI_DUO_DATA_DIR = runsDir;
+process.env.AI_DUO_ALLOWED_ROOTS = JSON.stringify([temp]);
 process.env.AI_DUO_DEFAULT_CWD = repoDir;
 
 const originalPath = process.env.PATH;

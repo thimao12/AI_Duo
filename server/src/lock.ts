@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { realpathSync } from 'node:fs';
 import { link, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import path from 'node:path';
-import { gitToplevel } from './git.ts';
+import { gitRepositoryId } from './git.ts';
 import { paths } from './paths.ts';
+import { authorizeDirectory } from './project-directories.ts';
 
 /**
  * One Code or Plan run per repository, across every AI Duo process (web, desktop, CLI).
@@ -46,8 +46,11 @@ export const locksDir = () => path.join(paths.dataDir, 'locks');
 
 /** Two paths into the same repository (case variants, symlinks, subfolders) map to one lock. */
 export async function lockTarget(cwd: string): Promise<LockTarget> {
-  const top = await gitToplevel(cwd);
-  const root = realpathSync.native(top ?? cwd);
+  const directory = authorizeDirectory(cwd);
+  const top = await gitRepositoryId(directory);
+  // Git reports its root from the canonical cwd. This identity also keeps restricted Plan
+  // folders on the same lock as another app that can run Code in the whole repository.
+  const root = top ?? directory;
   const key = process.platform === 'win32' ? root.toLowerCase() : root;
   const hash = createHash('sha256').update(key).digest('hex').slice(0, 32);
   return { root, file: path.join(locksDir(), `${hash}.lock`), git: top !== null };

@@ -10,6 +10,7 @@ import type { Run } from './types.ts';
 
 const dataDir = await mkdtemp(path.join(tmpdir(), 'ai-duo-store-runs-'));
 process.env.AI_DUO_DATA_DIR = dataDir;
+process.env.AI_DUO_ALLOWED_ROOTS = JSON.stringify([dataDir]);
 
 const [{ deleteRun, listRuns, loadRun, saveRun }, { RunContext }, { startServer }] = await Promise.all([import('./store.ts'), import('./run.ts'), import('./app.ts')]);
 
