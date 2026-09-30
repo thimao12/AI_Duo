@@ -1,5 +1,6 @@
 import { mkdir, readdir } from 'node:fs/promises';
 import { isDataId, readRunFile, removeRunFiles, requireDataId, writeRunFile } from './data-path.ts';
+import type { AgentName } from './agents/types.ts';
 import { runsActiveElsewhere } from './lock.ts';
 import { paths } from './paths.ts';
 import type { Run } from './types.ts';
@@ -47,8 +48,19 @@ export async function loadRun(id: string, elsewhere?: Map<string, unknown>): Pro
   }
 }
 
+/** The agent a run is mostly about; records saved before roles existed derive it from coder/judge. */
+export function runAgent(config: Run['config']): AgentName {
+  const agent = config.mode === 'debate' ? config.judge : config.coder;
+  return agent === 'codex' ? 'codex' : 'claude';
+}
+
+export function summarizeRun(run: Run): RunSummary {
+  return { id: run.id, title: run.title, mode: run.config.mode, agent: runAgent(run.config), prompt: run.config.prompt.slice(0, 2000), cwd: run.config.cwd, status: run.status, createdAt: run.createdAt, claudeLimits: run.claudeLimits };
+}
+
 export interface RunSummary {
   id: string;
+  agent: AgentName;
   title?: string;
   mode: Run['config']['mode'];
   prompt: string;
@@ -65,7 +77,7 @@ export async function listRuns(): Promise<RunSummary[]> {
   const loaded = await Promise.all(names.map((n) => loadRun(n.slice(0, -5), elsewhere)));
   const out: RunSummary[] = [];
   for (const run of loaded) {
-    if (run) out.push({ id: run.id, title: run.title, mode: run.config.mode, prompt: run.config.prompt.slice(0, 2000), cwd: run.config.cwd, status: run.status, createdAt: run.createdAt, claudeLimits: run.claudeLimits });
+    if (run) out.push(summarizeRun(run));
   }
   return out.sort((a, b) => b.createdAt - a.createdAt);
 }

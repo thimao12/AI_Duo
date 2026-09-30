@@ -1,10 +1,15 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
-import { ArrowUp, CircleAlert, Folder, FolderOpen, GitMerge, ImagePlus, ListTodo, SlidersHorizontal, Sparkles, Waypoints, X } from 'lucide-react';
+import { ArrowUp, CircleAlert, Folder, FolderOpen, GitMerge, ImagePlus, ListTodo, SlidersHorizontal, Sparkles, Waypoints, Workflow, X } from 'lucide-react';
 import { api, type AgentStatus, type ModelCatalog, type NewRunRequest, type RoutePreview, type RunConfig } from '../api.ts';
 import ModelPicker from './ModelPicker.tsx';
 import { AGENT_LABEL, basename, MenuItem, MenuLabel, MODE_LABEL, Popover, Spinner, useInputFocus } from './ui.tsx';
 import { loadDraftImages, saveDraftImages, type DraftImage } from '../draft-images.ts';
-import { normalizeForm, parseStoredForm, type ComposerForm as Form } from '../composer-form.ts';
+import { buildRunRequest, normalizeForm, parseStoredForm, toggleRole, type ComposerForm as Form } from '../composer-form.ts';
+import { useSettingsData } from '../roles-data.ts';
+import { PipelinePicker, RoleChips } from './ComposerRoles.tsx';
+import { PipelinesModal } from './PipelinesModal.tsx';
+import { RolesModal } from './RolesModal.tsx';
+import { AgentToggle, PermissionSelect } from './role-controls.tsx';
 
 type Mode = NewRunRequest['mode'];
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
@@ -27,7 +32,7 @@ export const MODES: { id: Mode; icon: typeof Sparkles; hint: string }[] = [
   { id: 'code', icon: GitMerge, hint: 'Router tự chọn agent code và review. Hỏi bạn sau 2 vòng nếu vẫn chưa approve.' },
   { id: 'plan', icon: ListTodo, hint: 'Hai vai trò lập và review kế hoạch; chỉ bắt đầu code sau khi bạn duyệt.' },
 ];
-export const MODE_ICON = Object.fromEntries(MODES.map((m) => [m.id, m.icon])) as Record<Mode, typeof Sparkles>;
+export const MODE_ICON: Record<Mode, typeof Sparkles> = { ...(Object.fromEntries(MODES.map((m) => [m.id, m.icon])) as Record<'code' | 'plan', typeof Sparkles>), pipeline: Workflow };
 
 /** The new-run form: persisted settings, router preview, CLI status and submit. */
 function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, threadId?: string, threadMode?: RunConfig['mode'], onContinue?: () => void) {
@@ -73,14 +78,15 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
   // Rules-only preview (free): what the router would pick for the prompt as typed.
   useEffect(() => {
     const prompt = form.prompt.trim();
-    if (!prompt) return setPreview(null);
+    // The router only decides for plain Code/Plan runs; a role, agent or pipeline is explicit.
+    if (!prompt || form.mode === 'pipeline' || form.roleId || form.agent) return setPreview(null);
     const ctl = new AbortController();
     const t = setTimeout(() => api.previewRoute(prompt, form.mode, ctl.signal).then(setPreview, () => {}), 400);
     return () => {
       clearTimeout(t);
       ctl.abort();
     };
-  }, [form.mode, form.prompt]);
+  }, [form.mode, form.prompt, form.roleId, form.agent]);
 
   useEffect(() => {
     api
@@ -101,11 +107,12 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
 
   const submit = async () => {
     if (busy || !imagesReady || (!form.prompt.trim() && !images.length)) return;
+    if (form.mode === 'pipeline' && !form.pipelineId) return setError('Chọn một pipeline trước khi gửi.');
     setBusy(true);
     setError(null);
     try {
-      // The router always selects the agents and the two-round review policy.
-      const { maxRounds: _r, judge: _j, coder: _c, ...rest } = normalizeForm(form);
+      // Without a role, agent or pipeline the router selects the agents and the two-round review policy.
+      const rest = buildRunRequest(form);
       const { id } = threadId
         ? await api.continue(threadId, form.prompt, images, rest)
         : await api.create({ ...rest, images });
@@ -170,6 +177,7 @@ function submitLabel(busy: boolean, analyzing: boolean): string {
 }
 
 function modeHint(mode: Mode, preview: RoutePreview | null): string {
+  if (mode === 'pipeline') return 'Pipeline chạy lần lượt các vai trò; bước gradable có thể quay lại bước trước khi chưa đạt.';
   if (mode === 'code') {
     return preview
       ? `${AGENT_LABEL[preview.coder]} code, ${AGENT_LABEL[preview.reviewer]} review và chạy test. Hỏi bạn sau 2 vòng chưa approve.`
@@ -265,6 +273,44 @@ function ProjectPicker({ side, cwd, recent, onChange }: Readonly<{ side: 'top' |
   );
 }
 
+interface AgentControlsProps {
+  form: Form;
+  catalog: ModelCatalog | null;
+  side: 'top' | 'bottom';
+  setForm: (update: (f: Form) => Form) => void;
+}
+
+/** Agent switch, model pickers and permission for a single-turn (Code/Plan) run; pipelines bring their own roles. */
+function AgentControls({ form, catalog, side, setForm }: Readonly<AgentControlsProps>) {
+  if (form.mode === 'pipeline') return null;
+  const shown = form.agent ? [form.agent] : (['codex', 'claude'] as const);
+  return (
+    <>
+      <AgentToggle allowAuto label="Agent" value={form.agent} onChange={(agent) => setForm((f) => ({ ...f, agent }))} />
+      {shown.map((a) => (
+        <ModelPicker
+          key={a}
+          agent={a}
+          catalog={catalog}
+          model={form.models[a]}
+          effort={form.efforts[a]}
+          auto={!form.agent}
+          side={side}
+          onChange={({ model, effort }) =>
+            setForm((f) => ({ ...f, models: { ...f.models, [a]: model }, efforts: { ...f.efforts, [a]: effort } }))
+          }
+        />
+      ))}
+      {form.mode === 'code' && (
+        <>
+          <label htmlFor="composer-permission" className="sr-only">Quyền của agent</label>
+          <PermissionSelect id="composer-permission" emptyLabel="Quyền: tự động" value={form.permission} onChange={(permission) => setForm((f) => ({ ...f, permission }))} />
+        </>
+      )}
+    </>
+  );
+}
+
 export interface ComposerSeed {
   prompt: string;
   mode: Mode;
@@ -293,6 +339,20 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
   const imageInput = useRef<HTMLInputElement>(null);
   const hero = variant === 'hero';
   const side = hero ? 'bottom' : 'top';
+  const { roles, pipelines } = useSettingsData();
+  const [rolesOpen, setRolesOpen] = useState(false);
+  const [pipelinesOpen, setPipelinesOpen] = useState(false);
+
+  // A role or pipeline deleted in the editor must not stay selected.
+  useEffect(() => {
+    if (roles.length === 0 && pipelines.length === 0) return;
+    setForm((f) => {
+      const roleGone = !!f.roleId && !roles.some((r) => r.id === f.roleId);
+      const pipelineGone = f.mode === 'pipeline' && !pipelines.some((p) => p.id === f.pipelineId);
+      if (!roleGone && !pipelineGone) return f;
+      return { ...f, roleId: roleGone ? '' : f.roleId, mode: pipelineGone ? 'code' : f.mode, pipelineId: pipelineGone ? '' : f.pipelineId };
+    });
+  }, [roles, pipelines, setForm]);
 
   useEffect(() => onAgents?.(agents), [agents, onAgents]);
 
@@ -338,6 +398,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
         }}
         className="rounded-[20px] border border-line bg-bg shadow-card"
       >
+        <RoleChips roles={roles} roleId={form.roleId} onPick={(role) => setForm((f) => toggleRole(f, role))} onEdit={() => setRolesOpen(true)} />
         <label htmlFor="composer-input" className="sr-only">
           Task cho Claude và Codex
         </label>
@@ -391,20 +452,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
               </output>
             )}
 
-            {(['codex', 'claude'] as const).map((a) => (
-              <ModelPicker
-                key={a}
-                agent={a}
-                catalog={catalog}
-                model={form.models[a]}
-                effort={form.efforts[a]}
-                auto={auto}
-                side={side}
-                onChange={({ model, effort }) =>
-                  setForm((f) => ({ ...f, models: { ...f.models, [a]: model }, efforts: { ...f.efforts, [a]: effort } }))
-                }
-              />
-            ))}
+            <AgentControls form={form} catalog={catalog} side={side} setForm={setForm} />
 
             <Popover
               side={side}
@@ -439,6 +487,14 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
                 </div>
               )}
             </Popover>
+
+            <PipelinePicker
+              side={side}
+              pipelines={pipelines}
+              activeId={form.mode === 'pipeline' ? form.pipelineId : ''}
+              onPick={(id) => setForm((f) => ({ ...f, mode: id ? 'pipeline' : 'code', pipelineId: id, roleId: id ? '' : f.roleId }))}
+              onEdit={() => setPipelinesOpen(true)}
+            />
           </div>
 
           <button
@@ -452,6 +508,8 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
           </button>
         </div>
       </form>
+      <RolesModal open={rolesOpen} onClose={() => setRolesOpen(false)} />
+      <PipelinesModal open={pipelinesOpen} onClose={() => setPipelinesOpen(false)} />
 
       {error && (
         <p role="alert" className="mt-2 flex items-start gap-1.5 px-2 text-[12.5px] text-danger">

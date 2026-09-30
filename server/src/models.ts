@@ -7,6 +7,26 @@ export type { ModelCatalog, ModelInfo } from './types.ts';
 
 export const EFFORT = /^[a-z]{1,16}$/;
 
+export const MODEL_ID = /^[\w.:/-]{1,64}$/;
+
+/** Why `value` is not a usable model name (empty and null mean "CLI default"); `label` names the field. */
+export function modelNameProblem(value: unknown, label: string): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'string') return `${label} must be a valid model name`;
+  const model = value.trim();
+  if (model && (!MODEL_ID.test(model) || model.startsWith('-'))) {
+    return `Invalid ${label}: use 1-64 letters, numbers, or . : / _ - and do not start with -`;
+  }
+  return undefined;
+}
+
+/** Why `value` is not a usable reasoning effort (empty, null and undefined mean "CLI default"). */
+export function effortNameProblem(value: unknown, label: string): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string' || !EFFORT.test(value)) return `Invalid ${label}: use a level like low, medium or high`;
+  return undefined;
+}
+
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 // Claude Code takes stable aliases that follow the newest version of each family.

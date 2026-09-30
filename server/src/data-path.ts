@@ -44,7 +44,7 @@ let tempSequence = 0;
 const retryableRenameErrors = new Set(['EPERM', 'EBUSY', 'EACCES']);
 
 /** Windows briefly locks files that antivirus or another reader has open; retry a few times. */
-async function renameWithRetry(from: string, to: string, retry = 0): Promise<void> {
+export async function renameWithRetry(from: string, to: string, retry = 0): Promise<void> {
   try { await rename(from, to); }
   catch (err) {
     const code = (err as NodeJS.ErrnoException).code;

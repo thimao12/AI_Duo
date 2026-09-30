@@ -27,6 +27,8 @@ export interface RunOptions {
   images?: string[];
   cwd: string;
   role: Role;
+  /** Overrides what `role` allows: read = thinker/reviewer tier, edit = coder tier. */
+  permission?: 'read' | 'edit';
   /** Continue an earlier conversation of the same agent. */
   sessionId?: string;
   model?: string;

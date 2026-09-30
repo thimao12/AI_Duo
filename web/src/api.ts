@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { AgentName } from '../../server/src/agents/types.ts';
-import type { Mode, ModelCatalog, Run, RunConfig, RoutePlan } from '../../server/src/types.ts';
+import type { Mode, ModelCatalog, UsageReport, PipelineDef, Run, RunConfig, RoleDef, RoutePlan } from '../../server/src/types.ts';
 import { startRunStream } from './run-events.ts';
 
 export type { Message, ModelChoice, PairDecision, PlanDecision, Part, RoutePlan, Run, RunConfig, Verdict, Speaker } from '../../server/src/types.ts';
 export type { AgentName, Usage } from '../../server/src/agents/types.ts';
-export type { Mode, ModelCatalog, ModelInfo } from '../../server/src/types.ts';
+export type { Mode, ModelCatalog, ModelInfo, PipelineDef, PipelineStep, Permission, RoleDef } from '../../server/src/types.ts';
+export type { AgentUsage, UsageReport, UsageWindow } from '../../server/src/types.ts';
 
 /** The router selects agents within the selected mode. */
 export type NewRunRequest = Omit<Partial<RunConfig>, 'mode' | 'images'> & { mode: Mode; images?: { name: string; dataUrl: string }[] };
@@ -24,6 +25,7 @@ export interface RunSummary {
   id: string;
   title?: string;
   mode: RunConfig['mode'];
+  agent: AgentName;
   prompt: string;
   cwd: string;
   status: Run['status'];
@@ -41,6 +43,22 @@ export interface AgentStatus {
   defaultCwd: string;
 }
 
+export interface AgentTestResult {
+  agent: AgentName;
+  ok: boolean;
+  problems: string[];
+  authUnverified: boolean;
+  version: { version: string | null; path: string | null; error: string | null };
+}
+
+export interface FileEntry {
+  name: string;
+  type: 'dir' | 'file';
+  size?: number;
+}
+
+const JSON_HEADERS = { 'content-type': 'application/json' };
+
 async function json<T>(res: Response): Promise<T> {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || res.statusText);
@@ -48,6 +66,15 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
+  usage: () => fetch('/api/usage', { cache: 'no-store' }).then((r) => json<UsageReport>(r)),
+  testAgent: (name: AgentName) => fetch(`/api/agents/${name}/test`, { method: 'POST', headers: JSON_HEADERS, body: '{}' }).then((r) => json<AgentTestResult>(r)),
+  roles: () => fetch('/api/roles').then((r) => json<{ roles: RoleDef[] }>(r)),
+  saveRoles: (roles: RoleDef[]) => fetch('/api/roles', { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ roles }) }).then((r) => json<{ roles: RoleDef[] }>(r)),
+  resetRoles: () => fetch('/api/roles/reset', { method: 'POST', headers: JSON_HEADERS, body: '{}' }).then((r) => json<{ roles: RoleDef[] }>(r)),
+  pipelines: () => fetch('/api/pipelines').then((r) => json<{ pipelines: PipelineDef[] }>(r)),
+  savePipelines: (pipelines: PipelineDef[]) => fetch('/api/pipelines', { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ pipelines }) }).then((r) => json<{ pipelines: PipelineDef[] }>(r)),
+  files: (cwd: string, dir = '') => fetch(`/api/files?cwd=${encodeURIComponent(cwd)}&dir=${encodeURIComponent(dir)}`).then((r) => json<{ entries: FileEntry[]; truncated: boolean }>(r)),
+  file: (cwd: string, filePath: string) => fetch(`/api/file?cwd=${encodeURIComponent(cwd)}&path=${encodeURIComponent(filePath)}`).then((r) => json<{ path: string; size: number; content: string; truncated: boolean }>(r)),
   agents: () => fetch('/api/agents').then((r) => json<AgentStatus>(r)),
   models: () => fetch('/api/models').then((r) => json<ModelCatalog>(r)),
   list: () => fetch('/api/runs').then((r) => json<RunSummary[]>(r)),

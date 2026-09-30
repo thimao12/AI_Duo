@@ -7,7 +7,10 @@ import { checkAgent } from './check.ts';
 import { spawnJsonl } from './process.ts';
 import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult, Usage } from './types.ts';
 
-function sandboxFor(role: Role): 'read-only' | 'workspace-write' {
+/** An explicit permission replaces the role's tier: edit writes, read only writes for a reviewer (it runs tests). */
+export function sandboxFor(role: Role, permission?: 'read' | 'edit'): 'read-only' | 'workspace-write' {
+  if (permission === 'edit') return 'workspace-write';
+  if (permission === 'read') return role === 'reviewer' ? 'workspace-write' : 'read-only';
   return role === 'thinker' ? 'read-only' : 'workspace-write';
 }
 
@@ -90,7 +93,7 @@ export const codex: AgentAdapter = {
   async run(o: RunOptions): Promise<RunResult> {
     const dir = await mkdtemp(path.join(tmpdir(), 'ai-duo-codex-'));
     const lastFile = path.join(dir, 'last.txt');
-    const sandbox = sandboxFor(o.role);
+    const sandbox = sandboxFor(o.role, o.permission);
 
     // `exec resume` accepts neither -C nor -s, so sandbox goes through -c and cwd through spawn.
     const args = o.sessionId

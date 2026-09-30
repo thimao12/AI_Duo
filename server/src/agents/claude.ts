@@ -4,8 +4,15 @@ import { checkAgent } from './check.ts';
 import { AbortedError, spawnJsonl } from './process.ts';
 import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult, Usage } from './types.ts';
 
-function permissionArgs(role: Role): string[] {
-  switch (role) {
+/** An explicit permission replaces the role's tier: edit = coder, read = reviewer (if it was one) or thinker. */
+function tierFor(role: Role, permission?: 'read' | 'edit'): Role {
+  if (permission === 'edit') return 'coder';
+  if (permission === 'read') return role === 'reviewer' ? 'reviewer' : 'thinker';
+  return role;
+}
+
+export function permissionArgs(role: Role, permission?: 'read' | 'edit'): string[] {
+  switch (tierFor(role, permission)) {
     case 'coder':
       return ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash,Edit,Write,Read,Grep,Glob,TodoWrite'];
     case 'reviewer':
@@ -139,7 +146,7 @@ export function onJson(ev: any, state: ClaudeJsonState): { state: ClaudeJsonStat
 export const claude: AgentAdapter = {
   name: 'claude',
   async run(o: RunOptions): Promise<RunResult> {
-    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', ...permissionArgs(o.role)];
+    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', ...permissionArgs(o.role, o.permission)];
     if (o.model) args.push('--model', o.model);
     if (o.effort) args.push('--effort', o.effort);
     if (o.sessionId) args.push('--resume', o.sessionId);

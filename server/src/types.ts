@@ -1,6 +1,8 @@
 import type { AgentEvent, AgentName, Role, Usage } from './agents/types.ts';
 
-export type Mode = 'code' | 'plan';
+export type Mode = 'code' | 'plan' | 'pipeline';
+/** What an agent turn may do: read-only, or edit files and run commands. */
+export type Permission = 'read' | 'edit';
 export type LegacyMode = 'debate' | 'pair';
 
 /** Which model a turn uses: its role, plus 'judge' for the debate synthesis. */
@@ -46,6 +48,12 @@ export interface RunConfig {
   models?: Partial<Record<AgentName, string>>;
   /** Manual reasoning effort per agent (low, medium, high, …); overrides the router's. */
   efforts?: Partial<Record<AgentName, string>>;
+  /** Role that shaped this run (single-role run): its template and permission apply. */
+  roleId?: string;
+  /** Permission for the run's single turn; overrides the role's own. */
+  permission?: Permission;
+  /** Pipeline this run executes (mode 'pipeline'). */
+  pipelineId?: string;
   /** Set when mode/agents/models were picked by the auto-router. */
   route?: RoutePlan;
   /** The user chose to run although an agent CLI could not report its login status. */
@@ -149,6 +157,39 @@ export function applyAgentEvent(parts: Part[], e: AgentEvent) {
   }
 }
 
+/* ---- Roles and pipelines (kept in settings.json) ---- */
+
+export interface RoleDef {
+  id: string;
+  name: string;
+  icon: string;
+  description: string;
+  agent: AgentName;
+  /** Empty = the CLI's default model. */
+  model: string;
+  /** Empty = the CLI's default effort. */
+  effort: string;
+  permission: Permission;
+  /** Prompt template; {{task}}, {{prev}} and {{<role id>}} are replaced in one pass. */
+  template: string;
+  /** The role ends its answer with VERDICT: PASS or VERDICT: FAIL, which steers a pipeline. */
+  gradable: boolean;
+}
+
+export interface PipelineStep {
+  roleId: string;
+  /** Index of the step to go back to when this (gradable) step fails. */
+  onFail?: number;
+  /** How many times this step may fail and loop back before the pipeline gives up. */
+  maxLoops?: number;
+}
+
+export interface PipelineDef {
+  id: string;
+  name: string;
+  steps: PipelineStep[];
+}
+
 /* ---- Model catalog (shared with the web UI) ---- */
 
 export interface ModelInfo {
@@ -167,3 +208,24 @@ export interface AgentModels {
 }
 
 export type ModelCatalog = Record<'claude' | 'codex', AgentModels>;
+
+export interface UsageWindow {
+  usedPercent: number;
+  /** ISO timestamp of the next reset. */
+  resetsAt?: string;
+  windowMinutes: number;
+  /** The reset time already passed, so the number is out of date. */
+  stale?: boolean;
+}
+
+export interface AgentUsage {
+  fiveHour?: UsageWindow;
+  weekly?: UsageWindow;
+  source: string;
+  updatedAt?: string;
+}
+
+export interface UsageReport {
+  claude: AgentUsage;
+  codex: AgentUsage;
+}

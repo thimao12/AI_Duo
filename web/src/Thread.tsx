@@ -1,7 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction, type ReactNode, type RefObject } from 'react';
-import { ArrowDown, Check, CircleAlert, Copy, FileDiff, ListChevronsDownUp, ListChevronsUpDown, PanelLeft, Square, WifiOff } from 'lucide-react';
+import { ArrowDown, Check, CircleAlert, Copy, FileDiff, FolderTree, ListChevronsDownUp, ListChevronsUpDown, PanelLeft, Square, WifiOff } from 'lucide-react';
 import { api, useRun, type Message, type PairDecision, type PlanDecision, type Run } from './api.ts';
 import ChangesPanel from './components/ChangesPanel.tsx';
+import ExplorerPanel from './components/ExplorerPanel.tsx';
+import PanelTabs, { type PanelTab } from './components/PanelTabs.tsx';
 import ChoiceQuestion from './components/ChoiceQuestion.tsx';
 import Composer, { MODE_ICON } from './components/Composer.tsx';
 import { parseDiff } from './components/DiffView.tsx';
@@ -302,14 +304,25 @@ function DiffToggle({ files, panelOpen, setPanelOpen }: Readonly<{ files: Return
   );
 }
 
-function RunControls({ run, progress, files, panelOpen, compact, setCompact, setPanelOpen }: Readonly<{
+function ExplorerToggle({ open, onToggle }: Readonly<{ open: boolean; onToggle: () => void }>) {
+  const label = open ? 'Ẩn Explorer' : 'Hiện Explorer';
+  return (
+    <button type="button" onClick={onToggle} aria-pressed={open} aria-label={label} title={label} className={`${iconBtn} ${open ? 'bg-surface text-fg' : ''}`}>
+      <FolderTree aria-hidden className="size-4" />
+    </button>
+  );
+}
+
+function RunControls({ run, progress, files, panelOpen, explorerOpen, compact, setCompact, setPanelOpen, onToggleExplorer }: Readonly<{
   run: Run;
   progress: string | null;
   files: ReturnType<typeof parseDiff>;
   panelOpen: boolean;
+  explorerOpen: boolean;
   compact: boolean;
   setCompact: Dispatch<SetStateAction<boolean>>;
   setPanelOpen: Dispatch<SetStateAction<boolean>>;
+  onToggleExplorer: () => void;
 }>) {
   const compactLabel = compact ? 'Mở rộng tất cả lượt' : 'Thu gọn tất cả lượt';
   return (
@@ -330,6 +343,7 @@ function RunControls({ run, progress, files, panelOpen, compact, setCompact, set
         {compact ? <ListChevronsUpDown aria-hidden className="size-4" /> : <ListChevronsDownUp aria-hidden className="size-4" />}
         <span className="sr-only">{compactLabel}</span>
       </button>
+      <ExplorerToggle open={explorerOpen} onToggle={onToggleExplorer} />
       {files.length > 0 && <DiffToggle files={files} panelOpen={panelOpen} setPanelOpen={setPanelOpen} />}
       {run.status === 'running' && (
         <button
@@ -389,12 +403,23 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
   const { run, reconnecting, error } = useRun(id, revision);
   const [compact, setCompact] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [explorerOpen, setExplorerOpen] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
   const scroller = useRef<HTMLDivElement>(null);
   const positioned = useRef(false);
 
   const files = useMemo(() => parseDiff(run?.diff ?? ''), [run?.diff]);
   const running = run?.status === 'running';
+
+  // The two right-hand panels share one column; opening the diff closes the explorer.
+  useEffect(() => { if (panelOpen) setExplorerOpen(false); }, [panelOpen]);
+  const changesVisible = panelOpen && run?.diff !== undefined;
+  const panelVisible = changesVisible || explorerOpen;
+  const toggleExplorer = () => { setPanelOpen(false); setExplorerOpen((open) => !open); };
+  const selectTab = (tab: PanelTab) => {
+    if (tab === 'explorer') { setPanelOpen(false); setExplorerOpen(true); }
+    else { setExplorerOpen(false); setPanelOpen(true); }
+  };
 
   useFollowBottom({ id, run, scroller, positioned, atBottom, setPanelOpen, setCompact });
 
@@ -424,7 +449,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
   return (
     <div className="flex h-full min-h-0">
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className={`app-drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-3 sm:px-4 ${panelOpen && run?.diff !== undefined ? '' : 'titlebar-inset'}`}>
+        <header className={`app-drag flex h-12 shrink-0 items-center gap-3 border-b border-line px-3 sm:px-4 ${panelVisible ? '' : 'titlebar-inset'}`}>
           <button type="button" onClick={onMenu} title="Hiện danh sách phiên (Ctrl B)" className={`${iconBtn} ${sidebarHidden ? '' : 'md:hidden'}`}>
             <PanelLeft aria-hidden className="size-4" />
             <span className="sr-only">Hiện danh sách phiên</span>
@@ -433,7 +458,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
             <h1 className="min-w-0 truncate text-[13.5px] font-semibold">{run ? title || run.title || titleOf(run.config.prompt) : 'Đang tải…'}</h1>
             {run && <span className="hidden shrink-0 text-[12.5px] text-faint sm:inline">{basename(run.config.cwd)}</span>}
           </div>
-          {run && <RunControls run={run} progress={progress} files={files} panelOpen={panelOpen} compact={compact} setCompact={setCompact} setPanelOpen={setPanelOpen} />}
+          {run && <RunControls run={run} progress={progress} files={files} panelOpen={panelOpen} explorerOpen={explorerOpen} compact={compact} setCompact={setCompact} setPanelOpen={setPanelOpen} onToggleExplorer={toggleExplorer} />}
         </header>
 
         {reconnecting && (
@@ -472,9 +497,13 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
         </div>
       </div>
 
-      {panelOpen && run?.diff !== undefined && (
+      {panelVisible && run && (
         <div className="fixed inset-0 z-40 lg:static lg:z-auto lg:w-[min(40vw,560px)] lg:shrink-0 lg:border-l lg:border-line">
-          <ChangesPanel files={files} diff={run.diff ?? ''} onClose={() => setPanelOpen(false)} />
+          {explorerOpen ? (
+            <ExplorerPanel cwd={run.config.cwd} onClose={() => setExplorerOpen(false)} tabs={<PanelTabs active="explorer" changesAvailable={run.diff !== undefined} onSelect={selectTab} />} />
+          ) : (
+            <ChangesPanel files={files} diff={run.diff ?? ''} onClose={() => setPanelOpen(false)} tabs={<PanelTabs active="changes" changesAvailable onSelect={selectTab} />} />
+          )}
         </div>
       )}
     </div>

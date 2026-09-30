@@ -5,7 +5,7 @@ import { AbortedError } from './agents/process.ts';
 import { saveRun } from './store.ts';
 import { paths } from './paths.ts';
 import { authorizeDirectory } from './project-directories.ts';
-import { addUsage, applyAgentEvent, type Message, type ModelRole, type PairDecision, type PlanDecision, type PlanDecisionAnswer, type Run, type RunConfig, type RunEvent, type Speaker, type Verdict } from './types.ts';
+import { addUsage, applyAgentEvent, type Message, type ModelRole, type PairDecision, type PlanDecision, type PlanDecisionAnswer, type Permission, type Run, type RunConfig, type RunEvent, type Speaker, type Verdict } from './types.ts';
 
 export interface TurnOptions {
   agent: AgentName;
@@ -18,6 +18,11 @@ export interface TurnOptions {
   sessionKey?: string;
   /** Which routed model to use; defaults to `role`. */
   modelRole?: ModelRole;
+  /** Overrides what `role` allows (used by role and pipeline turns). */
+  permission?: Permission;
+  /** Explicit model/effort for this turn (a role's); when either is set the router's pick is not used. */
+  model?: string;
+  effort?: string;
   parseVerdict?: (text: string) => Verdict | undefined | Promise<Verdict | undefined>;
 }
 
@@ -198,7 +203,7 @@ export class RunContext {
 
   private async runTurn(t: TurnOptions): Promise<TurnResult> {
     if (this.abort.signal.aborted) throw new AbortedError();
-    const { model, effort } = this.modelFor(t.agent, t.modelRole ?? t.role);
+    const { model, effort } = t.model === undefined && t.effort === undefined ? this.modelFor(t.agent, t.modelRole ?? t.role) : { model: t.model, effort: t.effort };
     const m = this.startMessage(t.agent, t.phase, t.round, t.title, [model, effort].filter(Boolean).join(' · ') || undefined);
     const key = t.sessionKey ? `${t.agent}:${t.sessionKey}` : undefined;
     try {
@@ -207,6 +212,7 @@ export class RunContext {
         images: this.currentImages ?? this.imagePaths(),
         cwd: authorizeDirectory(this.run.config.cwd),
         role: t.role,
+        ...(t.permission && { permission: t.permission }),
         sessionId: key ? this.sessions.get(key) : undefined,
         model,
         effort,

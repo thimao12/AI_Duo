@@ -9,6 +9,10 @@ export type PromptName = 'propose' | 'critique' | 'synthesize' | 'code' | 'revie
  * be tweaked without restarting. Single-pass replace: substituted values (which may
  * contain user text with `{{…}}`) are never expanded again.
  */
+export function renderTemplate(template: string, vars: Record<string, string>): string {
+  return template.replace(/\{\{\s*([\w-]+)\s*\}\}/g, (m, key: string) => (Object.hasOwn(vars, key) ? vars[key] : m));
+}
+
 export function render(name: PromptName, vars: Record<string, string | number>): string {
   const tpl = readFileSync(path.join(paths.promptsDir, `${name}.md`), 'utf8');
   return tpl.replace(/\{\{(\w+)\}\}/g, (m, key: string) => (key in vars ? String(vars[key]) : m));

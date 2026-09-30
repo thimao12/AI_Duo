@@ -6,8 +6,10 @@ import { gitRequiredMessage, isGitRepo } from './git.ts';
 import { acquireRepoLock, describeOwner, lockTarget, RepoLockedError, runsActiveElsewhere, type LockOwner, type RepoLock } from './lock.ts';
 import { runDebate } from './modes/debate.ts';
 import { runPair } from './modes/pair.ts';
+import { planPipeline, runPipeline, runRole } from './modes/pipeline.ts';
 import { runPlan } from './modes/plan.ts';
-import { EFFORT } from './models.ts';
+import { effortNameProblem, modelNameProblem } from './models.ts';
+import { getRoles, ID_PATTERN, loadSettings, type Settings } from './settings.ts';
 import { paths } from './paths.ts';
 import { isDataId, writeRunImages } from './data-path.ts';
 import { authorizeDirectory, projectDirectories } from './project-directories.ts';
@@ -15,8 +17,8 @@ import { classifyWithHaiku, type Classifier } from './router/classify.ts';
 import { autoRoute } from './router/index.ts';
 import { classifyByRules, CONFIDENT } from './router/rules.ts';
 import { active, newRunId, RunContext } from './run.ts';
-import { deleteRun, listRuns, loadRun, saveRun, type RunSummary } from './store.ts';
-import type { Mode, PlanDecisionAnswer, Run, RunConfig, RunEvent } from './types.ts';
+import { deleteRun, listRuns, loadRun, saveRun, summarizeRun, type RunSummary } from './store.ts';
+import type { Mode, Permission, PlanDecisionAnswer, RoleDef, Run, RunConfig, RunEvent } from './types.ts';
 
 /**
  * Everything a front end can do with runs. The HTTP API (web and desktop) and the CLI are thin
@@ -48,6 +50,15 @@ export interface RunRequest {
   images?: { name: string; dataUrl: string }[];
   models?: Partial<Record<AgentName, string | null>>;
   efforts?: Partial<Record<AgentName, string | null>>;
+  /** An explicit agent skips the auto-router (precedence: request fields > role > router). */
+  coder?: AgentName;
+  reviewer?: AgentName;
+  /** Run one turn shaped by this role (template, agent, model, permission). */
+  roleId?: string;
+  /** 'read' needs no Git repository; overrides the role's own permission. */
+  permission?: Permission;
+  /** With mode 'pipeline': the pipeline (from settings) to run. */
+  pipelineId?: string;
   testCommand?: string;
   turnTimeoutMin?: number;
   /** Run although a CLI cannot report its login; a confirmed bad login still stops. */
@@ -148,32 +159,31 @@ export function parseImages(value: unknown): ParsedImages | string {
 const isAgent = (x: unknown): x is AgentName => x === 'claude' || x === 'codex';
 
 function modelProblem(body: any): string | undefined {
-  for (const name of ['claude', 'codex'] as const) {
-    const value = body.models?.[name];
-    if (value === undefined || value === null) continue;
-    if (typeof value !== 'string') return `models.${name} must be a valid model name`;
-    const model = value.trim();
-    if (model && (!/^[\w.:/-]{1,64}$/.test(model) || model.startsWith('-'))) {
-      return `Invalid models.${name}: use 1-64 letters, numbers, or . : / _ - and do not start with -`;
-    }
-  }
-  return undefined;
+  return modelNameProblem(body.models?.claude, 'models.claude') ?? modelNameProblem(body.models?.codex, 'models.codex');
 }
 
 function effortProblem(body: any): string | undefined {
-  for (const name of ['claude', 'codex'] as const) {
-    const value = body.efforts?.[name];
-    if (value === undefined || value === null || value === '') continue;
-    if (typeof value !== 'string' || !EFFORT.test(value)) return `Invalid efforts.${name}: use a level like low, medium or high`;
+  return effortNameProblem(body.efforts?.claude, 'efforts.claude') ?? effortNameProblem(body.efforts?.codex, 'efforts.codex');
+}
+
+const MODES: ReadonlySet<string> = new Set(['code', 'plan', 'pipeline']);
+
+/** Role, permission and pipeline fields of a request. */
+function selectionProblem(body: any): string | undefined {
+  for (const key of ['roleId', 'pipelineId'] as const) {
+    if (body[key] !== undefined && (typeof body[key] !== 'string' || !ID_PATTERN.test(body[key]))) return `${key} is not a valid id`;
   }
+  if (body.permission !== undefined && body.permission !== 'read' && body.permission !== 'edit') return 'permission must be "read" or "edit"';
+  if (body.mode === 'plan' && body.roleId !== undefined) return 'roleId cannot be used with mode "plan"';
+  if (body.mode === 'pipeline' && !body.pipelineId) return 'pipelineId is required for mode "pipeline"';
   return undefined;
 }
 
 /** Checks that need no routing: mode, prompt, model and effort names, working directory. */
 function validateRequest(body: any, prompt: string): { mode: Mode; cwd: string } | string {
-  if (body?.mode !== 'code' && body?.mode !== 'plan') return 'mode must be "code" or "plan"';
+  if (typeof body?.mode !== 'string' || !MODES.has(body.mode)) return 'mode must be "code", "plan" or "pipeline"';
   if (!prompt) return 'prompt is required';
-  const problem = modelProblem(body) ?? effortProblem(body);
+  const problem = modelProblem(body) ?? effortProblem(body) ?? selectionProblem(body);
   if (problem) return problem;
   try {
     const cwd = authorizeDirectory(String(body.cwd ?? '').trim() || paths.defaultCwd);
@@ -205,8 +215,27 @@ function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
       codex: String(body.efforts?.codex ?? '').trim() || undefined,
     },
     skipAuthCheck: body.skipAuthCheck === true || undefined,
+    // Always present (possibly undefined) so a follow-up replaces the previous run's values.
+    roleId: body.mode === 'plan' ? undefined : validId(body.roleId),
+    permission: body.mode !== 'plan' && (body.permission === 'read' || body.permission === 'edit') ? body.permission : undefined,
+    pipelineId: body.mode === 'pipeline' ? validId(body.pipelineId) : undefined,
   };
 }
+
+const validId = (value: unknown): string | undefined => (typeof value === 'string' && ID_PATTERN.test(value) ? value : undefined);
+
+/** How a request picks agents: by router (`manual` false) or explicitly, through a role, a pipeline or an agent. */
+interface Selection {
+  body: any;
+  manual: boolean;
+  /** Agents to check before the run; defaults to the ones in the config. */
+  agents?: AgentName[];
+  /** Nothing can be written: no Git repository or repository lock is needed. */
+  readOnly: boolean;
+}
+
+/** Routing stays on for Code/Plan; the agents of a Code/Plan run are checked from the config. */
+type RoutedMode = 'code' | 'plan';
 
 function requireImages(body: RunRequest): ParsedImages {
   const images = parseImages(body?.images);
@@ -218,8 +247,48 @@ function requireImages(body: RunRequest): ParsedImages {
 function followUpPrompt(body: RunRequest, images: ParsedImages): string {
   const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
   if (!prompt && !images.images.length) throw new ServiceError('invalid', 'prompt is required');
-  if (body?.mode !== undefined && body.mode !== 'code' && body.mode !== 'plan') throw new ServiceError('invalid', 'Invalid mode');
+  if (body?.mode !== undefined && !MODES.has(body.mode)) throw new ServiceError('invalid', 'Invalid mode');
   return prompt;
+}
+
+/** A follow-up stays a Code run unless it asks for Plan or a pipeline. */
+function followMode(body: RunRequest): Mode {
+  return body?.mode === 'plan' || body?.mode === 'pipeline' ? body.mode : 'code';
+}
+
+function selectRole(body: any, role: RoleDef): Selection {
+  // Explicit request fields win over the role.
+  const agent: AgentName = isAgent(body.coder) ? body.coder : role.agent;
+  const permission: Permission = body.permission === 'read' || body.permission === 'edit' ? body.permission : role.permission;
+  return { body: { ...body, coder: agent, reviewer: agent, permission }, manual: true, agents: [agent], readOnly: permission === 'read' };
+}
+
+function selectPipeline(body: any, settings: Settings): Selection {
+  const steps = planPipeline(body.pipelineId, settings);
+  if (typeof steps === 'string') throw new ServiceError('invalid', steps);
+  const agents = [...new Set(steps.map((s) => s.role.agent))];
+  return { body: { ...body, coder: agents[0], reviewer: agents[0], permission: undefined }, manual: true, agents, readOnly: steps.every((s) => s.role.permission === 'read') };
+}
+
+/** Precedence: explicit request fields > role > router. */
+async function selectAgents(body: any, mode: Mode): Promise<Selection> {
+  if (mode === 'pipeline') return selectPipeline(body, await loadSettings());
+  if (body.roleId) {
+    const role = (await getRoles()).find((r) => r.id === body.roleId);
+    if (!role) throw new ServiceError('invalid', `Role "${body.roleId}" not found`);
+    return selectRole(body, role);
+  }
+  if (mode === 'code' && body.permission === 'read') {
+    const agent: AgentName = isAgent(body.coder) ? body.coder : 'claude';
+    return { body: { ...body, coder: agent, reviewer: agent }, manual: true, agents: [agent], readOnly: true };
+  }
+  if (isAgent(body.coder) || isAgent(body.reviewer)) {
+    const coder: AgentName = isAgent(body.coder) ? body.coder : other(body.reviewer);
+    const fallback = mode === 'plan' ? coder : other(coder);
+    const reviewer: AgentName = isAgent(body.reviewer) ? body.reviewer : fallback;
+    return { body: { ...body, coder, reviewer }, manual: true, readOnly: false };
+  }
+  return { body, manual: false, readOnly: false };
 }
 
 function routeNote(ctx: RunContext, usage?: Usage) {
@@ -252,10 +321,7 @@ export class RunService {
     const saved = await listRuns();
     // In-progress runs may not have hit the disk yet.
     for (const ctx of active.values()) {
-      if (!saved.some((s) => s.id === ctx.run.id)) {
-        const r = ctx.run;
-        saved.unshift({ id: r.id, title: r.title, mode: r.config.mode, prompt: r.config.prompt.slice(0, 2000), cwd: r.config.cwd, status: r.status, createdAt: r.createdAt, claudeLimits: r.claudeLimits });
-      }
+      if (!saved.some((s) => s.id === ctx.run.id)) saved.unshift(summarizeRun(ctx.run));
     }
     return saved.map((s) => (active.has(s.id) ? { ...s, title: active.get(s.id)!.run.title, status: 'running' } : s));
   }
@@ -343,7 +409,7 @@ export class RunService {
    * it is asked only when both agents – the classifier and anything the route could pick – are
    * usable. Otherwise the rules decide, and the routed agents are checked afterwards as usual.
    */
-  private async routeChecked(prompt: string, mode: Mode, cwd: string, skipAuthCheck: boolean | undefined, checks: Checks, signal?: AbortSignal) {
+  private async routeChecked(prompt: string, mode: RoutedMode, cwd: string, skipAuthCheck: boolean | undefined, checks: Checks, signal?: AbortSignal) {
     let classify: Classifier | false = false;
     if (classifyByRules(prompt).confidence < CONFIDENT) {
       const all = await this.checked(['claude', 'codex'], cwd, skipAuthCheck, checks);
@@ -379,7 +445,7 @@ export class RunService {
   }
 
   /** Route (see routeChecked), then preflight the agents the route picked; nothing is created yet. */
-  private async routeAndCheck(body: any, mode: Mode, prompt: string, cwd: string, checks: Checks) {
+  private async routeAndCheck(body: any, mode: RoutedMode, prompt: string, cwd: string, checks: Checks) {
     const skipAuthCheck = body?.skipAuthCheck === true;
     const { route, usage, ...decision } = await this.routeChecked(prompt, mode, cwd, skipAuthCheck, checks);
     const cfg = manualConfig({ ...body, ...decision, mode }, prompt, cwd);
@@ -387,9 +453,23 @@ export class RunService {
     return { cfg: { ...cfg, route }, routeUsage: usage };
   }
 
-  private async requireGit(mode: Mode, cwd: string) {
-    // Plan is read-only and needs an allowed folder; Code also needs an allowed Git root.
-    if (mode === 'code' && !(await isGitRepo(cwd))) throw new ServiceError('invalid', gitRequiredMessage(cwd));
+  /** The config for a request: routed, or built from an explicit agent, role or pipeline (no router, no model call). */
+  private async configure(sel: Selection, mode: Mode, prompt: string, cwd: string, checks: Checks) {
+    if (!sel.manual && mode !== 'pipeline') return this.routeAndCheck(sel.body, mode, prompt, cwd, checks);
+    const cfg = manualConfig({ ...sel.body, mode }, prompt, cwd);
+    await this.assertPreflight(sel.agents ?? agentsFor(cfg), cwd, sel.body?.skipAuthCheck === true, checks);
+    return { cfg, routeUsage: undefined };
+  }
+
+  /** Plan is read-only and needs an allowed folder; Code (and pipelines that edit) also need an allowed Git root. */
+  private async requireGit(sel: Selection, mode: Mode, cwd: string) {
+    if (sel.readOnly || mode === 'plan') return;
+    if (!(await isGitRepo(cwd))) throw new ServiceError('invalid', gitRequiredMessage(cwd));
+  }
+
+  /** Read-only runs change nothing, so they do not take the repository lock. */
+  private lockFor(sel: Selection, cwd: string, runId: string): Promise<RepoLock | undefined> {
+    return sel.readOnly ? Promise.resolve(undefined) : this.lock(cwd, runId);
   }
 
   /** Validate, lock the repository, route, check agents, then start the run. */
@@ -398,13 +478,14 @@ export class RunService {
     const prompt = String(body?.prompt ?? '').trim() || (images.images.length ? IMAGE_ONLY_PROMPT : '');
     const valid = validateRequest(body, prompt);
     if (typeof valid === 'string') throw new ServiceError('invalid', valid);
-    await this.requireGit(valid.mode, valid.cwd);
+    const sel = await selectAgents(body, valid.mode);
+    await this.requireGit(sel, valid.mode, valid.cwd);
 
     const id = newRunId();
-    const lock = await this.lock(valid.cwd, id);
+    const lock = await this.lockFor(sel, valid.cwd, id);
     try {
       const checks: Checks = new Map();
-      const { cfg, routeUsage } = await this.routeAndCheck(body, valid.mode, prompt, valid.cwd, checks);
+      const { cfg, routeUsage } = await this.configure(sel, valid.mode, prompt, valid.cwd, checks);
       await this.saveImages(id, undefined, images);
       if (images.images.length) cfg.images = images.images;
       const ctx = new RunContext(cfg, undefined, id);
@@ -413,7 +494,7 @@ export class RunService {
       routeNote(ctx, routeUsage);
       return this.launch(ctx, lock, checks);
     } catch (err) {
-      await lock.release().catch(() => {});
+      await lock?.release().catch(() => {});
       throw err;
     }
   }
@@ -432,17 +513,18 @@ export class RunService {
       const owner = await this.activeElsewhere(id);
       if (owner) throw new ServiceError('conflict', `Phiên đang chạy ở tiến trình khác: ${describeOwner(owner)}. Hãy đợi hoàn tất.`);
       const nextPrompt = prompt || IMAGE_ONLY_PROMPT;
-      const request = { ...body, mode: body?.mode === 'plan' ? 'plan' : 'code', cwd: previous.config.cwd };
+      const request = { ...body, mode: followMode(body), cwd: previous.config.cwd };
       const valid = validateRequest(request, nextPrompt);
       if (typeof valid === 'string') throw new ServiceError('invalid', valid);
-      await this.requireGit(valid.mode, valid.cwd);
+      const sel = await selectAgents(request, valid.mode);
+      await this.requireGit(sel, valid.mode, valid.cwd);
 
-      lock = await this.lock(valid.cwd, id);
+      lock = await this.lockFor(sel, valid.cwd, id);
       // Read again under the lock: another process may have just finished writing this run.
       const run = await loadRun(id);
       if (!run) throw new ServiceError('not_found', 'not found');
       const checks: Checks = new Map();
-      const { cfg, routeUsage } = await this.routeAndCheck(request, valid.mode, nextPrompt, valid.cwd, checks);
+      const { cfg, routeUsage } = await this.configure(sel, valid.mode, nextPrompt, valid.cwd, checks);
       run.config = { ...run.config, ...cfg, prompt: run.config.prompt, cwd: run.config.cwd, images: run.config.images };
       const messageId = randomUUID();
       await this.saveImages(id, messageId, images);
@@ -482,16 +564,24 @@ export class RunService {
     await runPair(ctx);
   }
 
-  private launch(ctx: RunContext, lock: RepoLock, checks: Checks): RunHandle {
+  /** Runs the mode the config asks for; a role, permission or pipeline picks a runner over Code. */
+  private async execute(ctx: RunContext, checks: Checks) {
+    const cfg = ctx.run.config;
+    if (cfg.mode === 'debate') await runDebate(ctx); // Existing saved threads remain resumable.
+    else if (cfg.mode === 'pipeline') await runPipeline(ctx);
+    else if (cfg.mode === 'plan') await this.runPlanThenCode(ctx, checks);
+    else if (cfg.roleId || cfg.permission === 'read') await runRole(ctx);
+    else await runPair(ctx);
+  }
+
+  private launch(ctx: RunContext, lock: RepoLock | undefined, checks: Checks): RunHandle {
     const cfg = ctx.run.config;
     active.set(ctx.run.id, ctx);
     const done = (async () => {
       let status: 'done' | 'error' | 'cancelled' = 'done';
       let error: string | undefined;
       try {
-        if (cfg.mode === 'debate') await runDebate(ctx); // Existing saved threads remain resumable.
-        else if (cfg.mode === 'plan') await this.runPlanThenCode(ctx, checks);
-        else await runPair(ctx);
+        await this.execute(ctx, checks);
         if (ctx.cancelled) status = 'cancelled';
       } catch (err) {
         status = ctx.cancelled ? 'cancelled' : 'error';
@@ -505,7 +595,7 @@ export class RunService {
         console.error(`Failed to save finished run ${ctx.run.id}:`, err);
       } finally {
         // Agents have stopped and the run is saved: only now may another run take the repository.
-        await lock.release().catch((err) => console.error(`Failed to release the repository lock for ${ctx.run.id}:`, err));
+        await lock?.release().catch((err) => console.error(`Failed to release the repository lock for ${ctx.run.id}:`, err));
         active.delete(ctx.run.id);
         this.handles.delete(ctx.run.id);
       }

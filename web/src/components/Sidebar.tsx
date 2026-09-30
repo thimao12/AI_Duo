@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ChevronRight, Monitor, Moon, MoreHorizontal, PanelLeftClose, Pencil, Search, SquarePen, Sun, Trash2, X } from 'lucide-react';
-import { api, type AgentStatus, type RunSummary } from '../api.ts';
+import { ChevronRight, Monitor, Moon, MoreHorizontal, PanelLeftClose, Pencil, Search, SquarePen, Sun, Trash2, Users, Workflow, X } from 'lucide-react';
+import type { AgentName, RunSummary } from '../api.ts';
 import type { ThemePref } from '../theme.ts';
+import UsagePopover from './UsagePopover.tsx';
 import { basename, Kbd, Spinner, timeAgo, titleOf, useInputFocus } from './ui.tsx';
 
 const COLLAPSED_KEY = 'ai-duo:collapsed-projects';
@@ -108,73 +109,6 @@ const SIDEBAR_ROW = 'flex w-full items-center gap-2.5 rounded-lg px-2.5 text-lef
 
 const menuRow = 'flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors hover:bg-surface focus-visible:bg-surface focus-visible:outline-none';
 
-type ClaudeLimit = { utilization: number; resetsAt?: number; createdAt: number };
-
-const LIMIT_LABEL: Record<string, string> = { five_hour: '5 giờ', seven_day: '7 ngày' };
-
-const cliState = (agents: AgentStatus | null, name: 'claude' | 'codex') => {
-  if (!agents) return 'Đang kiểm tra';
-  return agents[name] ? 'CLI sẵn sàng' : 'CLI chưa sẵn sàng';
-};
-
-function latestClaudeLimits(runs: RunSummary[]) {
-  return runs.flatMap((run) => Object.entries(run.claudeLimits ?? {}).map(([type, limit]) => ({ type, ...limit, createdAt: run.createdAt }))).reduce<Record<string, ClaudeLimit>>((latest, limit) => {
-    const existing = latest[limit.type];
-    if (!existing || limit.createdAt > existing.createdAt) latest[limit.type] = limit;
-    return latest;
-  }, {});
-}
-
-/** Sidebar footer: CLI availability plus the latest Claude quota seen in any run. */
-function AgentStatusPanel({ runs }: Readonly<{ runs: RunSummary[] }>) {
-  const [agents, setAgents] = useState<AgentStatus | null>(null);
-  const [showClaudeUsage, setShowClaudeUsage] = useState(false);
-  const [showCodexStatus, setShowCodexStatus] = useState(false);
-  const claudeLimits = latestClaudeLimits(runs);
-  const row = SIDEBAR_ROW;
-
-  useEffect(() => {
-    let mounted = true;
-    const refresh = () => api.agents().then((value) => { if (mounted) setAgents(value); }, () => { if (mounted) setAgents(null); });
-    void refresh();
-    const timer = setInterval(() => { void refresh(); }, 60_000);
-    return () => { mounted = false; clearInterval(timer); };
-  }, []);
-
-  return (
-  <div className="mb-2 space-y-0.5">
-    <button type="button" aria-expanded={showClaudeUsage} onClick={() => setShowClaudeUsage((shown) => !shown)} className={`${row} h-9 text-muted hover:bg-surface-2 hover:text-fg`}>
-      <span aria-hidden className={slot}><span className="size-2 rounded-full bg-claude" /></span>
-      <span className="min-w-0 flex-1">Claude usage</span>
-      <span className={`text-[11px] ${agents?.claude ? 'text-ok' : 'text-faint'}`}>{cliState(agents, 'claude')}</span>
-      <ChevronRight aria-hidden className={`size-3 transition-transform ${showClaudeUsage ? 'rotate-90' : ''}`} />
-    </button>
-    {showClaudeUsage && (
-      <div className="mx-2 rounded-lg border border-line bg-bg px-2.5 py-2 text-[11.5px] leading-relaxed text-muted">
-        {Object.keys(claudeLimits).length ? Object.entries(claudeLimits).map(([type, limit]) => (
-          <div key={type} className="flex justify-between gap-2">
-            <span>{LIMIT_LABEL[type] ?? type}</span>
-            <span className="font-medium text-fg">{Math.round(limit.utilization * 100)}%{limit.resetsAt ? ` · reset ${new Date(limit.resetsAt * 1000).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}</span>
-          </div>
-        )) : <p>Chưa có dữ liệu. Phần trăm sẽ hiện sau khi Claude gửi thông tin quota trong phiên làm việc.</p>}
-      </div>
-    )}
-    <button type="button" aria-expanded={showCodexStatus} onClick={() => setShowCodexStatus((shown) => !shown)} className={`${row} h-9 text-muted hover:bg-surface-2 hover:text-fg`}>
-      <span aria-hidden className={slot}><span className="size-2 rounded-full bg-codex" /></span>
-      <span className="min-w-0 flex-1">Codex status</span>
-      <span className={`text-[11px] ${agents?.codex ? 'text-ok' : 'text-faint'}`}>{cliState(agents, 'codex')}</span>
-      <ChevronRight aria-hidden className={`size-3 transition-transform ${showCodexStatus ? 'rotate-90' : ''}`} />
-    </button>
-    {showCodexStatus && (
-      <div className="mx-2 rounded-lg border border-line bg-bg px-2.5 py-2 text-[11.5px] leading-relaxed text-muted">
-        <p>{agents?.codex ? `Codex CLI ${agents.codex}` : agents?.codexError || 'Chưa đọc được trạng thái Codex CLI.'}</p>
-        <p className="mt-1">Để xem hạn mức tài khoản, nhập <code className="font-mono text-fg">/status</code> trong Codex.</p>
-      </div>
-    )}
-  </div>
-  );
-}
-
 interface SessionMenuBodyProps {
   run: RunSummary;
   editing: boolean;
@@ -236,6 +170,33 @@ function SessionMenuBody({ editing, confirming, draftTitle, pending, titleInput,
   );
 }
 
+type AgentFilter = 'all' | AgentName;
+
+const FILTERS: { id: AgentFilter; label: string }[] = [
+  { id: 'all', label: 'Tất cả' },
+  { id: 'claude', label: 'Claude' },
+  { id: 'codex', label: 'Codex' },
+];
+
+function FilterChips({ value, onChange }: Readonly<{ value: AgentFilter; onChange: (filter: AgentFilter) => void }>) {
+  return (
+    <fieldset className="m-0 flex min-w-0 gap-1 border-0 px-2.5 pt-1.5">
+      <legend className="sr-only">Lọc phiên theo agent</legend>
+      {FILTERS.map((f) => (
+        <button
+          key={f.id}
+          type="button"
+          aria-pressed={value === f.id}
+          onClick={() => onChange(f.id)}
+          className={`h-6 rounded-full px-2.5 text-[11.5px] font-medium transition-colors ${value === f.id ? 'bg-surface-2 text-fg' : 'text-muted hover:bg-surface hover:text-fg'}`}
+        >
+          {f.label}
+        </button>
+      ))}
+    </fieldset>
+  );
+}
+
 interface SidebarProps {
   runs: RunSummary[];
   activeId: string | null;
@@ -248,10 +209,15 @@ interface SidebarProps {
   /** Docked (wide) sidebar hidden by the user. */
   hidden: boolean;
   onHide: () => void;
+  /** Opens the pipelines editor (footer entry is inert without it). */
+  onOpenPipelines?: () => void;
+  /** Opens the roles & models editor. */
+  onOpenRoles?: () => void;
 }
 
-export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, theme, open, onClose, hidden, onHide }: Readonly<SidebarProps>) {
+export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, theme, open, onClose, hidden, onHide, onOpenPipelines, onOpenRoles }: Readonly<SidebarProps>) {
   const [query, setQuery] = useState('');
+  const [agentFilter, setAgentFilter] = useState<AgentFilter>('all');
   const [collapsed, setCollapsed] = useState(loadCollapsed);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
@@ -283,13 +249,14 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
     const q = query.trim().toLowerCase();
     const map = new Map<string, RunSummary[]>();
     for (const r of runs) {
+      if (agentFilter !== 'all' && r.agent !== agentFilter) continue;
       if (q && !r.prompt.toLowerCase().includes(q) && !r.title?.toLowerCase().includes(q) && !basename(r.cwd).toLowerCase().includes(q)) continue;
       const key = r.cwd || '—';
       map.set(key, [...(map.get(key) ?? []), r]);
     }
     // Projects ordered by their most recent run (runs arrive newest first).
     return [...map.entries()];
-  }, [runs, query]);
+  }, [runs, query, agentFilter]);
 
   const toggle = (cwd: string) =>
     setCollapsed((prev) => {
@@ -348,10 +315,11 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
             />
           </label>
         </div>
+        <FilterChips value={agentFilter} onChange={setAgentFilter} />
 
         <nav className="mt-3 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
           {runs.length === 0 && <p className="px-2.5 py-2 text-[12.5px] leading-relaxed text-faint">Chưa có phiên nào. Giao task đầu tiên ở khung bên phải.</p>}
-          {runs.length > 0 && groups.length === 0 && <p className="px-2.5 py-2 text-[12.5px] text-faint">Không có phiên khớp “{query}”.</p>}
+          {runs.length > 0 && groups.length === 0 && <p className="px-2.5 py-2 text-[12.5px] text-faint">{query ? `Không có phiên khớp “${query}”.` : 'Không có phiên nào của agent này.'}</p>}
           {groups.map(([cwd, items]) => {
             const isCollapsed = collapsed.has(cwd) && !query;
             return (
@@ -415,7 +383,15 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
         </nav>
 
         <div className="shrink-0 border-t border-line px-2 py-2">
-          <AgentStatusPanel runs={runs} />
+          <button type="button" onClick={onOpenPipelines} className={`${row} h-8 text-muted hover:bg-surface-2 hover:text-fg`}>
+            <Workflow aria-hidden className="size-4 shrink-0" />
+            Pipelines
+          </button>
+          <button type="button" onClick={onOpenRoles} className={`${row} h-8 text-muted hover:bg-surface-2 hover:text-fg`}>
+            <Users aria-hidden className="size-4 shrink-0" />
+            Vai trò &amp; model
+          </button>
+          <UsagePopover />
           <button type="button" onClick={theme.cycle} title="Đổi giao diện sáng/tối" className={`${row} h-8 text-muted hover:bg-surface-2 hover:text-fg`}>
             <ThemeIcon aria-hidden className="size-4 shrink-0" />
             Giao diện: {THEME[theme.pref].label}

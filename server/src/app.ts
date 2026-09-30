@@ -9,6 +9,9 @@ import { listModels } from './models.ts';
 import { paths } from './paths.ts';
 import { isDataId, readRunImage } from './data-path.ts';
 import { IMAGE_TYPES, RunService, ServiceError, type ServiceErrorCode } from './service.ts';
+import { fileRoutes } from './routes/files.ts';
+import { rolesRoutes } from './routes/roles.ts';
+import { usageRoutes } from './routes/usage.ts';
 import { loadRun } from './store.ts';
 import type { RunEvent } from './types.ts';
 
@@ -71,6 +74,9 @@ app.use('/api/*', async (c, next) => {
 
 // Models and reasoning levels for the composer's pickers (read fresh: the Codex cache updates itself).
 app.get('/api/models', (c) => c.json(listModels()));
+app.route('/', rolesRoutes());
+app.route('/', usageRoutes(service));
+app.route('/', fileRoutes());
 
 app.get('/api/agents', async (c) => {
   const { claude, codex } = await service.agentVersions();

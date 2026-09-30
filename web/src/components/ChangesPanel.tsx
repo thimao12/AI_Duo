@@ -1,8 +1,8 @@
 import { Check, Copy, X } from 'lucide-react';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import DiffView, { type FileDiff } from './DiffView.tsx';
 
-export default function ChangesPanel({ files, diff, onClose }: Readonly<{ files: FileDiff[]; diff: string; onClose: () => void }>) {
+export default function ChangesPanel({ files, diff, onClose, tabs }: Readonly<{ files: FileDiff[]; diff: string; onClose: () => void; tabs?: ReactNode }>) {
   const [copied, setCopied] = useState(false);
   const added = files.reduce((s, f) => s + f.added, 0);
   const removed = files.reduce((s, f) => s + f.removed, 0);
@@ -34,6 +34,7 @@ export default function ChangesPanel({ files, diff, onClose }: Readonly<{ files:
           </button>
         </div>
       </header>
+      {tabs}
       <p className="border-b border-line px-3 py-1.5 text-[11.5px] text-faint">Chưa commit. Xem lại rồi tự commit trong repo.</p>
       <div className="min-h-0 flex-1 overflow-y-auto">
         <DiffView files={files} />
