@@ -1,0 +1,281 @@
+import { Box, Text, useInput, usePaste, type Key } from 'ink';
+import { useEffect, useRef, useState } from 'react';
+import type { RoleDef } from '../../../server/src/types.ts';
+import {
+  applyEditKey,
+  backspace,
+  cursorPosition,
+  EMPTY_EDITOR,
+  editorOf,
+  insertText,
+  lineCount,
+  moveVertical,
+  type EditorState,
+} from './editor.ts';
+import type { SlashCommand } from './panel-types.ts';
+import { filterCommands } from './slash.ts';
+import { tone } from './theme.ts';
+
+/** Slash menu text: "/" plus letters, on one line. */
+export function slashQuery(text: string): string | undefined {
+  if (!text.startsWith('/') || text.includes('\n') || text.includes(' ')) return undefined;
+  return text.slice(1);
+}
+
+const BACKSLASH = String.fromCodePoint(92);
+
+/** Enter with a trailing backslash continues the line instead of sending. */
+export function continuesLine(text: string, cursor: number): boolean {
+  return cursor === text.length && text.endsWith(BACKSLASH) && !text.endsWith(BACKSLASH + BACKSLASH);
+}
+
+/* ---- Views ---- */
+
+function RoleChips({ roles, role, plainLabel }: Readonly<{ roles: readonly RoleDef[]; role: RoleDef | null; plainLabel: string }>) {
+  if (roles.length === 0) return null;
+  return (
+    <Box flexWrap="wrap" columnGap={1}>
+      <Text dimColor>{plainLabel}</Text>
+      {roles.map((r) => (
+        <Text key={r.id} inverse={r.id === role?.id} dimColor={r.id !== role?.id}>
+          {` ${r.name} `}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
+function SlashMenu({ matches, selected }: Readonly<{ matches: readonly SlashCommand[]; selected: number }>) {
+  const shown = matches.slice(0, 8);
+  return (
+    <Box flexDirection="column" paddingLeft={2}>
+      {shown.map((c, i) => (
+        <Text key={c.name} color={i === selected ? tone('cyan') : undefined} bold={i === selected}>
+          {`${i === selected ? '›' : ' '} /${c.name.padEnd(10)}`}
+          <Text dimColor>{c.description}</Text>
+        </Text>
+      ))}
+      {matches.length > shown.length ? <Text dimColor>{`  … ${matches.length - shown.length} more`}</Text> : null}
+    </Box>
+  );
+}
+
+interface EditorLine {
+  id: number;
+  text: string;
+}
+
+const MAX_VISIBLE_LINES = 8;
+
+function EditorView({ state, placeholder, active }: Readonly<{ state: EditorState; placeholder: string; active: boolean }>) {
+  const { row, col } = cursorPosition(state);
+  const lines: EditorLine[] = state.text.split('\n').map((text, id) => ({ id, text }));
+  const first = Math.max(0, Math.min(row - MAX_VISIBLE_LINES + 1, lines.length - MAX_VISIBLE_LINES));
+  const visible = lines.slice(first, first + MAX_VISIBLE_LINES);
+  const empty = state.text === '';
+  return (
+    <Box flexDirection="column">
+      {first > 0 ? <Text dimColor>{`… ${first} line(s) above`}</Text> : null}
+      {visible.map((line) => {
+        const here = line.id === row;
+        const at = line.text.slice(col, col + 1) || ' ';
+        const rest = here ? line.text.slice(col + at.length) : '';
+        return (
+          <Box key={line.id}>
+            <Text color={tone('cyan')} bold>{line.id === 0 ? '› ' : '  '}</Text>
+            {here ? (
+              <Text>
+                {line.text.slice(0, col)}
+                <Text inverse={active}>{at}</Text>
+                {rest}
+                {empty ? <Text dimColor>{` ${placeholder}`}</Text> : null}
+              </Text>
+            ) : (
+              <Text>{line.text || ' '}</Text>
+            )}
+          </Box>
+        );
+      })}
+      {first + visible.length < lines.length ? <Text dimColor>{`… ${lines.length - first - visible.length} line(s) below`}</Text> : null}
+    </Box>
+  );
+}
+
+/* ---- Behaviour ---- */
+
+export interface ComposerProps {
+  /** Older prompts, newest last (Up/Down walk through them). */
+  history?: readonly string[];
+  roles?: readonly RoleDef[];
+  role?: RoleDef | null;
+  commands?: readonly SlashCommand[];
+  /** Keyboard capture on/off (off while a panel or a decision owns the keys). */
+  active?: boolean;
+  placeholder?: string;
+  /** Plain text entry: no slash menu, history or role/mode keys (decision feedback). */
+  plain?: boolean;
+  borderTone?: 'cyan' | 'yellow' | 'magenta';
+  /** Returns an error to show under the box (the text is put back), or null when accepted. */
+  onSubmit(text: string): Promise<string | null> | string | null;
+  onCommand?(command: SlashCommand): void;
+  onCycleRole?(): void;
+  onToggleMode?(): void;
+  onDraft?(text: string): void;
+  /** Ctrl+D on an empty box. */
+  onExit?(): void;
+  /** Esc, when the box has nothing to close itself. */
+  onEscape?(): void;
+}
+
+function useHistoryWalk(history: readonly string[], setEditor: (s: EditorState) => void) {
+  const [index, setIndex] = useState(-1);
+  const draft = useRef('');
+  const reset = () => setIndex(-1);
+  /** Older (-1) or newer (+1); returns false when there is nowhere to go. */
+  const walk = (dir: -1 | 1, current: string): boolean => {
+    if (history.length === 0) return false;
+    if (dir === -1) {
+      if (index === 0) return true;
+      if (index === -1) draft.current = current;
+      const next = index === -1 ? history.length - 1 : index - 1;
+      setIndex(next);
+      setEditor(editorOf(history[next]));
+      return true;
+    }
+    if (index === -1) return false;
+    const next = index + 1;
+    if (next >= history.length) {
+      setIndex(-1);
+      setEditor(editorOf(draft.current));
+    } else {
+      setIndex(next);
+      setEditor(editorOf(history[next]));
+    }
+    return true;
+  };
+  return { walk, reset };
+}
+
+function isNewlineKey(input: string, key: Key): boolean {
+  return input === '\n' || (key.return && (key.shift || key.meta));
+}
+
+export function Composer(props: Readonly<ComposerProps>) {
+  const { history = [], roles = [], role = null, commands = [], active = true, plain = false, placeholder = 'Ask anything, or type / for commands' } = props;
+  const [editor, setEditor] = useState<EditorState>(EMPTY_EDITOR);
+  const [error, setError] = useState<string | null>(null);
+  const [menuIndex, setMenuIndex] = useState(0);
+  const walker = useHistoryWalk(history, setEditor);
+  const { onDraft } = props;
+
+  useEffect(() => onDraft?.(editor.text), [editor.text, onDraft]);
+
+  const query = plain ? undefined : slashQuery(editor.text);
+  const matches = query === undefined ? [] : filterCommands(commands, query);
+  const menuOpen = matches.length > 0;
+  const selected = Math.min(menuIndex, Math.max(0, matches.length - 1));
+
+  const edit = (next: EditorState) => {
+    setEditor(next);
+    setError(null);
+    setMenuIndex(0);
+    walker.reset();
+  };
+
+  const submit = async () => {
+    const text = editor.text.trim();
+    if (!text) return;
+    setEditor(EMPTY_EDITOR);
+    walker.reset();
+    const problem = await props.onSubmit(text);
+    setError(problem);
+    if (problem) setEditor((cur) => (cur.text ? cur : editorOf(text)));
+  };
+
+  const runCommand = (command: SlashCommand) => {
+    setEditor(EMPTY_EDITOR);
+    props.onCommand?.(command);
+  };
+
+  /** Keys of the open slash menu; true when consumed. */
+  const menuKey = (key: Key): boolean => {
+    if (!menuOpen) return false;
+    if (key.upArrow || key.downArrow) {
+      const step = key.upArrow ? -1 : 1;
+      setMenuIndex((selected + step + matches.length) % matches.length);
+    } else if (key.tab && !key.shift) {
+      edit(editorOf(`/${matches[selected].name}`));
+    } else if (key.return && !key.shift && !key.meta) {
+      runCommand(matches[selected]);
+    } else {
+      return false;
+    }
+    return true;
+  };
+
+  const enterKey = (input: string, key: Key): boolean => {
+    if (isNewlineKey(input, key)) {
+      edit(insertText(editor, '\n'));
+    } else if (key.return && continuesLine(editor.text, editor.cursor)) {
+      edit(insertText(backspace(editor), '\n'));
+    } else if (key.return) {
+      void submit();
+    } else {
+      return false;
+    }
+    return true;
+  };
+
+  const tabKey = (key: Key) => {
+    if (key.shift) props.onToggleMode?.();
+    else if (editor.text === '') props.onCycleRole?.();
+  };
+
+  const arrowKey = (key: Key) => {
+    const step = key.upArrow ? -1 : 1;
+    const moved = moveVertical(editor, step);
+    if (moved) setEditor(moved);
+    else walker.walk(step, editor.text);
+  };
+
+  const specialKey = (input: string, key: Key): boolean => {
+    if (key.ctrl && input === 'd' && editor.text === '') {
+      props.onExit?.();
+    } else if (key.escape) {
+      props.onEscape?.();
+    } else if (key.tab && !plain) {
+      tabKey(key);
+    } else if ((key.upArrow || key.downArrow) && !plain) {
+      arrowKey(key);
+    } else {
+      return false;
+    }
+    return true;
+  };
+
+  useInput(
+    (input, key) => {
+      if (key.eventType === 'release' || (key.ctrl && input === 'c')) return;
+      if (menuKey(key) || enterKey(input, key) || specialKey(input, key)) return;
+      const next = applyEditKey(editor, input, key);
+      if (next) edit(next);
+    },
+    { isActive: active },
+  );
+
+  // Bracketed paste arrives whole: it can never submit half-way.
+  usePaste((text) => edit(insertText(editor, text)), { isActive: active });
+
+  const borderColor = tone(props.borderTone ?? 'cyan');
+  return (
+    <Box flexDirection="column">
+      {plain ? null : <RoleChips roles={roles} role={role} plainLabel="role:" />}
+      <Box borderStyle="round" borderColor={borderColor} paddingX={1} flexDirection="column">
+        <EditorView state={editor} placeholder={placeholder} active={active} />
+      </Box>
+      {menuOpen ? <SlashMenu matches={matches} selected={selected} /> : null}
+      {error ? <Text color={tone('red')}>{error}</Text> : null}
+      {lineCount(editor) > 1 ? <Text dimColor>Enter sends · Shift+Enter or trailing \ for a new line</Text> : null}
+    </Box>
+  );
+}

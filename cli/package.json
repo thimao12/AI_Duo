@@ -17,12 +17,18 @@
     "dev": "tsx src/main.ts",
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node build.mjs && tsx src/cli-smoke.ts"
+    "test": "node build.mjs && tsx src/cli-smoke.ts && tsx src/tui-smoke.ts && tsx src/tui-panels-smoke.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "@types/react": "^19.3.0",
     "esbuild": "^0.28.2",
+    "ink-testing-library": "^4.0.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"
+  },
+  "dependencies": {
+    "ink": "^7.1.1",
+    "react": "^19.3.0"
   }
 }

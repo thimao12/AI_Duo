@@ -17,6 +17,10 @@ await build({
   entryPoints: [path.join(here, 'src/main.ts')],
   outfile: path.join(dist, 'ai-duo.mjs'),
   bundle: true,
+  jsx: 'automatic',
+  // Ink loads its devtools bridge only when DEV=true; it is not shipped.
+  alias: { 'react-devtools-core': path.join(here, 'src/tui/devtools-stub.mjs') },
+  loader: { '.tsx': 'tsx' },
   platform: 'node',
   format: 'esm',
   target: 'node22',

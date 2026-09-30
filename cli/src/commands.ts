@@ -23,6 +23,8 @@ const EXIT_FOR: Record<ServiceErrorCode, number> = { invalid: EXIT.usage, not_fo
 export const HELP = `ai-duo ${VERSION} – Claude × Codex pair programming in the terminal
 
 Usage:
+  ai-duo                                  interactive chat in the current folder (needs a terminal)
+  ai-duo chat [-C <folder>]               the same, for a chosen folder
   ai-duo run "<request>" [options]        start a Code or Plan run in --cwd (default: current folder)
   ai-duo continue <run-id> "<request>"    follow up on a finished run, in the same thread
   ai-duo runs [--all] [--limit N]         recent runs (default: runs in this repository)
@@ -148,6 +150,8 @@ export function defaultIo(): Io {
 }
 
 const service = new RunService({ app: 'cli' });
+
+const isTerminal = (io: Io) => !!io.stdin.isTTY && !!(io.stdout as { isTTY?: boolean }).isTTY;
 
 function oneOf<T extends string>(name: string, value: string | undefined, allowed: readonly T[]): T | undefined {
   if (value === undefined) return undefined;
@@ -357,6 +361,17 @@ class Cli {
     if (mode === 'plan' && this.flags['plan-decision'] === 'approve' && existsSync(cwd) && !(await isGitRepo(cwd))) {
       throw new UsageError(`${gitRequiredMessage(cwd)} Without Git, drop --plan-decision=approve to get the plan only.`);
     }
+  }
+
+  /** Interactive chat (Ink UI); refuses to start without a terminal on both ends. */
+  async chat(): Promise<number> {
+    const { flags, io } = this;
+    if (!isTerminal(io)) throw new UsageError('ai-duo chat needs an interactive terminal (stdin and stdout must both be a TTY). In scripts use `ai-duo run "<request>"`.');
+    const cwd = authorizeDirectory(path.resolve(io.cwd, flags.cwd ?? '.'));
+    if (!existsSync(cwd)) throw new UsageError(`Folder not found: ${cwd}`);
+    await seedPrompts();
+    const { startTui } = await import('./tui/index.tsx');
+    return startTui({ cwd, service, version: VERSION });
   }
 
   async run(positionals: string[]): Promise<number> {
@@ -572,7 +587,9 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
     return EXIT.usage;
   }
   const { values: flags, positionals } = parsed;
-  const [command, ...rest] = positionals;
+  const [named, ...rest] = positionals;
+  // Bare `ai-duo` in a terminal opens the chat; without one it still prints the help.
+  const command = named ?? (flags.help || flags.version || !isTerminal(io) ? undefined : 'chat');
   if (flags.version) {
     io.stdout.write(`${VERSION}\n`);
     return EXIT.ok;
@@ -584,6 +601,8 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
   const cli = new Cli(io, flags);
   try {
     switch (command) {
+      case 'chat':
+        return await cli.chat();
       case 'run':
         return await cli.run(rest);
       case 'continue':
