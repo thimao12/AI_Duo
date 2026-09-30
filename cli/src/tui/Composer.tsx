@@ -15,6 +15,7 @@ import {
 } from './editor.ts';
 import type { SlashCommand } from './panel-types.ts';
 import { filterCommands } from './slash.ts';
+import { isScrollKey } from './scroll.ts';
 import { tone } from './theme.ts';
 
 /** Slash menu text: "/" plus letters, on one line. */
@@ -126,6 +127,8 @@ export interface ComposerProps {
   onExit?(): void;
   /** Esc, when the box has nothing to close itself. */
   onEscape?(): void;
+  /** Full screen: PageUp/PageDown and Ctrl/Alt+arrows, Home, End belong to the thread viewport, not to this box. */
+  reserveScrollKeys?: boolean;
 }
 
 function useHistoryWalk(history: readonly string[], setEditor: (s: EditorState) => void) {
@@ -276,6 +279,7 @@ export function Composer(props: Readonly<ComposerProps>) {
   useInput(
     (input, key) => {
       if (key.eventType === 'release' || (key.ctrl && input === 'c')) return;
+      if (props.reserveScrollKeys && isScrollKey(key)) return;
       if (menuKey(key) || enterKey(input, key) || specialKey(input, key)) return;
       const next = applyEditKey(latest.current, input, key);
       if (next) edit(next);

@@ -1,5 +1,5 @@
 import { Box, Static, Text, useApp, useInput, useWindowSize } from 'ink';
-import { useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useInterrupt, usePreflight, useRoutePreview } from './appHooks.ts';
 import { Composer } from './Composer.tsx';
 import { PairDecisionPrompt, PlanDecisionPrompt } from './DecisionPrompt.tsx';
@@ -9,9 +9,11 @@ import { buildRequest, effectiveMode } from './requestBuilder.ts';
 import { findCommand, HELP_LINES, SLASH_COMMANDS } from './slash.ts';
 import { StatusLine } from './StatusLine.tsx';
 import { tone, usableWidth } from './theme.ts';
-import { LiveThread, ThreadItemView } from './ThreadView.tsx';
+import { FinishedThread, FullscreenHeader, LiveThread, ThreadItemView, windowLog } from './ThreadView.tsx';
 import { useSelection, type SelectionApi } from './useSelection.ts';
 import { useSession, type ChatService, type Session } from './useSession.ts';
+import { Viewport } from './Viewport.tsx';
+import { PanelRowsContext } from './widgets/rows.ts';
 
 export interface AppProps {
   service: ChatService;
@@ -23,6 +25,10 @@ export interface AppProps {
   historyFile?: string;
   /** Skip the start-up agent check (tests). */
   skipPreflight?: boolean;
+  /** Full screen (fixed layout, scrollable thread) or inline (thread in the terminal's scrollback). Default inline. */
+  screen?: 'fullscreen' | 'inline';
+  /** Called with the id of the run this window is on (for the resume hint printed at exit). */
+  onRunChange?: (runId: string | undefined) => void;
 }
 
 function Banner({ problems }: Readonly<{ problems: readonly string[] }>) {
@@ -45,7 +51,11 @@ function PanelHost({ command, props }: Readonly<{ command: SlashCommand; props: 
   useInput((_input, key) => {
     if (key.escape) props.onClose();
   });
-  return <Box flexDirection="column">{command.panel?.(props)}</Box>;
+  return (
+    <Box flexDirection="column" flexShrink={0}>
+      {command.panel?.(props)}
+    </Box>
+  );
 }
 
 function helpText(): string {
@@ -101,11 +111,18 @@ export function App(props: Readonly<AppProps>) {
   const { exit } = useApp();
   const { columns, rows } = useWindowSize();
   const width = usableWidth(columns);
-  const session = useSession(service, { cwd, branch: props.branch, version: props.version });
+  const fullscreen = props.screen === 'fullscreen';
+  const session = useSession(service, { cwd, branch: props.branch, version: props.version }, !fullscreen);
   const selection = useSelection();
   const [panel, setPanel] = useState<SlashCommand | null>(null);
   const [history, setHistory] = useState(props.history);
   const [draft, setDraft] = useState('');
+  const [followTick, setFollowTick] = useState(0);
+  const { onRunChange } = props;
+  const runId = session.run?.id;
+  useEffect(() => {
+    onRunChange?.(runId);
+  }, [onRunChange, runId]);
 
   const problems = usePreflight(service, cwd, selection.selection.skipAuthCheck === true, !props.skipPreflight);
   const autoRouted = !selection.selection.role && !selection.selection.pipelineId && !selection.selection.overrides.agent;
@@ -128,6 +145,7 @@ export function App(props: Readonly<AppProps>) {
   const submit = async (text: string): Promise<string | null> => {
     if (text.startsWith('/')) return runSlash(text, shell);
     if (session.phase !== 'idle') return 'A run is in progress. Wait for it, or press Ctrl+C to stop it.';
+    setFollowTick((t) => t + 1);
     const failure = await session.send(buildRequest(selection.selection, text, cwd), text);
     if (!failure) rememberPrompt(text);
     return failure;
@@ -155,44 +173,135 @@ export function App(props: Readonly<AppProps>) {
     pipelineId: selection.selection.pipelineId,
   };
 
+  const decision = awaiting && session.handle && session.run ? <DecisionArea session={session} /> : null;
+  const panelNode = !awaiting && panel ? <PanelHost command={panel} props={panelProps} /> : null;
+  const composer =
+    !awaiting && !panel ? (
+      <Composer
+        history={history}
+        roles={selection.roles}
+        role={selection.selection.role}
+        commands={SLASH_COMMANDS}
+        borderTone={effectiveMode(selection.selection) === 'plan' ? 'yellow' : 'cyan'}
+        onSubmit={submit}
+        onCommand={(c) => {
+          const error = runSlash(`/${c.name}`, shell);
+          if (error) session.notice('error', error);
+        }}
+        onCycleRole={selection.cycleRole}
+        onToggleMode={selection.toggleMode}
+        onDraft={setDraft}
+        onExit={exit}
+        reserveScrollKeys={fullscreen}
+      />
+    ) : null;
+  const status = (
+    <StatusLine
+      selection={selection.selection}
+      pipeline={selection.pipeline}
+      phase={session.phase}
+      awaiting={awaiting}
+      startedAt={session.startedAt}
+      usage={session.run?.usage}
+      route={route}
+    />
+  );
+  const banner = <Banner problems={problems} />;
+
+  if (!fullscreen) {
+    const bottom = (
+      <>
+        {decision}
+        {panelNode}
+        {composer}
+      </>
+    );
+    return <InlineLayout session={session} width={width} rows={rows ?? 24} banner={banner} bottom={bottom} status={status} />;
+  }
+  return (
+    <FullscreenLayout
+      session={session}
+      header={{ version: props.version, cwd, branch: props.branch }}
+      columns={columns ?? 80}
+      rows={rows ?? 24}
+      width={width}
+      banner={banner}
+      panel={panelNode}
+      bottom={decision ?? composer}
+      status={status}
+      followTick={followTick}
+      edgeKeys={draft === ''}
+    />
+  );
+}
+
+interface LayoutProps {
+  session: Session;
+  width: number;
+  rows: number;
+  banner: ReactNode;
+  bottom: ReactNode;
+  status: ReactNode;
+}
+
+/** Inline: finished items go to the terminal's scrollback through <Static>; the rest is redrawn below. */
+function InlineLayout({ session, width, rows, banner, bottom, status }: Readonly<LayoutProps>) {
   return (
     <Box flexDirection="column">
       <Static key={session.epoch} items={session.log}>
         {(item) => <ThreadItemView key={item.id} item={item} width={width} />}
       </Static>
-      <LiveThread run={session.run} messages={session.live} width={width} rows={rows ?? 24} />
-      <Banner problems={problems} />
+      <LiveThread run={session.run} messages={session.live} width={width} rows={rows} />
+      {banner}
       <Box marginTop={1} flexDirection="column">
-        {awaiting && session.handle && session.run ? <DecisionArea session={session} /> : null}
-        {!awaiting && panel ? <PanelHost command={panel} props={panelProps} /> : null}
-        {!awaiting && !panel ? (
-          <Composer
-            history={history}
-            roles={selection.roles}
-            role={selection.selection.role}
-            commands={SLASH_COMMANDS}
-            borderTone={effectiveMode(selection.selection) === 'plan' ? 'yellow' : 'cyan'}
-            onSubmit={submit}
-            onCommand={(c) => {
-              const error = runSlash(`/${c.name}`, shell);
-              if (error) session.notice('error', error);
-            }}
-            onCycleRole={selection.cycleRole}
-            onToggleMode={selection.toggleMode}
-            onDraft={setDraft}
-            onExit={exit}
-          />
-        ) : null}
+        {bottom}
       </Box>
-      <StatusLine
-        selection={selection.selection}
-        pipeline={selection.pipeline}
-        phase={session.phase}
-        awaiting={awaiting}
-        startedAt={session.startedAt}
-        usage={session.run?.usage}
-        route={route}
-      />
+      {status}
+    </Box>
+  );
+}
+
+interface FullscreenLayoutProps extends Omit<LayoutProps, 'bottom'> {
+  header: { version: string; cwd: string; branch?: string };
+  columns: number;
+  panel: ReactNode;
+  bottom: ReactNode;
+  followTick: number;
+  edgeKeys: boolean;
+}
+
+/** Rows kept free: a frame that fills the whole terminal makes Ink clear and redraw it every time on Windows. */
+const FRAME_MARGIN = 1;
+const HEADER_ROWS = 2;
+const STATUS_ROWS = 2;
+
+/**
+ * Full screen: fixed header on top, the thread in a scrollable viewport, then the panel or decision or
+ * composer and the status line pinned at the bottom. A panel takes the viewport's place while it is open.
+ */
+function FullscreenLayout({ session, header, columns, rows, width, banner, panel, bottom, status, followTick, edgeKeys }: Readonly<FullscreenLayoutProps>) {
+  const frame = Math.max(1, rows - FRAME_MARGIN);
+  const { items, hidden } = useMemo(() => windowLog(session.log), [session.log]);
+  const panelOpen = panel !== null;
+  return (
+    <Box flexDirection="column" height={frame} width={columns}>
+      <FullscreenHeader {...header} compact={rows < 14} />
+      <Box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} display={panelOpen ? 'none' : 'flex'}>
+        <Viewport resetKey={session.epoch} followTick={followTick} active={!panelOpen} edgeKeys={edgeKeys}>
+          {banner}
+          <FinishedThread items={items} hidden={hidden} width={width} />
+          <LiveThread run={session.run} messages={session.live} width={width} rows={rows} />
+        </Viewport>
+      </Box>
+      {panelOpen ? (
+        <Box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} overflow="hidden">
+          <PanelRowsContext.Provider value={Math.max(1, frame - HEADER_ROWS - STATUS_ROWS)}>{panel}</PanelRowsContext.Provider>
+        </Box>
+      ) : null}
+      <Box flexDirection="column" flexShrink={0}>
+        {bottom}
+      </Box>
+      {status}
     </Box>
   );
 }

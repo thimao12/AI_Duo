@@ -17,7 +17,7 @@
     "dev": "tsx src/main.ts",
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
-    "test": "node build.mjs && tsx src/cli-smoke.ts && tsx src/tui-smoke.ts && tsx src/tui-ime-smoke.ts && tsx src/tui-panels-smoke.ts"
+    "test": "node build.mjs && tsx src/cli-smoke.ts && tsx src/tui-smoke.ts && tsx src/tui-ime-smoke.ts && tsx src/tui-panels-smoke.ts && tsx src/tui-fullscreen-smoke.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

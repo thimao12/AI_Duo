@@ -25,12 +25,20 @@ export const HELP = `ai-duo ${VERSION} – Claude × Codex pair programming in t
 Usage:
   ai-duo                                  interactive chat in the current folder (needs a terminal)
   ai-duo chat [-C <folder>]               the same, for a chosen folder
+                                          (full screen, like vim; --inline keeps it in the scrollback)
   ai-duo run "<request>" [options]        start a Code or Plan run in --cwd (default: current folder)
   ai-duo continue <run-id> "<request>"    follow up on a finished run, in the same thread
   ai-duo runs [--all] [--limit N]         recent runs (default: runs in this repository)
   ai-duo show <run-id> [--diff]           print a saved run
   ai-duo doctor                           check Node, Git, both agent CLIs and their logins
   ai-duo unlock [folder] [--force]        remove a repository lock left by a process that died
+
+Chat options:
+      --inline      keep the chat in the terminal's scrollback instead of taking the whole screen
+                    (also AI_DUO_INLINE=1)
+      --fullscreen  full-screen chat: the default, accepted for clarity
+  Full screen keys: PageUp/PageDown scroll, Ctrl+Up/Down or Alt+Up/Down one line, Home/Ctrl+Home top,
+  End/Ctrl+End latest (also resumes following the newest output).
 
 Run options:
   -m, --mode code|plan          code edits files (needs Git); plan is read-only first (default: code;
@@ -80,6 +88,8 @@ const OPTIONS = {
   quiet: { type: 'boolean', short: 'q' },
   verbose: { type: 'boolean', short: 'v' },
   'no-color': { type: 'boolean' },
+  inline: { type: 'boolean' },
+  fullscreen: { type: 'boolean' },
   all: { type: 'boolean' },
   limit: { type: 'string' },
   diff: { type: 'boolean' },
@@ -363,6 +373,15 @@ class Cli {
     }
   }
 
+  /** Full screen unless --inline (or AI_DUO_INLINE=1) asks for the scrollback; --fullscreen wins over the variable. */
+  chatScreen(): 'fullscreen' | 'inline' {
+    const { flags, io } = this;
+    if (flags.inline && flags.fullscreen) throw new UsageError('Use either --inline or --fullscreen, not both.');
+    if (flags.inline) return 'inline';
+    if (flags.fullscreen) return 'fullscreen';
+    return io.env.AI_DUO_INLINE === '1' ? 'inline' : 'fullscreen';
+  }
+
   /** Interactive chat (Ink UI); refuses to start without a terminal on both ends. */
   async chat(): Promise<number> {
     const { flags, io } = this;
@@ -371,7 +390,7 @@ class Cli {
     if (!existsSync(cwd)) throw new UsageError(`Folder not found: ${cwd}`);
     await seedPrompts();
     const { startTui } = await import('./tui/index.tsx');
-    return startTui({ cwd, service, version: VERSION });
+    return startTui({ cwd, service, version: VERSION, screen: this.chatScreen() });
   }
 
   async run(positionals: string[]): Promise<number> {

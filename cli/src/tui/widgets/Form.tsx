@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Box, Text, useInput, type Key } from 'ink';
 import { paint, windowStart } from '../util.ts';
+import { fitRows, usePanelRows } from './rows.ts';
 import TextField from './TextField.tsx';
 
 export interface FormField {
@@ -95,7 +96,8 @@ function Editor({ field, onChange, onDone }: Readonly<EditorProps>) {
 }
 
 /** Vertical list of labelled fields: Up/Down move, Enter/Left/Right/Space change the selected one, `s` saves. */
-export default function Form({ fields, onChange, onSave, onCancel, onKey, maxRows = 12, isActive = true }: Readonly<FormProps>) {
+export default function Form({ fields, onChange, onSave, onCancel, onKey, isActive = true, ...rest }: Readonly<FormProps>) {
+  const maxRows = fitRows(rest.maxRows ?? 12, usePanelRows());
   const [index, setIndex] = useState(0);
   const [editing, setEditing] = useState(false);
   const at = Math.min(index, Math.max(0, fields.length - 1));

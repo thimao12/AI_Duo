@@ -1,4 +1,5 @@
 import { Box, Text } from 'ink';
+import { memo } from 'react';
 import type { Message, Run } from '../../../server/src/types.ts';
 import { MessageView, UserLine } from './MessageView.tsx';
 import { tone } from './theme.ts';
@@ -66,7 +67,7 @@ export function RunSummary({ run, width }: Readonly<{ run: Run; width: number }>
 const NOTICE_MARK = { info: 'ℹ', warn: '!', error: '✗' } as const;
 const NOTICE_TONE = { info: 'cyan', warn: 'yellow', error: 'red' } as const;
 
-export function ThreadItemView({ item, width }: Readonly<{ item: ThreadItem; width: number }>) {
+export const ThreadItemView = memo(function ThreadItemView({ item, width }: Readonly<{ item: ThreadItem; width: number }>) {
   switch (item.kind) {
     case 'header':
       return <Header item={item} />;
@@ -83,6 +84,48 @@ export function ThreadItemView({ item, width }: Readonly<{ item: ThreadItem; wid
         </Box>
       );
   }
+});
+
+/** Finished items of the full-screen thread; memoized rows, so only new items are laid out again. */
+export const FinishedThread = memo(function FinishedThread({ items, hidden, width }: Readonly<{ items: readonly ThreadItem[]; hidden: number; width: number }>) {
+  return (
+    <Box flexDirection="column">
+      {hidden > 0 ? <Text dimColor>{`… ${hidden} earlier item(s) not shown · ai-duo show <run-id> prints the whole run`}</Text> : null}
+      {items.map((item) => (
+        <ThreadItemView key={item.id} item={item} width={width} />
+      ))}
+    </Box>
+  );
+});
+
+interface FullscreenHeaderProps {
+  version: string;
+  cwd: string;
+  branch?: string;
+  /** One line only (very short terminals). */
+  compact: boolean;
+}
+
+/** Fixed top bar of the full-screen chat: 1-2 lines, truncated to the terminal width. */
+export function FullscreenHeader({ version, cwd, branch, compact }: Readonly<FullscreenHeaderProps>) {
+  const suffix = branch ? ` · ⎇ ${branch}` : '';
+  const where = cwd + suffix;
+  return (
+    <Box flexDirection="column" flexShrink={0}>
+      <Text wrap="truncate-end">
+        <Text bold color={tone('cyan')}>
+          AI Duo
+        </Text>
+        <Text dimColor>{` v${version} · Claude × Codex`}</Text>
+        {compact ? <Text dimColor>{` · ${where}`}</Text> : null}
+      </Text>
+      {compact ? null : (
+        <Text wrap="truncate-end" dimColor>
+          {where}
+        </Text>
+      )}
+    </Box>
+  );
 }
 
 interface LiveThreadProps {
@@ -104,4 +147,16 @@ export function LiveThread({ run, messages, width, rows }: Readonly<LiveThreadPr
       ))}
     </Box>
   );
+}
+
+/** Most finished items the full-screen thread lays out; older ones are dropped in blocks of WINDOW_STEP. */
+export const WINDOW_MAX = 400;
+export const WINDOW_STEP = 100;
+
+/** The header is a fixed bar in full screen; a long log is cut from the front, in blocks (so the cut rarely moves). */
+export function windowLog(log: readonly ThreadItem[]): { items: ThreadItem[]; hidden: number } {
+  const body = log.filter((item) => item.kind !== 'header');
+  if (body.length <= WINDOW_MAX) return { items: body, hidden: 0 };
+  const hidden = Math.floor((body.length - WINDOW_MAX) / WINDOW_STEP + 1) * WINDOW_STEP;
+  return { items: body.slice(hidden), hidden };
 }

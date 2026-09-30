@@ -44,7 +44,8 @@ const FLUSH_MS = 60;
 
 const cloneRun = (run: Run): Run => structuredClone(run);
 
-export function useSession(service: ChatService, header: HeaderInfo): Session {
+/** `clearScreen`: inline mode wipes the terminal when the thread starts over; full screen has no scrollback to wipe. */
+export function useSession(service: ChatService, header: HeaderInfo, clearScreen = true): Session {
   const { stdout } = useStdout();
   const ids = useRef(0);
   const nextId = (kind: string) => `${kind}-${++ids.current}`;
@@ -159,7 +160,7 @@ export function useSession(service: ChatService, header: HeaderInfo): Session {
   };
 
   const resetView = (items: ThreadItem[]) => {
-    stdout.write(CLEAR_SCREEN);
+    if (clearScreen) stdout.write(CLEAR_SCREEN);
     setLog(items);
     setEpoch((e) => e + 1);
   };

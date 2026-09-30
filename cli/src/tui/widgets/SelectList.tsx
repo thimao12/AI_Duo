@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Box, Text, useInput, type Key } from 'ink';
 import { paint, windowStart } from '../util.ts';
+import { fitRows, usePanelRows } from './rows.ts';
 
 export interface SelectListProps<T> {
   items: readonly T[];
@@ -74,7 +75,8 @@ function Row<T>({ item, selected, props, width }: Readonly<{ item: T; selected: 
 
 /** Keyboard list: Up/Down (j/k), PgUp/PgDn, Enter selects, Esc cancels; scrolls past maxHeight; optional type-to-filter. */
 export default function SelectList<T>(props: Readonly<SelectListProps<T>>) {
-  const { items, getKey, getLabel, onSelect, onCancel, onHighlight, onKey, maxHeight = 10, filterable = false, isActive = true } = props;
+  const { items, getKey, getLabel, onSelect, onCancel, onHighlight, onKey, filterable = false, isActive = true } = props;
+  const maxHeight = fitRows(props.maxHeight ?? 10, usePanelRows());
   const { filter, setFilter, shown } = useFilter(items, filterable, props.filterText, getLabel);
   const [index, setIndex] = useState(props.initialIndex ?? 0);
   const at = Math.min(index, Math.max(0, shown.length - 1));
