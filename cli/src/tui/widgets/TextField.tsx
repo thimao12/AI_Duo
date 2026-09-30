@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Box, Text, useInput, type Key } from 'ink';
+import { after, before, insertText } from '../editor.ts';
 import { paint } from '../util.ts';
 
 export interface EditState {
@@ -43,8 +44,8 @@ function lineBounds(value: string, cursor: number): { start: number; end: number
 /** New cursor for a navigation key, or undefined when the key is not one. */
 function navigate(state: EditState, input: string, key: Key, multiline: boolean): number | undefined {
   const { value, cursor } = state;
-  if (key.leftArrow) return Math.max(0, cursor - 1);
-  if (key.rightArrow) return Math.min(value.length, cursor + 1);
+  if (key.leftArrow) return before(value, cursor);
+  if (key.rightArrow) return after(value, cursor);
   if (key.home || (key.ctrl && input === 'a')) return multiline ? lineBounds(value, cursor).start : 0;
   if (key.end || (key.ctrl && input === 'e')) return multiline ? lineBounds(value, cursor).end : value.length;
   if (multiline && key.upArrow) return moveVertical(state, -1);
@@ -69,8 +70,8 @@ function wordStart(value: string, cursor: number): number {
 /** State after a deletion key, or undefined when the key is not one. */
 function erase(state: EditState, input: string, key: Key): EditState | undefined {
   const { value, cursor } = state;
-  if (key.backspace) return cursor > 0 ? cut(state, cursor - 1, cursor) : state;
-  if (key.delete) return cursor < value.length ? cut(state, cursor, cursor + 1) : state;
+  if (key.backspace) return cursor > 0 ? cut(state, before(value, cursor), cursor) : state;
+  if (key.delete) return cursor < value.length ? cut(state, cursor, after(value, cursor)) : state;
   if (!key.ctrl) return undefined;
   if (input === 'u') return cut(state, 0, cursor);
   if (input === 'k') return cut(state, cursor, value.length);
@@ -78,8 +79,10 @@ function erase(state: EditState, input: string, key: Key): EditState | undefined
   return undefined;
 }
 
+/** Inserts NFC text; a leading combining mark joins the letter before the cursor. */
 function insert(state: EditState, text: string): EditState {
-  return { value: state.value.slice(0, state.cursor) + text + state.value.slice(state.cursor), cursor: state.cursor + text.length };
+  const next = insertText({ text: state.value, cursor: state.cursor }, text);
+  return { value: next.text, cursor: next.cursor };
 }
 
 /** Pure editing step used by TextField: one key or one pasted chunk applied to the value. */
@@ -110,17 +113,17 @@ export interface TextFieldProps {
 }
 
 function shown(text: string, mask: boolean | undefined): string {
-  return mask ? '•'.repeat([...text].length) : text;
+  return mask ? '•'.repeat(text.length) : text;
 }
 
 function Cursorline({ text, cursor, active }: Readonly<{ text: string; cursor: number | undefined; active: boolean }>) {
   if (cursor === undefined || !active) return <Text>{text || ' '}</Text>;
-  const at = text.slice(cursor, cursor + 1);
+  const at = text.slice(cursor, after(text, cursor));
   return (
     <Text>
       {text.slice(0, cursor)}
       <Text inverse>{at || ' '}</Text>
-      {text.slice(cursor + 1)}
+      {text.slice(cursor + at.length)}
     </Text>
   );
 }
@@ -129,10 +132,14 @@ function Cursorline({ text, cursor, active }: Readonly<{ text: string; cursor: n
 export default function TextField({ value, onChange, onSubmit, onCancel, mask, multiline = false, placeholder, focus = true }: Readonly<TextFieldProps>) {
   const [cursor, setCursor] = useState(value.length);
   const at = Math.min(cursor, value.length);
+  // An IME can deliver several key events in one tick; each one must build on the previous result.
+  const latest = useRef<EditState>({ value, cursor: at });
+  if (latest.current.value !== value) latest.current = { value, cursor: Math.min(latest.current.cursor, value.length) };
 
   useInput((input, key) => {
-    const next = editText({ value, cursor: at }, input, key, multiline);
-    if (next.value !== value) onChange(next.value);
+    const next = editText(latest.current, input, key, multiline);
+    if (next.value !== latest.current.value) onChange(next.value);
+    latest.current = { value: next.value, cursor: next.cursor };
     setCursor(next.cursor);
     if (next.action === 'submit') onSubmit?.(next.value);
     if (next.action === 'cancel') onCancel?.();

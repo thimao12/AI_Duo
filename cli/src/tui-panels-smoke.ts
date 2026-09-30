@@ -305,6 +305,7 @@ try {
         source: 'codex-session-log',
         error: 'needsLogin',
         fiveHour: { usedPercent: 10, windowMinutes: 300, stale: true },
+        weekly: { usedPercent: 2, resetsAt: soon, windowMinutes: 10_080 },
         resetCredits: { availableCount: 2, credits: [{ id: 'c1', title: 'Thẻ reset 1', status: 'available' }, { id: 'c2', title: 'Đã dùng', status: 'redeemed' }] },
       },
     },
@@ -317,7 +318,8 @@ try {
   const usage = mount(h(UsagePanel, { cwd: workDir, onClose: () => undefined, loader }));
   frame = await seen(usage, 'Bank reset: 2 lượt');
   assert.ok(frame.includes('Claude') && frame.includes('MAX') && frame.includes('2.1.0') && frame.includes('[trực tiếp]'), frame);
-  assert.ok(frame.includes('5 giờ') && frame.includes('▰▰▰▰▰▰▰▰▱') && frame.includes(' 42%') && frame.includes('Tuần') && frame.includes(' 91%'), frame);
+  assert.ok(frame.includes('5 giờ') && frame.includes('▰▰▰▰▰▰▰▰▱') && frame.includes(' 42%') && frame.includes('Tuần') && frame.includes(' 91%') && frame.includes('42% đã dùng') && frame.includes('91% đã dùng'), frame);
+  assert.ok(frame.includes('▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰  98% còn lại'), `codex weekly shows what is left: ${frame}`);
   assert.ok(/Reset \d\d:\d\d (hôm nay|ngày mai) · còn 1g (19|20)p/.test(frame), frame);
   assert.ok(frame.includes('[từ log]') && frame.includes('Cần đăng nhập lại') && frame.includes('Đã reset – chưa có số liệu mới') && frame.includes('Thẻ reset 1') && !frame.includes('Đã dùng'), frame);
   assert.ok(frame.includes('chưa kết nối'), 'codex has no version');

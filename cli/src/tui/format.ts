@@ -63,6 +63,16 @@ export function barColor(percent: number): string {
   return 'green';
 }
 
+/** Share of the quota still available (Codex-style "left"), 0..100. */
+export const remainingPercent = (usedPercent: number) => 100 - clampPercent(usedPercent);
+
+/** For a "left" bar: green when plenty is left, amber at 25% or less, red at 10% or less. */
+export function leftColor(left: number): string {
+  if (left <= 10) return 'red';
+  if (left <= 25) return 'yellow';
+  return 'green';
+}
+
 /** "vừa xong", "5 phút trước", "2 giờ trước", "3 ngày trước". */
 export function relativeTime(ms: number, now = Date.now()): string {
   const minutes = Math.max(0, Math.floor((now - ms) / 60_000));

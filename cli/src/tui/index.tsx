@@ -54,8 +54,10 @@ export async function startTui(options: TuiOptions): Promise<number> {
       historyFile={file}
       skipPreflight={options.skipPreflight}
     />,
+    // Kitty keyboard reports stay off: Windows Terminal / VS Code would send text as CSI-u, which breaks IME
+    // composition (Vietnamese Telex/Unikey). New line is Alt+Enter (ESC CR), Ctrl+J or a trailing backslash.
     // Ink merges these over its defaults, so an undefined stdin/stdout would replace process.stdin/stdout.
-    { ...(options.stdin && { stdin: options.stdin }), ...(options.stdout && { stdout: options.stdout }), exitOnCtrlC: false, patchConsole: false, kittyKeyboard: { mode: 'auto', flags: ['disambiguateEscapeCodes'] } },
+    { ...(options.stdin && { stdin: options.stdin }), ...(options.stdout && { stdout: options.stdout }), exitOnCtrlC: false, patchConsole: false },
   );
   await instance.waitUntilExit();
   await stopRuns(service);

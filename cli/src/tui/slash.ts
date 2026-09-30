@@ -43,7 +43,7 @@ export function findCommand(commands: readonly SlashCommand[], name: string): Sl
 
 export const HELP_LINES: readonly string[] = [
   'Keys:',
-  String.raw`  Enter send · Shift+Enter / Alt+Enter / trailing \ + Enter new line`,
+  String.raw`  Enter send · Alt+Enter / Ctrl+J / trailing \ + Enter new line`,
   '  Up/Down history (at the first/last line) · Ctrl+A/E line start/end · Alt+B/F or Ctrl+←/→ words',
   '  Tab (empty prompt) next role · Shift+Tab Code/Plan · Esc closes a panel',
   '  Ctrl+C stops the run (again: quit) · Ctrl+D on an empty prompt quits',

@@ -4,7 +4,7 @@ import type { AgentName } from '../../../../server/src/agents/types.ts';
 import { detectCli } from '../../../../server/src/routes/cli-settings.ts';
 import type { AgentUsage, UsageReport, UsageResetCredit, UsageWindow } from '../../../../server/src/types.ts';
 import { getUsage } from '../../../../server/src/usage.ts';
-import { barColor, clampPercent, clock, formatExpiry, formatRemaining, formatReset, isExpiredWindow, isLive, sourceLabel, textBar } from '../format.ts';
+import { barColor, clampPercent, clock, formatExpiry, formatRemaining, formatReset, isExpiredWindow, isLive, leftColor, remainingPercent, sourceLabel, textBar } from '../format.ts';
 import type { PanelProps } from '../panel-types.ts';
 import { getService } from '../service.ts';
 import { paint, useInterval, useLoader } from '../util.ts';
@@ -29,7 +29,15 @@ export const loadUsage: UsageLoader = async (force) => {
   return { report, versions: { claude: claude.version, codex: codex.version } };
 };
 
-function BarRow({ label, window: win, live }: Readonly<{ label: string; window: UsageWindow; live: boolean }>) {
+interface BarRowProps {
+  label: string;
+  window: UsageWindow;
+  live: boolean;
+  /** Codex reports what is left; Claude what is used. */
+  left: boolean;
+}
+
+function BarRow({ label, window: win, live, left }: Readonly<BarRowProps>) {
   if (isExpiredWindow(win, live)) {
     return (
       <Text>
@@ -38,12 +46,15 @@ function BarRow({ label, window: win, live }: Readonly<{ label: string; window: 
       </Text>
     );
   }
-  const percent = clampPercent(win.usedPercent);
+  const percent = left ? remainingPercent(win.usedPercent) : clampPercent(win.usedPercent);
+  const color = left ? leftColor(percent) : barColor(percent);
+  const suffix = left ? 'còn lại' : 'đã dùng';
   return (
     <Box>
       <Text>{`  ${label.padEnd(7)}`}</Text>
-      <Text color={paint(barColor(percent))}>{textBar(percent)}</Text>
+      <Text color={paint(color)}>{textBar(percent)}</Text>
       <Text bold>{` ${String(percent).padStart(3)}% `}</Text>
+      <Text>{`${suffix} `}</Text>
       {win.resetsAt ? (
         <Box flexShrink={1}>
           <Text dimColor wrap="truncate-end">{`${formatReset(win.resetsAt)} · ${formatRemaining(win.resetsAt)}`}</Text>
@@ -96,8 +107,8 @@ function AgentCard({ name, usage, version }: Readonly<CardProps>) {
         {usage ? <Text color={paint(live ? 'green' : 'gray')}>{`  [${sourceLabel(usage)}]`}</Text> : null}
       </Box>
       {usage?.error ? <Notice error={usage.error} /> : null}
-      {usage?.fiveHour ? <BarRow label="5 giờ" window={usage.fiveHour} live={live} /> : null}
-      {usage?.weekly ? <BarRow label="Tuần" window={usage.weekly} live={live} /> : null}
+      {usage?.fiveHour ? <BarRow label="5 giờ" window={usage.fiveHour} live={live} left={name === 'codex'} /> : null}
+      {usage?.weekly ? <BarRow label="Tuần" window={usage.weekly} live={live} left={name === 'codex'} /> : null}
       {usage && !hasWindows ? <Text dimColor>{'  Chưa có dữ liệu quota.'}</Text> : null}
       {usage?.resetCredits ? <ResetCredits credits={usage.resetCredits} /> : null}
       {usage ? null : <Text dimColor>{'  Đang tải…'}</Text>}

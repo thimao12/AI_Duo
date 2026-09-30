@@ -38,6 +38,13 @@ function barColor(percent: number): string {
   return 'bg-ok';
 }
 
+/** For a "left" bar: green when plenty is left, amber at 25% or less, red at 10% or less. */
+export function leftColor(left: number): string {
+  if (left <= 10) return 'bg-danger';
+  if (left <= 25) return 'bg-warn';
+  return 'bg-ok';
+}
+
 /* ---- Usage bars ------------------------------------------------------------ */
 
 /** A window whose reset time already passed and that was not just measured live has no trustworthy number. */
@@ -56,19 +63,30 @@ function ExpiredBar({ label }: Readonly<{ label: string }>) {
   );
 }
 
-function UsageBar({ label, window: win, live }: Readonly<{ label: string; window: UsageWindow; live: boolean }>) {
+interface UsageBarProps {
+  label: string;
+  window: UsageWindow;
+  live: boolean;
+  /** Codex reports what is left; Claude what is used. */
+  left: boolean;
+}
+
+function UsageBar({ label, window: win, live, left }: Readonly<UsageBarProps>) {
   if (isExpiredWindow(win, live)) return <ExpiredBar label={label} />;
-  const percent = Math.min(100, Math.max(0, Math.round(win.usedPercent)));
+  const used = Math.min(100, Math.max(0, Math.round(win.usedPercent)));
+  const percent = left ? 100 - used : used;
+  const color = left ? leftColor(percent) : barColor(percent);
+  const suffix = left ? 'còn lại' : 'đã dùng';
   return (
     <div>
       <div className="flex items-baseline justify-between text-[12px]">
         <span className="text-muted">{label}</span>
-        <span className="font-medium text-fg">{percent}%</span>
+        <span className="font-medium text-fg">{percent}% <span className="text-[11px] font-normal text-faint">{suffix}</span></span>
       </div>
       <div aria-hidden className="mt-1 h-1.5 overflow-hidden rounded-full bg-surface-2">
-        <div className={`h-full rounded-full ${barColor(percent)}`} style={{ width: `${percent}%` }} />
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${percent}%` }} />
       </div>
-      <meter className="sr-only" min={0} max={100} value={percent} aria-label={`${label}: đã dùng ${percent}%`}>{percent}%</meter>
+      <meter className="sr-only" min={0} max={100} value={percent} aria-label={`${label}: ${suffix} ${percent}%`}>{percent}%</meter>
       {win.resetsAt && (
         <div className="mt-1 flex justify-between text-[11px] text-faint">
           <span>{formatReset(win.resetsAt)}</span>
@@ -159,8 +177,8 @@ function UsageBars({ name, usage }: Readonly<{ name: AgentName; usage: AgentUsag
       {usage.error && <UsageNotice name={name} error={usage.error} />}
       {hasWindows ? (
         <div className="space-y-2.5">
-          {usage.fiveHour && <UsageBar label="5 giờ" window={usage.fiveHour} live={live} />}
-          {usage.weekly && <UsageBar label="Tuần" window={usage.weekly} live={live} />}
+          {usage.fiveHour && <UsageBar label="5 giờ" window={usage.fiveHour} live={live} left={name === 'codex'} />}
+          {usage.weekly && <UsageBar label="Tuần" window={usage.weekly} live={live} left={name === 'codex'} />}
         </div>
       ) : (
         <p className="text-[11.5px] leading-snug text-faint">Chưa có dữ liệu quota.</p>

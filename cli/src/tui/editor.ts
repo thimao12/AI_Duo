@@ -13,15 +13,28 @@ export const editorOf = (text: string): EditorState => ({ text, cursor: text.len
 /** True when the code point needs a surrogate pair (two UTF-16 units). */
 const isAstral = (code: number | undefined) => code !== undefined && code > 0xffff;
 
-/** Offset one character (not one UTF-16 unit) before `at`. */
-function before(text: string, at: number): number {
+/** Combining diacritical marks (Vietnamese tones and horns arrive as these when decomposed). */
+export const isCombining = (code: number | undefined) => code !== undefined && code >= 0x300 && code <= 0x36f;
+
+/** Offset of the code point before `at` (one code point, not one UTF-16 unit). */
+function prevCodePoint(text: string, at: number): number {
   if (at >= 2 && isAstral(text.codePointAt(at - 2))) return at - 2;
   return Math.max(0, at - 1);
 }
 
-function after(text: string, at: number): number {
-  if (isAstral(text.codePointAt(at))) return at + 2;
-  return Math.min(text.length, at + 1);
+/** Offset one visible character before `at`: a base letter together with its combining marks. */
+export function before(text: string, at: number): number {
+  let i = prevCodePoint(text, at);
+  while (i > 0 && isCombining(text.codePointAt(i))) i = prevCodePoint(text, i);
+  return i;
+}
+
+/** Offset one visible character after `at`: a base letter together with its combining marks. */
+export function after(text: string, at: number): number {
+  if (at >= text.length) return text.length;
+  let i = at + (isAstral(text.codePointAt(at)) ? 2 : 1);
+  while (i < text.length && isCombining(text.codePointAt(i))) i++;
+  return Math.min(text.length, i);
 }
 
 /** Pasted and typed text: line breaks normalised, control characters dropped. */
@@ -34,10 +47,16 @@ export function cleanInput(input: string): string {
   return out;
 }
 
+/**
+ * Inserts typed or pasted text as NFC. When the chunk starts with a combining mark (an IME sending
+ * a letter and its tone separately) the letter before the cursor joins the composition.
+ */
 export function insertText(s: EditorState, input: string): EditorState {
   const text = cleanInput(input);
   if (!text) return s;
-  return { text: s.text.slice(0, s.cursor) + text + s.text.slice(s.cursor), cursor: s.cursor + text.length };
+  const from = isCombining(text.codePointAt(0)) ? before(s.text, s.cursor) : s.cursor;
+  const piece = (s.text.slice(from, s.cursor) + text).normalize('NFC');
+  return { text: s.text.slice(0, from) + piece + s.text.slice(s.cursor), cursor: from + piece.length };
 }
 
 export function backspace(s: EditorState): EditorState {

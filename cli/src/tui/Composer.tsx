@@ -2,6 +2,7 @@ import { Box, Text, useInput, usePaste, type Key } from 'ink';
 import { useEffect, useRef, useState } from 'react';
 import type { RoleDef } from '../../../server/src/types.ts';
 import {
+  after,
   applyEditKey,
   backspace,
   cursorPosition,
@@ -78,7 +79,7 @@ function EditorView({ state, placeholder, active }: Readonly<{ state: EditorStat
       {first > 0 ? <Text dimColor>{`… ${first} line(s) above`}</Text> : null}
       {visible.map((line) => {
         const here = line.id === row;
-        const at = line.text.slice(col, col + 1) || ' ';
+        const at = line.text.slice(col, after(line.text, col)) || ' ';
         const rest = here ? line.text.slice(col + at.length) : '';
         return (
           <Box key={line.id}>
@@ -128,29 +129,29 @@ export interface ComposerProps {
 }
 
 function useHistoryWalk(history: readonly string[], setEditor: (s: EditorState) => void) {
-  const [index, setIndex] = useState(-1);
+  const index = useRef(-1);
   const draft = useRef('');
-  const reset = () => setIndex(-1);
+  const reset = () => {
+    index.current = -1;
+  };
+  const show = (at: number, text: string) => {
+    index.current = at;
+    setEditor(editorOf(text));
+  };
   /** Older (-1) or newer (+1); returns false when there is nowhere to go. */
   const walk = (dir: -1 | 1, current: string): boolean => {
     if (history.length === 0) return false;
     if (dir === -1) {
-      if (index === 0) return true;
-      if (index === -1) draft.current = current;
-      const next = index === -1 ? history.length - 1 : index - 1;
-      setIndex(next);
-      setEditor(editorOf(history[next]));
+      if (index.current === 0) return true;
+      if (index.current === -1) draft.current = current;
+      const next = index.current === -1 ? history.length - 1 : index.current - 1;
+      show(next, history[next]);
       return true;
     }
-    if (index === -1) return false;
-    const next = index + 1;
-    if (next >= history.length) {
-      setIndex(-1);
-      setEditor(editorOf(draft.current));
-    } else {
-      setIndex(next);
-      setEditor(editorOf(history[next]));
-    }
+    if (index.current === -1) return false;
+    const next = index.current + 1;
+    if (next >= history.length) show(-1, draft.current);
+    else show(next, history[next]);
     return true;
   };
   return { walk, reset };
@@ -165,48 +166,66 @@ export function Composer(props: Readonly<ComposerProps>) {
   const [editor, setEditor] = useState<EditorState>(EMPTY_EDITOR);
   const [error, setError] = useState<string | null>(null);
   const [menuIndex, setMenuIndex] = useState(0);
-  const walker = useHistoryWalk(history, setEditor);
+  // An IME can deliver several key events in one tick (Backspace bursts followed by the re-composed
+  // letters). Every event must see the result of the previous one, not the last rendered state.
+  const latest = useRef<EditorState>(EMPTY_EDITOR);
+  const menuAt = useRef(0);
+  const putEditor = (next: EditorState) => {
+    latest.current = next;
+    setEditor(next);
+  };
+  const putMenu = (at: number) => {
+    menuAt.current = at;
+    setMenuIndex(at);
+  };
+  const walker = useHistoryWalk(history, putEditor);
   const { onDraft } = props;
 
-  useEffect(() => onDraft?.(editor.text), [editor.text, onDraft]);
+  useEffect(() => {
+    onDraft?.(editor.text);
+  }, [editor.text, onDraft]);
 
-  const query = plain ? undefined : slashQuery(editor.text);
-  const matches = query === undefined ? [] : filterCommands(commands, query);
+  const matchesFor = (text: string): SlashCommand[] => {
+    const query = plain ? undefined : slashQuery(text);
+    return query === undefined ? [] : filterCommands(commands, query);
+  };
+  const matches = matchesFor(editor.text);
   const menuOpen = matches.length > 0;
   const selected = Math.min(menuIndex, Math.max(0, matches.length - 1));
 
   const edit = (next: EditorState) => {
-    setEditor(next);
+    putEditor(next);
     setError(null);
-    setMenuIndex(0);
+    putMenu(0);
     walker.reset();
   };
 
   const submit = async () => {
-    const text = editor.text.trim();
+    const text = latest.current.text.trim();
     if (!text) return;
-    setEditor(EMPTY_EDITOR);
+    putEditor(EMPTY_EDITOR);
     walker.reset();
     const problem = await props.onSubmit(text);
     setError(problem);
-    if (problem) setEditor((cur) => (cur.text ? cur : editorOf(text)));
+    if (problem && !latest.current.text) putEditor(editorOf(text));
   };
 
   const runCommand = (command: SlashCommand) => {
-    setEditor(EMPTY_EDITOR);
+    putEditor(EMPTY_EDITOR);
     props.onCommand?.(command);
   };
 
   /** Keys of the open slash menu; true when consumed. */
   const menuKey = (key: Key): boolean => {
-    if (!menuOpen) return false;
+    const open = matchesFor(latest.current.text);
+    if (open.length === 0) return false;
+    const at = Math.min(menuAt.current, open.length - 1);
     if (key.upArrow || key.downArrow) {
-      const step = key.upArrow ? -1 : 1;
-      setMenuIndex((selected + step + matches.length) % matches.length);
+      putMenu((at + (key.upArrow ? -1 : 1) + open.length) % open.length);
     } else if (key.tab && !key.shift) {
-      edit(editorOf(`/${matches[selected].name}`));
+      edit(editorOf(`/${open[at].name}`));
     } else if (key.return && !key.shift && !key.meta) {
-      runCommand(matches[selected]);
+      runCommand(open[at]);
     } else {
       return false;
     }
@@ -214,10 +233,11 @@ export function Composer(props: Readonly<ComposerProps>) {
   };
 
   const enterKey = (input: string, key: Key): boolean => {
+    const cur = latest.current;
     if (isNewlineKey(input, key)) {
-      edit(insertText(editor, '\n'));
-    } else if (key.return && continuesLine(editor.text, editor.cursor)) {
-      edit(insertText(backspace(editor), '\n'));
+      edit(insertText(cur, '\n'));
+    } else if (key.return && continuesLine(cur.text, cur.cursor)) {
+      edit(insertText(backspace(cur), '\n'));
     } else if (key.return) {
       void submit();
     } else {
@@ -228,18 +248,18 @@ export function Composer(props: Readonly<ComposerProps>) {
 
   const tabKey = (key: Key) => {
     if (key.shift) props.onToggleMode?.();
-    else if (editor.text === '') props.onCycleRole?.();
+    else if (latest.current.text === '') props.onCycleRole?.();
   };
 
   const arrowKey = (key: Key) => {
     const step = key.upArrow ? -1 : 1;
-    const moved = moveVertical(editor, step);
-    if (moved) setEditor(moved);
-    else walker.walk(step, editor.text);
+    const moved = moveVertical(latest.current, step);
+    if (moved) putEditor(moved);
+    else walker.walk(step, latest.current.text);
   };
 
   const specialKey = (input: string, key: Key): boolean => {
-    if (key.ctrl && input === 'd' && editor.text === '') {
+    if (key.ctrl && input === 'd' && latest.current.text === '') {
       props.onExit?.();
     } else if (key.escape) {
       props.onEscape?.();
@@ -257,14 +277,14 @@ export function Composer(props: Readonly<ComposerProps>) {
     (input, key) => {
       if (key.eventType === 'release' || (key.ctrl && input === 'c')) return;
       if (menuKey(key) || enterKey(input, key) || specialKey(input, key)) return;
-      const next = applyEditKey(editor, input, key);
+      const next = applyEditKey(latest.current, input, key);
       if (next) edit(next);
     },
     { isActive: active },
   );
 
   // Bracketed paste arrives whole: it can never submit half-way.
-  usePaste((text) => edit(insertText(editor, text)), { isActive: active });
+  usePaste((text) => edit(insertText(latest.current, text)), { isActive: active });
 
   const borderColor = tone(props.borderTone ?? 'cyan');
   return (
@@ -275,7 +295,7 @@ export function Composer(props: Readonly<ComposerProps>) {
       </Box>
       {menuOpen ? <SlashMenu matches={matches} selected={selected} /> : null}
       {error ? <Text color={tone('red')}>{error}</Text> : null}
-      {lineCount(editor) > 1 ? <Text dimColor>Enter sends · Shift+Enter or trailing \ for a new line</Text> : null}
+      {lineCount(editor) > 1 ? <Text dimColor>Enter sends · Alt+Enter, Ctrl+J or trailing \ for a new line</Text> : null}
     </Box>
   );
 }
