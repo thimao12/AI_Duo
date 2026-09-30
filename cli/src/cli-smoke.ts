@@ -249,7 +249,7 @@ try {
   const refused = await cli(['unlock']);
   assert.equal(refused.code, 4, 'a live owner is not unlocked');
   // Kill the CLI and its fake agent without letting it clean up.
-  if (process.platform === 'win32') execFileSync(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(hanging.pid), '/T', '/F'], { stdio: 'ignore' });
+  if (process.platform === 'win32') execFileSync(path.join(process.env.SystemRoot ?? String.raw`C:\Windows`, 'System32', 'taskkill.exe'), ['/PID', String(hanging.pid), '/T', '/F'], { stdio: 'ignore' });
   else hanging.kill('SIGKILL');
   await new Promise((r) => (hanging.exitCode !== null ? r(null) : hanging.once('exit', r)));
   const stale = await cli(['run', 'Implement and add a small change.']);
