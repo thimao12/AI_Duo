@@ -172,7 +172,7 @@ async function main() {
     check = (agent) => (agent === 'codex' ? { agent, path: agent, version: null, error: 'codex is not installed', auth: 'skipped' } : { agent, path: agent, version: 'fake', auth: 'ok' });
     await expectError(service.start({ mode: 'plan', prompt: UNCLEAR, cwd: plain }), 'preflight', /codex is not installed/);
     assert.equal(classifyCalls, 0, 'a failing agent stops the request before the classifier is called');
-    assert.deepEqual([...new Set(checksRun)].sort(), ['claude', 'codex'], 'the classifier and every routable agent are checked first');
+    assert.deepEqual([...new Set(checksRun)].sort((a, b) => a.localeCompare(b)), ['claude', 'codex'], 'the classifier and every routable agent are checked first');
     assert.equal(checksRun.length, 2, 'each agent is checked once per request');
     check = (agent) => ({ agent, path: agent, version: 'fake', auth: agent === 'claude' ? 'unknown' : 'ok', authError: 'cannot tell.' });
     script = hang;
@@ -296,7 +296,7 @@ async function main() {
     // ---- Two processes race for one repository through different paths: exactly one wins.
     const racers = [holder(repo, 'racer-a'), holder(path.join(repo, 'sub'), 'racer-b')];
     const results = await Promise.all(racers.map((r) => r.line));
-    assert.deepEqual(results.map((r) => r.split(' ')[0]).sort(), ['ACQUIRED', 'LOCKED'], results.join(', '));
+    assert.deepEqual(results.map((r) => r.split(' ')[0]).sort((a, b) => a.localeCompare(b)), ['ACQUIRED', 'LOCKED'], results.join(', '));
     for (const racer of racers) racer.release();
     await Promise.all(racers.map((r) => r.exited));
     assert.equal(existsSync(await lockFile(repo)), false);

@@ -2,12 +2,12 @@ import type { AgentName } from '../agents/types.ts';
 import { gitRequiredMessage, isGitRepo } from '../git.ts';
 import type { RunContext } from '../run.ts';
 import type { Verdict } from '../types.ts';
+import { lastVerdict } from '../../../shared/text.ts';
 
 const label = (agent: AgentName) => agent === 'claude' ? 'Claude' : 'Codex';
 
 export function parsePlanVerdict(text: string): Verdict {
-  const match = [...text.matchAll(/(?:PLAN_)?VERDICT:\s*\**\s*(APPROVE|CHANGES_REQUESTED|REVISE)\b/gi)].pop();
-  return match?.[1].toUpperCase() === 'APPROVE' ? 'APPROVE' : 'CHANGES_REQUESTED';
+  return lastVerdict(text, ['APPROVE', 'CHANGES_REQUESTED', 'REVISE'], true) === 'APPROVE' ? 'APPROVE' : 'CHANGES_REQUESTED';
 }
 
 /** One agent drafts a read-only implementation plan; another reviews it before user approval. */

@@ -1,4 +1,5 @@
 import { execFile } from 'node:child_process';
+import { realpathSync, statSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -7,11 +8,19 @@ const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile('git', args, { cwd, env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+    if (!cwd || cwd.includes('\u0000')) throw new Error('Invalid Git working directory');
+    const directory = realpathSync.native(path.resolve(cwd));
+    if (!statSync(directory).isDirectory()) throw new Error('Git working directory must be a directory');
+    execFile('git', args, { cwd: directory, shell: false, env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       if (err) reject(new Error(`git ${args.join(' ')}: ${stderr || err.message}`));
       else resolve(stdout);
     });
   });
+}
+
+function treeId(value: string): string {
+  if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(value)) throw new Error('Invalid Git tree ID');
+  return value;
 }
 
 export async function isGitRepo(cwd: string): Promise<boolean> {
@@ -43,7 +52,7 @@ async function withTempIndex<T>(cwd: string, fn: (env: NodeJS.ProcessEnv) => Pro
   try {
     return await fn(env);
   } finally {
-    rm(dir, { recursive: true, force: true }).catch(() => {});
+    await rm(dir, { recursive: true, force: true }).catch(() => {});
   }
 }
 
@@ -56,7 +65,7 @@ export function snapshotTree(cwd: string): Promise<string> {
   return withTempIndex(cwd, async (env) => {
     await git(cwd, ['read-tree', '--empty'], env);
     await git(cwd, ['add', '-A'], env);
-    return (await git(cwd, ['write-tree'], env)).trim();
+    return treeId((await git(cwd, ['write-tree'], env)).trim());
   });
 }
 
@@ -67,16 +76,19 @@ export interface TreeDiffSummary {
 
 /** Summary of changes between two working-tree snapshots. */
 export async function diffTreeSummary(cwd: string, before: string, after: string): Promise<TreeDiffSummary> {
+  const beforeTree = treeId(before);
+  const afterTree = treeId(after);
   const [stat, names] = await Promise.all([
-    git(cwd, ['diff', '--no-color', '--no-renames', '--stat', before, after]),
-    git(cwd, ['diff', '--no-color', '--no-renames', '--name-only', '-z', before, after]),
+    git(cwd, ['diff', '--no-color', '--no-renames', '--stat', beforeTree, afterTree, '--']),
+    git(cwd, ['diff', '--no-color', '--no-renames', '--name-only', '-z', beforeTree, afterTree, '--']),
   ]);
   return { stat: stat.trim(), files: names.split('\0').filter(Boolean) };
 }
 
 /** Unified diff of the current working tree against a snapshot tree. */
 export async function diffSince(cwd: string, baseTree: string): Promise<string> {
+  const base = treeId(baseTree || EMPTY_TREE);
   const now = await snapshotTree(cwd);
-  if (now === baseTree) return '';
-  return git(cwd, ['diff', '--no-color', '--find-renames', baseTree || EMPTY_TREE, now]);
+  if (now === base) return '';
+  return git(cwd, ['diff', '--no-color', '--find-renames', base, now, '--']);
 }

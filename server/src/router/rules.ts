@@ -27,7 +27,17 @@ const TYPE_PATTERNS: [TaskType, RegExp][] = [
 
 const HEAVY = /\b(toan bo|tat ca|ca he thong|kien truc|architecture|migrat\w*|rewrite|viet lai|thiet ke lai|bao mat|security|concurrency|race condition|deadlock|dong bo hoa|hieu nang|performance|memory leak|ro ri|phan tan|distributed|nhieu (file|module|service)|end.to.end|whole|entire|across)\b/g;
 const LIGHT = /\b(typo|chinh ta|doi ten|rename|comment|chu thich|readme|mau sac|color|margin|padding|font|nho|don gian|simple|small|minor|mot dong|1 dong|quick)\b/g;
-const FILE = /[\w-]+\.(tsx?|jsx?|mjs|py|go|rs|java|cs|md|json|css|scss|html|vue|svelte|rb|php|kt|swift|cpp|c|h|sql|ya?ml|toml)\b/g;
+function fileCount(text: string): number {
+  const files = new Set<string>();
+  // Consume each filename token once, even when a long token has no valid extension.
+  for (const token of text.matchAll(/[\w-]+/g)) {
+    const end = token.index + token[0].length;
+    if (text[end] !== '.') continue;
+    const extension = /^(tsx?|jsx?|mjs|py|go|rs|java|cs|md|json|css|scss|html|vue|svelte|rb|php|kt|swift|cpp|c|h|sql|ya?ml|toml)\b/.exec(text.slice(end + 1, end + 9));
+    if (extension) files.add(`${token[0]}.${extension[0]}`);
+  }
+  return files.size;
+}
 
 const count = (text: string, re: RegExp) => text.match(re)?.length ?? 0;
 
@@ -54,7 +64,7 @@ export function classifyByRules(prompt: string): Classification {
   // Long prompts tend to mix several intents; keyword counts get less reliable.
   if (prompt.length > 600) confidence -= 0.15;
 
-  const files = new Set(text.match(FILE) ?? []).size;
+  const files = fileCount(text);
   let heavy = count(text, HEAVY);
   if (prompt.length > 1500) heavy += 2;
   else if (prompt.length > 700) heavy += 1;

@@ -13,11 +13,13 @@ function read(): ThemePref {
   }
 }
 
-/** 'system' leaves data-theme unset so the CSS follows prefers-color-scheme. */
+export function resolvedTheme(pref: ThemePref, systemDark: boolean): 'light' | 'dark' {
+  return pref === 'system' ? (systemDark ? 'dark' : 'light') : pref;
+}
+
+/** Resolve system preference explicitly so tokens and Tailwind variants use the same selector. */
 function apply(pref: ThemePref) {
-  const root = document.documentElement;
-  if (pref === 'system') root.removeAttribute('data-theme');
-  else root.setAttribute('data-theme', pref);
+  document.documentElement.setAttribute('data-theme', resolvedTheme(pref, matchMedia('(prefers-color-scheme: dark)').matches));
 }
 
 const desktop = (window as { aiDuo?: { setTitleBarColors?: (color: string, symbolColor: string) => void } }).aiDuo;
@@ -39,8 +41,9 @@ export function useTheme() {
     } catch {}
     if (pref !== 'system') return;
     const media = matchMedia('(prefers-color-scheme: dark)');
-    media.addEventListener('change', syncTitleBar);
-    return () => media.removeEventListener('change', syncTitleBar);
+    const update = () => { apply(pref); syncTitleBar(); };
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
   }, [pref]);
   const cycle = () => setPref((p) => (p === 'system' ? 'light' : p === 'light' ? 'dark' : 'system'));
   return { pref, cycle };

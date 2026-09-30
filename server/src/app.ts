@@ -8,6 +8,7 @@ import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 import { listModels } from './models.ts';
 import { paths } from './paths.ts';
+import { dataPath, isDataId } from './data-path.ts';
 import { IMAGE_TYPES, RunService, ServiceError, type ServiceErrorCode } from './service.ts';
 import { loadRun } from './store.ts';
 import type { RunEvent } from './types.ts';
@@ -109,12 +110,12 @@ app.delete('/api/runs/:id', (c) =>
 app.get('/api/runs/:id/images/:index', async (c) => {
   const id = c.req.param('id');
   const index = Number(c.req.param('index'));
-  if (!/^[\w-]+$/.test(id) || !Number.isSafeInteger(index) || index < 0) return c.json({ error: 'not found' }, 404);
+  if (!isDataId(id) || !Number.isSafeInteger(index) || index < 0) return c.json({ error: 'not found' }, 404);
   const run = await service.get(id);
   const image = run?.config.images?.[index];
-  if (!image || !IMAGE_TYPES[image.mimeType]) return c.json({ error: 'not found' }, 404);
+  if (!image || !Object.hasOwn(IMAGE_TYPES, image.mimeType)) return c.json({ error: 'not found' }, 404);
   try {
-    const bytes = await readFile(path.join(paths.dataDir, 'images', id, `${index}.${IMAGE_TYPES[image.mimeType]}`));
+    const bytes = await readFile(await dataPath('images', id, `${index}.${IMAGE_TYPES[image.mimeType]}`));
     return c.body(bytes, 200, { 'content-type': image.mimeType, 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' });
   } catch {
     return c.json({ error: 'not found' }, 404);
@@ -124,12 +125,12 @@ app.get('/api/runs/:id/images/:index', async (c) => {
 app.get('/api/runs/:id/messages/:messageId/images/:index', async (c) => {
   const { id, messageId } = c.req.param();
   const index = Number(c.req.param('index'));
-  if (!/^[\w-]+$/.test(id) || !/^[\w-]+$/.test(messageId) || !Number.isSafeInteger(index) || index < 0) return c.json({ error: 'not found' }, 404);
+  if (!isDataId(id) || !isDataId(messageId) || !Number.isSafeInteger(index) || index < 0) return c.json({ error: 'not found' }, 404);
   const run = await service.get(id);
   const image = run?.messages.find((m) => m.id === messageId && m.agent === 'user')?.images?.[index];
-  if (!image || !IMAGE_TYPES[image.mimeType]) return c.json({ error: 'not found' }, 404);
+  if (!image || !Object.hasOwn(IMAGE_TYPES, image.mimeType)) return c.json({ error: 'not found' }, 404);
   try {
-    const bytes = await readFile(path.join(paths.dataDir, 'images', id, `${messageId}-${index}.${IMAGE_TYPES[image.mimeType]}`));
+    const bytes = await readFile(await dataPath('images', id, `${messageId}-${index}.${IMAGE_TYPES[image.mimeType]}`));
     return c.body(bytes, 200, { 'content-type': image.mimeType, 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' });
   } catch {
     return c.json({ error: 'not found' }, 404);

@@ -6,7 +6,7 @@ import ChoiceQuestion from './components/ChoiceQuestion.tsx';
 import Composer, { MODE_ICON } from './components/Composer.tsx';
 import { parseDiff } from './components/DiffView.tsx';
 import Turn, { SystemNote } from './components/Turn.tsx';
-import { basename, formatUsage, formatUsageShort, Markdown, MODE_LABEL, PHASE_LABEL, Spinner, StatusText, titleOf } from './components/ui.tsx';
+import { basename, formatUsage, formatUsageShort, Markdown, MODE_LABEL, PHASE_LABEL, Spinner, StatusText, titleOf, useInputFocus } from './components/ui.tsx';
 
 const iconBtn = 'grid size-8 place-items-center rounded-lg text-muted transition-colors hover:bg-surface hover:text-fg';
 
@@ -135,6 +135,7 @@ function PairFailureDecision({ runId, decision }: { runId: string; decision: Pai
 }
 
 function PlanApprovalDecision({ runId, decision }: { runId: string; decision: PlanDecision }) {
+  const feedbackInput = useInputFocus<HTMLTextAreaElement>();
   const [refining, setRefining] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [busy, setBusy] = useState(false);
@@ -171,7 +172,7 @@ function PlanApprovalDecision({ runId, decision }: { runId: string; decision: Pl
       </div>
       {refining && (
         <div className="mt-3 space-y-2">
-          <textarea autoFocus value={feedback} onChange={(event) => setFeedback(event.target.value)} disabled={busy} rows={3} maxLength={8000} placeholder="Bạn muốn thay đổi gì trong kế hoạch?" className="block w-full resize-y rounded-lg border border-line bg-bg px-3 py-2 text-[13px] text-fg placeholder:text-faint focus:border-focus focus:outline-none" />
+          <textarea ref={feedbackInput} value={feedback} onChange={(event) => setFeedback(event.target.value)} disabled={busy} rows={3} maxLength={8000} placeholder="Bạn muốn thay đổi gì trong kế hoạch?" className="block w-full resize-y rounded-lg border border-line bg-bg px-3 py-2 text-[13px] text-fg placeholder:text-faint focus:border-focus focus:outline-none" />
           <button type="button" onClick={() => void choose('refine')} disabled={!feedback.trim() || busy} className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-3 text-[12.5px] font-medium text-primary-fg hover:opacity-85 disabled:opacity-50">
             {busy ? <Spinner className="size-3.5" /> : <ArrowDown aria-hidden className="size-3.5 rotate-[-90deg]" />}
             Gửi góp ý và review lại

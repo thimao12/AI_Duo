@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { AgentName, ModelCatalog, ModelInfo } from '../api.ts';
-import { AgentDot, AGENT_LABEL, MenuItem, MenuLabel, Popover } from './ui.tsx';
+import { AgentDot, AGENT_LABEL, MenuItem, MenuLabel, Popover, useInputFocus } from './ui.tsx';
 
 const EFFORT_LABEL: Record<string, string> = { low: 'Low', medium: 'Medium', high: 'High', xhigh: 'XHigh', max: 'Max', ultra: 'Ultra' };
 export const effortLabel = (e: string) => EFFORT_LABEL[e] ?? e;
@@ -22,6 +22,7 @@ interface ModelPickerProps {
 
 export default function ModelPicker({ agent, catalog, model, effort, auto, side, onChange }: ModelPickerProps) {
   const [typing, setTyping] = useState(false);
+  const modelInput = useInputFocus<HTMLInputElement>();
   const info = catalog?.[agent];
   const models = info?.models ?? [];
   const selected: ModelInfo | undefined = models.find((m) => m.id === model);
@@ -78,7 +79,7 @@ export default function ModelPicker({ agent, catalog, model, effort, auto, side,
           {typing ? (
             <div className="px-1.5 py-1">
               <input
-                autoFocus
+                ref={modelInput}
                 defaultValue={unknownModel ? model : ''}
                 placeholder="Tên model, ví dụ gpt-6-sol"
                 className="w-full rounded-lg border border-line bg-bg px-2.5 py-1.5 font-mono text-[13px] text-fg placeholder:font-sans placeholder:text-faint focus:border-focus focus:outline-none"

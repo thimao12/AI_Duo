@@ -2,11 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ArrowUp, CircleAlert, Folder, FolderOpen, GitMerge, ImagePlus, ListTodo, SlidersHorizontal, Sparkles, Waypoints, X } from 'lucide-react';
 import { api, type AgentName, type AgentStatus, type ModelCatalog, type NewRunRequest, type RoutePreview, type RunConfig } from '../api.ts';
 import ModelPicker from './ModelPicker.tsx';
-import { AGENT_LABEL, basename, MenuItem, MenuLabel, MODE_LABEL, Popover, Spinner } from './ui.tsx';
+import { AGENT_LABEL, basename, MenuItem, MenuLabel, MODE_LABEL, Popover, Spinner, useInputFocus } from './ui.tsx';
 import { loadDraftImages, saveDraftImages, type DraftImage } from '../draft-images.ts';
+import { normalizeForm, parseStoredForm, type ComposerForm as Form } from '../composer-form.ts';
 
 type Mode = NewRunRequest['mode'];
-type Form = Omit<RunConfig, 'models' | 'efforts' | 'mode' | 'route' | 'images'> & { mode: Mode; models: Record<AgentName, string>; efforts: Record<AgentName, string> };
 const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 
@@ -15,26 +15,11 @@ const STORAGE_KEY = 'ai-duo:new-run';
 /** Bridge exposed by the Electron preload; undefined in a normal browser. */
 const desktop = (window as { aiDuo?: { pickFolder: (defaultPath?: string) => Promise<string | null> } }).aiDuo;
 
-const DEFAULTS: Form = {
-  mode: 'code',
-  prompt: '',
-  cwd: '',
-  maxRounds: 2,
-  judge: 'claude',
-  coder: 'codex',
-  testCommand: '',
-  turnTimeoutMin: 30,
-  models: { claude: '', codex: '' },
-  efforts: { claude: '', codex: '' },
-};
-
 function loadForm(): Form {
   try {
-    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    // Every new composer starts in Code; Plan is only entered with Shift+Tab.
-    return { ...DEFAULTS, ...saved, mode: 'code', prompt: typeof saved.prompt === 'string' ? saved.prompt : '', models: { ...DEFAULTS.models, ...saved.models }, efforts: { ...DEFAULTS.efforts, ...saved.efforts } };
+    return parseStoredForm(localStorage.getItem(STORAGE_KEY));
   } catch {
-    return DEFAULTS;
+    return normalizeForm(undefined);
   }
 }
 
@@ -110,7 +95,7 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(form));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeForm(form)));
     } catch {}
   }, [form]);
 
@@ -120,12 +105,12 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
     setError(null);
     try {
       // The router always selects the agents and the two-round review policy.
-      const { maxRounds: _r, judge: _j, coder: _c, reviewer: _reviewer, ...rest } = form;
+      const { maxRounds: _r, judge: _j, coder: _c, ...rest } = normalizeForm(form);
       const { id } = threadId
-        ? await api.continue(threadId, form.prompt, images, form)
+        ? await api.continue(threadId, form.prompt, images, rest)
         : await api.create({ ...rest, images });
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...form, prompt: '' }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeForm({ ...form, prompt: '' })));
       } catch {}
       setForm((f) => ({ ...f, prompt: '' }));
       imageRef.current = [];
@@ -148,7 +133,7 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
       const added = await Promise.all(files.map((file) => new Promise<DraftImage>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve({ name: file.name, dataUrl: String(reader.result) });
-        reader.onerror = () => reject(reader.error);
+        reader.onerror = () => reject(new Error(reader.error?.message ?? 'Image file could not be read', { cause: reader.error }));
         reader.readAsDataURL(file);
       })));
       const next = [...imageRef.current, ...added];
@@ -200,6 +185,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
   const text = useRef<HTMLTextAreaElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const [typingPath, setTypingPath] = useState(false);
+  const pathInput = useInputFocus<HTMLInputElement>();
   const hero = variant === 'hero';
   const side = hero ? 'bottom' : 'top';
 
@@ -258,7 +244,6 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
           ref={text}
           rows={hero ? 3 : 1}
           value={form.prompt}
-          autoFocus={hero}
           onChange={(e) => set('prompt', e.target.value)}
           onPaste={(e) => {
             const files = Array.from(e.clipboardData.files).filter((file) => file.type.startsWith('image/'));
@@ -342,7 +327,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
                   {typingPath ? (
                     <div className="px-1.5 py-1">
                       <input
-                        autoFocus
+                        ref={pathInput}
                         defaultValue={form.cwd}
                         placeholder="C:\path\to\repo"
                         className={`${field} font-mono`}

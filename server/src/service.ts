@@ -12,6 +12,7 @@ import { runPair } from './modes/pair.ts';
 import { runPlan } from './modes/plan.ts';
 import { EFFORT } from './models.ts';
 import { paths } from './paths.ts';
+import { dataPath, isDataId, requireDataId } from './data-path.ts';
 import { classifyWithHaiku, type Classifier } from './router/classify.ts';
 import { autoRoute } from './router/index.ts';
 import { classifyByRules, CONFIDENT } from './router/rules.ts';
@@ -328,8 +329,10 @@ export class RunService {
 
   private async saveImages(runId: string, prefix: string, parsed: ParsedImages) {
     if (!parsed.buffers.length) return;
-    const dir = path.join(paths.dataDir, 'images', runId);
-    const files = parsed.images.map((image, index) => path.join(dir, `${prefix}${index}.${IMAGE_TYPES[image.mimeType]}`));
+    requireDataId(runId);
+    if (prefix) requireDataId(prefix);
+    const dir = await dataPath('images', runId);
+    const files = await Promise.all(parsed.images.map((image, index) => dataPath('images', runId, `${prefix}${index}.${IMAGE_TYPES[image.mimeType]}`)));
     try {
       await mkdir(dir, { recursive: true });
       await Promise.all(parsed.buffers.map((bytes, index) => writeFile(files[index], bytes)));
@@ -382,7 +385,7 @@ export class RunService {
 
   /** Continue a finished run with a new request, in the same thread. */
   async continue(id: string, body: RunRequest, { onEvent, onCreated }: StartOptions = {}): Promise<RunHandle> {
-    if (!/^[\w-]+$/.test(id)) throw new ServiceError('not_found', 'not found');
+    if (!isDataId(id)) throw new ServiceError('not_found', 'not found');
     if (active.has(id) || this.pendingFollowUps.has(id)) throw new ServiceError('conflict', 'Phiên đang chạy, hãy đợi hoàn tất.');
     this.pendingFollowUps.add(id);
     let lock: RepoLock | undefined;

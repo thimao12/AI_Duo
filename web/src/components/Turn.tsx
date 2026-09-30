@@ -2,10 +2,23 @@ import { useState } from 'react';
 import { ChevronRight, CircleAlert, FilePen, FileText, Info, Search, SquareTerminal, Waypoints, Wrench } from 'lucide-react';
 import type { AgentName, Message, Part } from '../api.ts';
 import { AgentDot, AGENT_LABEL, AGENT_TEXT, formatDuration, formatUsage, formatUsageShort, Markdown, Spinner, useNow, VerdictBadge } from './ui.tsx';
+import { verdictBody } from '../../../shared/text.ts';
 
 /** Strip the machine-readable trailer the prompts ask for; it's shown as a badge instead. */
-function cleanText(text: string) {
-  return text.replace(/\n*`?VERDICT:\s*\**\s*(AGREE|REVISE)\**`?\s*$/i, '').trimEnd();
+export function cleanText(text: string) {
+  const trimmed = text.trimEnd();
+  let start = -1;
+  for (const marker of trimmed.matchAll(/VERDICT:/gi)) start = marker.index;
+  if (start < 0) return trimmed;
+  const body = verdictBody(trimmed.slice(start + 'VERDICT:'.length));
+  const verdict = ['AGREE', 'REVISE'].find((value) => body.toUpperCase().startsWith(value));
+  if (!verdict) return trimmed;
+  let end = verdict.length;
+  while (body[end] === '*') end++;
+  if (body[end] === '`') end++;
+  if (body.slice(end).trim()) return trimmed;
+  if (trimmed[start - 1] === '`') start--;
+  return trimmed.slice(0, start).trimEnd();
 }
 
 const other = (a: AgentName): AgentName => (a === 'claude' ? 'codex' : 'claude');

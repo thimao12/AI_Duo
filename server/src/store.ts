@@ -1,5 +1,5 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import { dataPath, isDataId, requireDataId } from './data-path.ts';
 import { runsActiveElsewhere } from './lock.ts';
 import { paths } from './paths.ts';
 import type { Run } from './types.ts';
@@ -7,7 +7,7 @@ import type { Run } from './types.ts';
 const DIR = paths.dataDir;
 await mkdir(DIR, { recursive: true });
 
-const file = (id: string) => path.join(DIR, `${id}.json`);
+const file = (id: string) => dataPath(`${requireDataId(id)}.json`);
 const saves = new Map<string, Promise<void>>();
 let tempSequence = 0;
 
@@ -27,30 +27,33 @@ async function renameWithRetry(from: string, to: string) {
 }
 
 export async function saveRun(run: Run) {
+  const id = requireDataId(run.id);
   const contents = JSON.stringify(run);
-  const previous = saves.get(run.id) ?? Promise.resolve();
+  const previous = saves.get(id) ?? Promise.resolve();
   const current = previous.catch(() => {}).then(async () => {
-    const tmp = path.join(DIR, `${run.id}.${process.pid}.${++tempSequence}.tmp`);
+    const destination = await file(id);
+    const tmp = await dataPath(`${id}.${process.pid}.${++tempSequence}.tmp`);
     try {
       await writeFile(tmp, contents, 'utf8');
-      await renameWithRetry(tmp, file(run.id));
+      await renameWithRetry(tmp, destination);
     } finally {
       await rm(tmp, { force: true }).catch(() => {});
     }
   });
-  saves.set(run.id, current);
+  saves.set(id, current);
   try {
     await current;
   } finally {
-    if (saves.get(run.id) === current) saves.delete(run.id);
+    if (saves.get(id) === current) saves.delete(id);
   }
 }
 
 /** `elsewhere`: runs active in other processes, when the caller already looked them up. */
 export async function loadRun(id: string, elsewhere?: Map<string, unknown>): Promise<Run | undefined> {
-  if (!/^[\w-]+$/.test(id)) return undefined;
+  if (!isDataId(id)) return undefined;
   try {
-    const run: Run = JSON.parse(await readFile(file(id), 'utf8'));
+    const run: Run = JSON.parse(await readFile(await file(id), 'utf8'));
+    if (run.id !== id) return undefined;
     // Another AI Duo process (CLI, desktop) is running it and checkpoints it here.
     if (run.status === 'running' && (elsewhere ?? (await runsActiveElsewhere())).has(run.id)) return run;
     // Otherwise a run or message still marked "running" on disk means the server died mid-run.
@@ -94,8 +97,10 @@ export async function listRuns(): Promise<RunSummary[]> {
 }
 
 export async function deleteRun(id: string): Promise<boolean> {
-  if (!/^[\w-]+$/.test(id) || !(await loadRun(id))) return false;
-  await rm(file(id));
-  await rm(path.join(DIR, 'images', id), { recursive: true, force: true });
+  if (!isDataId(id) || !(await loadRun(id))) return false;
+  const destination = await file(id);
+  const images = await dataPath('images', id);
+  await rm(destination);
+  await rm(images, { recursive: true, force: true });
   return true;
 }

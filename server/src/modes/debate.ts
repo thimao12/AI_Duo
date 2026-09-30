@@ -2,12 +2,12 @@ import { other, type AgentName } from '../agents/index.ts';
 import { render } from '../prompts/index.ts';
 import type { RunContext } from '../run.ts';
 import type { Verdict } from '../types.ts';
+import { lastVerdict } from '../../../shared/text.ts';
 
 const label = (a: AgentName) => (a === 'claude' ? 'Claude' : 'Codex');
 
 export function parseAgreeVerdict(text: string): Verdict | undefined {
-  const m = [...text.matchAll(/VERDICT:\s*\**\s*(AGREE|REVISE)/gi)].pop();
-  return m ? (m[1].toUpperCase() as Verdict) : undefined;
+  return lastVerdict(text, ['AGREE', 'REVISE']) as Verdict | undefined;
 }
 
 /**

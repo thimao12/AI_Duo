@@ -1,0 +1,44 @@
+import assert from 'node:assert/strict';
+import { fencedBlocks, lastVerdict } from '../../shared/text.ts';
+import { parseAgreeVerdict } from './modes/debate.ts';
+import { parsePlanVerdict } from './modes/plan.ts';
+import { parseReview } from './modes/pair.ts';
+import { parseClassification } from './router/classify.ts';
+import { classifyByRules } from './router/rules.ts';
+import { normalizeForm, parseStoredForm } from '../../web/src/composer-form.ts';
+import { parseChoiceQuestion } from '../../web/src/question.ts';
+
+assert.deepEqual(fencedBlocks('```json\n{"first":1}\n``` text ```\n{"last":2}\n```'), ['{"first":1}\n', '{"last":2}\n']);
+assert.deepEqual(fencedBlocks('```json incomplete'), []);
+assert.deepEqual(fencedBlocks('```text ignored``` ```JSON {"ok":true}```', true), ['{"ok":true}']);
+assert.equal(parseReview('```json {"verdict":"APPROVE"}``` ```json invalid```').verdict, 'APPROVE');
+assert.equal(parseReview('```json {"verdict":"APPROVE"}``` ```json {"verdict":"CHANGES_REQUESTED"}```').verdict, 'CHANGES_REQUESTED');
+assert.equal(parseAgreeVerdict('VERDICT: AGREE\nVERDICT: ** REVISE'), 'REVISE');
+assert.equal(parsePlanVerdict('PLAN_VERDICT: ** APPROVE**'), 'APPROVE');
+assert.equal(parsePlanVerdict('VERDICT: APPROVED'), 'CHANGES_REQUESTED');
+assert.equal(lastVerdict('VERDICT: REVISE\nVERDICT: invalid', ['AGREE', 'REVISE']), 'REVISE');
+assert.equal(parseClassification('```json {"taskType":"bugfix","complexity":"heavy"}```')?.taskType, 'bugfix');
+assert.equal(parseClassification('```json {"taskType":"bugfix","complexity":"heavy"}``` ```json broken```'), undefined);
+assert.ok(classifyByRules('sua a.ts b.ts c.ts').signals.some((signal) => signal.endsWith(', 3 file')));
+assert.ok(classifyByRules('sua --a.ts a.ts').signals.some((signal) => signal.endsWith(', 2 file')));
+assert.deepEqual(parseChoiceQuestion('Choose?\n1. One\n2. Two\n3. Three'), { question: 'Choose?', options: ['One', 'Two', 'Three'] });
+assert.equal(parseChoiceQuestion('Ordinary list\n1. One\n2. Two\n3. Three'), null);
+assert.equal(parseChoiceQuestion('Choose?\n1. One\n2. Two\n3. '), null);
+
+const defaults = normalizeForm(undefined);
+for (const value of ['broken {', 'null', '[]', '42']) assert.deepEqual(parseStoredForm(value), defaults);
+const poisoned = parseStoredForm('{"mode":"plan","prompt":{},"cwd":[],"models":{"codex":"--bad","claude":5},"efforts":{"codex":"high;bad"},"turnTimeoutMin":999,"skipAuthCheck":true,"__proto__":{"polluted":true}}');
+assert.deepEqual(poisoned, defaults);
+assert.equal(Object.hasOwn(poisoned, 'skipAuthCheck'), false);
+assert.equal(Object.hasOwn(poisoned, '__proto__'), false);
+const valid = { ...defaults, mode: 'plan', prompt: 'my draft', cwd: 'C:\\my project', testCommand: 'pnpm test', turnTimeoutMin: 60, models: { claude: 'sonnet', codex: 'gpt-6-sol' }, efforts: { claude: 'high', codex: 'medium' } };
+assert.deepEqual(parseStoredForm(JSON.stringify(valid)), { ...valid, mode: 'code' });
+assert.deepEqual(normalizeForm(valid), valid);
+for (const timeout of [NaN, Infinity, -1, 181, '60']) assert.equal(normalizeForm({ turnTimeoutMin: timeout }).turnTimeoutMin, 30);
+
+const long = ' '.repeat(200_000);
+assert.deepEqual(fencedBlocks(`\`\`\`json${long}`), []);
+assert.equal(parsePlanVerdict(`VERDICT:${long}*${long}APPROVE`), 'APPROVE');
+assert.equal(parseChoiceQuestion(`Choose?\n1. One\n2. Two\n3.${long}`), null);
+classifyByRules('a-'.repeat(100_000));
+console.log('PASS reply parsers, long inputs, choice questions and stored form validation');

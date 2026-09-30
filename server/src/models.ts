@@ -26,9 +26,20 @@ export function codexDefaults(env = process.env): { model?: string; effort?: str
   } catch {
     return {};
   }
-  const top = text.split(/^\s*\[/m)[0];
-  const read = (key: string) => top.match(new RegExp(`^\\s*${key}\\s*=\\s*"([^"]*)"`, 'm'))?.[1];
-  return { model: read('model'), effort: read('model_reasoning_effort') };
+  const defaults: { model?: string; effort?: string } = {};
+  for (const raw of text.split('\n')) {
+    const line = raw.trimStart();
+    if (line.startsWith('[')) break;
+    const equals = line.indexOf('=');
+    if (equals < 0) continue;
+    const key = line.slice(0, equals).trimEnd();
+    const name = key === 'model' ? 'model' : key === 'model_reasoning_effort' ? 'effort' : undefined;
+    if (!name || defaults[name] !== undefined) continue;
+    const value = line.slice(equals + 1).trimStart();
+    const end = value.indexOf('"', 1);
+    if (value.startsWith('"') && end >= 1) defaults[name] = value.slice(1, end);
+  }
+  return { model: defaults.model, effort: defaults.effort };
 }
 
 /** Models the local Codex CLI lists (its own cache of the server's model list). */

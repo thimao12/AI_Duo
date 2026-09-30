@@ -24,7 +24,7 @@ await writeFile(
 );
 await writeFile(path.join(codexHome, 'config.toml'), 'model = "gpt-a"\nmodel_reasoning_effort = "high"\n\n[profiles.x]\nmodel = "ignored"\n');
 
-const [{ listModels }, { RunContext }, { startServer }] = await Promise.all([import('./models.ts'), import('./run.ts'), import('./app.ts')]);
+const [{ listModels, codexDefaults }, { RunContext }, { startServer }] = await Promise.all([import('./models.ts'), import('./run.ts'), import('./app.ts')]);
 
 try {
   const catalog = listModels({ ...process.env, CODEX_HOME: codexHome });
@@ -33,6 +33,10 @@ try {
   assert.deepEqual(catalog.codex.default, { model: 'gpt-a', effort: 'high' }, 'only top-level config keys count');
   assert.ok(catalog.claude.models.some((m) => m.id === 'opus'));
   assert.deepEqual(listModels({ ...process.env, CODEX_HOME: path.join(temp, 'missing') }).codex, { models: [], default: {} });
+  await writeFile(path.join(codexHome, 'config.toml'), `${' '.repeat(200_000)}\n  model = "first" # comment\r\nmodel = "second"\nmodel_reasoning_effort = "medium"\n   [profiles.x]\nmodel = "ignored"\n`);
+  assert.deepEqual(codexDefaults({ CODEX_HOME: codexHome }), { model: 'first', effort: 'medium' });
+  await writeFile(path.join(codexHome, 'config.toml'), 'model = not-quoted\nmodel = "valid"\nmodel_reasoning_effort = "unclosed\n');
+  assert.deepEqual(codexDefaults({ CODEX_HOME: codexHome }), { model: 'valid', effort: undefined });
 
   const route = { taskType: 'edit', complexity: 'standard', source: 'rules', reason: '', models: { codex: { coder: { model: 'routed', effort: 'low', tier: 'standard' } } } } as const;
   const base = { mode: 'code', prompt: 'x', cwd: temp, maxRounds: 1, judge: 'claude', coder: 'codex', turnTimeoutMin: 1, route } as const;

@@ -3,6 +3,7 @@ import { diffSince, diffTreeSummary, isGitRepo, snapshotTree } from '../git.ts';
 import { render } from '../prompts/index.ts';
 import type { RunContext } from '../run.ts';
 import type { Verdict } from '../types.ts';
+import { fencedBlocks } from '../../../shared/text.ts';
 
 const label = (a: AgentName) => (a === 'claude' ? 'Claude' : 'Codex');
 const MAX_DIFF_CHARS = 60_000;
@@ -14,7 +15,7 @@ export interface ReviewResult {
 }
 
 export function parseReview(text: string): ReviewResult {
-  const blocks = [...text.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi)].map((m) => m[1]);
+  const blocks = fencedBlocks(text);
   for (const b of blocks.reverse()) {
     try {
       const obj = JSON.parse(b);

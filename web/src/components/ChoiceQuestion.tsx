@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ArrowRight, CircleAlert, CircleHelp, PencilLine } from 'lucide-react';
 import { api } from '../api.ts';
 import { parseChoiceQuestion } from '../question.ts';
-import { Spinner } from './ui.tsx';
+import { Spinner, useInputFocus } from './ui.tsx';
 
 /** One radio row; the native input stays for keyboard support but is visually hidden. */
 const row = (active: boolean) =>
@@ -18,6 +18,7 @@ export default function ChoiceQuestion({ runId, text, onContinue }: { runId: str
   const [custom, setCustom] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const customInput = useInputFocus<HTMLTextAreaElement>();
 
   if (!question) return null;
 
@@ -60,7 +61,7 @@ export default function ChoiceQuestion({ runId, text, onContinue }: { runId: str
         </div>
         {selected === 'other' && (
           <textarea
-            autoFocus
+            ref={customInput}
             aria-label="Câu trả lời khác"
             value={custom}
             onChange={(event) => setCustom(event.target.value)}

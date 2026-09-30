@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import { ChevronRight, Monitor, Moon, MoreHorizontal, PanelLeftClose, Pencil, Search, SquarePen, Sun, Trash2, X } from 'lucide-react';
 import { api, type AgentStatus, type RunSummary } from '../api.ts';
 import type { ThemePref } from '../theme.ts';
-import { basename, Kbd, Spinner, timeAgo, titleOf } from './ui.tsx';
+import { basename, Kbd, Spinner, timeAgo, titleOf, useInputFocus } from './ui.tsx';
 
 const COLLAPSED_KEY = 'ai-duo:collapsed-projects';
 
@@ -124,6 +124,7 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
   const [menuId, setMenuId] = useState<string | null>(null);
   const [menuAnchor, setMenuAnchor] = useState<HTMLElement | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const titleInput = useInputFocus<HTMLInputElement>();
   const [draftTitle, setDraftTitle] = useState('');
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -340,7 +341,7 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
           {editingId === menuRun.id ? (
             <form onSubmit={(e) => { e.preventDefault(); void rename(menuRun.id); }} className="p-1.5">
               <input
-                autoFocus
+                ref={titleInput}
                 maxLength={120}
                 aria-label="Tên phiên mới"
                 value={draftTitle}

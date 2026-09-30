@@ -9,6 +9,15 @@ const STARTERS: { mode: ComposerSeed['mode']; prompt: string }[] = [
   { mode: 'code', prompt: 'Review code trong thư mục này, chỉ ra bug và rủi ro bảo mật theo mức độ nghiêm trọng.' },
 ];
 
+export function cliVersionLabel(version: string): string {
+  let label = version;
+  if (label.endsWith(')')) {
+    const start = label.indexOf('(');
+    if (start >= 0) label = label.slice(0, start).trimEnd();
+  }
+  return label.startsWith('codex-cli') ? label.slice('codex-cli'.length).trimStart() : label;
+}
+
 function CliStatus({ agents }: { agents: AgentStatus | null }) {
   if (!agents) return null;
   const items = [
@@ -21,7 +30,7 @@ function CliStatus({ agents }: { agents: AgentStatus | null }) {
         <span key={a.name} title={a.path ?? undefined} className="inline-flex items-center gap-1.5">
           <span aria-hidden className={`size-1.5 rounded-full ${a.version ? 'bg-ok' : 'bg-danger'}`} />
           <span className={a.version ? '' : 'text-danger'}>
-            {a.name} {a.version?.replace(/\s*\(.*\)$/, '').replace(/^codex-cli\s*/, '') ?? a.error ?? 'không tìm thấy trong PATH'}
+            {a.name} {typeof a.version === 'string' ? cliVersionLabel(a.version) : a.error ?? 'không tìm thấy trong PATH'}
           </span>
         </span>
       ))}

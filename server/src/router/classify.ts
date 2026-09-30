@@ -6,6 +6,7 @@ import { spawnJsonl } from '../agents/process.ts';
 import type { Usage } from '../agents/types.ts';
 import { render } from '../prompts/index.ts';
 import type { TaskType, Tier } from '../types.ts';
+import { fencedBlocks } from '../../../shared/text.ts';
 
 const TASK_TYPES: TaskType[] = ['edit', 'bugfix', 'refactor', 'design', 'explain'];
 const TIERS: Tier[] = ['light', 'standard', 'heavy'];
@@ -20,8 +21,7 @@ export interface ModelClassification {
 
 /** The last fenced JSON block, if it names a valid taskType and complexity. */
 export function parseClassification(text: string): Omit<ModelClassification, 'usage'> | undefined {
-  const blocks = [...text.matchAll(/```json\s*([\s\S]*?)```/gi)];
-  const raw = blocks.at(-1)?.[1];
+  const raw = fencedBlocks(text, true).at(-1);
   if (!raw) return undefined;
   try {
     const v = JSON.parse(raw);

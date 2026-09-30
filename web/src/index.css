@@ -41,17 +41,8 @@
   descent-override: 36.4%;
 }
 
-/* Dark variant follows the resolved theme: data-theme wins, otherwise the OS preference. */
-@custom-variant dark {
-  &:where([data-theme='dark'], [data-theme='dark'] *) {
-    @slot;
-  }
-  @media (prefers-color-scheme: dark) {
-    &:where(:root:not([data-theme='light']), :root:not([data-theme='light']) *) {
-      @slot;
-    }
-  }
-}
+/* The theme hook resolves system preference into data-theme. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 /* ---- Semantic tokens ------------------------------------------------------ */
 /* Light is the base; dark overrides below. Agent hues keep one identity, with a

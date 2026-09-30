@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Check, ChevronDown, LoaderCircle } from 'lucide-react';
@@ -39,7 +39,9 @@ export function timeAgo(t: number): string {
 
 /** Last path segment of a Windows or POSIX path. */
 export function basename(p: string): string {
-  const parts = p.replace(/[\\/]+$/, '').split(/[\\/]/);
+  let end = p.length;
+  while (end > 0 && (p[end - 1] === '/' || p[end - 1] === '\\')) end--;
+  const parts = p.slice(0, end).split(/[\\/]/);
   return parts[parts.length - 1] || p;
 }
 
@@ -48,12 +50,36 @@ export function basename(p: string): string {
  * share a preamble but differ in their heading), else its first sentence, capped.
  */
 export function titleOf(prompt: string): string {
-  const heading = prompt.match(/^#{1,4}\s+(.+)$/m)?.[1];
-  const source = heading ?? (prompt.split('\n').find((l) => l.trim()) ?? prompt);
+  const lines = prompt.split('\n');
+  let heading: string | undefined;
+  for (const line of lines) {
+    let hashes = 0;
+    while (line[hashes] === '#') hashes++;
+    if (hashes >= 1 && hashes <= 4 && /\s/.test(line[hashes] ?? '')) {
+      heading = line.slice(hashes).trim();
+      break;
+    }
+  }
+  const source = heading ?? (lines.find((line) => line.trim()) ?? prompt);
   // Drop emphasis markers, but keep underscores inside words (snake_case).
-  const text = source.replace(/[*`]|(?<!\w)_+|_+(?!\w)/g, '').trim();
-  const sentence = heading ? text : (text.match(/^.+?[.!?](?=\s|$)/)?.[0] ?? text);
+  const text = source.replace(/[*`]/g, '').replace(/_+/g, (run, offset: number, original: string) =>
+    /\w/.test(original[offset - 1] ?? '') && /\w/.test(original[offset + run.length] ?? '') ? run : '',
+  ).trim();
+  let sentence = text;
+  if (!heading) {
+    for (let index = 1; index < text.length; index++) {
+      if ('.!?'.includes(text[index]) && (index + 1 === text.length || /\s/.test(text[index + 1]))) {
+        sentence = text.slice(0, index + 1);
+        break;
+      }
+    }
+  }
   return sentence.length > 64 ? `${sentence.slice(0, 62).trimEnd()}…` : sentence;
+}
+
+/** Stable callback ref for inputs revealed by an explicit user action. */
+export function useInputFocus<T extends HTMLElement>() {
+  return useCallback((element: T | null) => { element?.focus(); }, []);
 }
 
 /** Re-render every second while `active`, for live elapsed timers. */

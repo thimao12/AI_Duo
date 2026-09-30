@@ -13,7 +13,7 @@ function openDraftDb(): Promise<IDBDatabase> {
     const request = indexedDB.open(DB_NAME, 1);
     request.onupgradeneeded = () => request.result.createObjectStore(STORE_NAME);
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => reject(new Error(request.error?.message ?? 'Image draft database could not be opened', { cause: request.error }));
   });
 }
 
@@ -24,7 +24,7 @@ export async function loadDraftImages(): Promise<DraftImage[]> {
     return await new Promise((resolve, reject) => {
       const request = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(DRAFT_KEY);
       request.onsuccess = () => resolve(Array.isArray(request.result) ? request.result : []);
-      request.onerror = () => reject(request.error);
+      request.onerror = () => reject(new Error(request.error?.message ?? 'Image drafts could not be loaded', { cause: request.error }));
     });
   } finally {
     db.close();
@@ -38,8 +38,8 @@ async function writeDraftImages(images: DraftImage[]): Promise<void> {
       const transaction = db.transaction(STORE_NAME, 'readwrite');
       transaction.objectStore(STORE_NAME).put(images, DRAFT_KEY);
       transaction.oncomplete = () => resolve();
-      transaction.onerror = () => reject(transaction.error);
-      transaction.onabort = () => reject(transaction.error ?? new Error('Image draft save was aborted'));
+      transaction.onerror = () => reject(new Error(transaction.error?.message ?? 'Image drafts could not be saved', { cause: transaction.error }));
+      transaction.onabort = () => reject(new Error(transaction.error?.message ?? 'Image draft save was aborted', { cause: transaction.error }));
     });
   } finally {
     db.close();

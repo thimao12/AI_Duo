@@ -5,9 +5,10 @@ export function parseChoiceQuestion(text: string): { question: string; options: 
   let index = lines.length - 1;
   while (index >= 0 && options.length < 3) {
     const line = lines[index].trim().replace(/^\*\*([1-3][.)])\*\*/, '$1');
-    const match = line.match(/^([1-3])[.)]\s+(.+)$/);
-    if (!match || Number(match[1]) !== 3 - options.length) break;
-    options.unshift(match[2].trim().replace(/\*\*/g, ''));
+    const match = line.match(/^([1-3])[.)]\s/);
+    const content = match ? line.slice(2).trim() : '';
+    if (!match || !content || Number(match[1]) !== 3 - options.length) break;
+    options.unshift(content.replace(/\*\*/g, ''));
     index--;
   }
   if (options.length !== 3 || !options.every(Boolean)) return null;

@@ -101,8 +101,8 @@ try {
   await rename(path.join(renameRepo, 'reviewer.txt'), path.join(renameRepo, 'renamed.txt'));
   const afterRename = await snapshotTree(renameRepo);
   const renameSummary = await diffTreeSummary(renameRepo, beforeRename, afterRename);
-  assert.deepEqual(renameSummary.files.sort(), ['renamed.txt', 'reviewer.txt']);
-  assert.doesNotMatch(renameSummary.stat, /\x1b/);
+  assert.deepEqual(renameSummary.files.sort((a, b) => a.localeCompare(b)), ['renamed.txt', 'reviewer.txt']);
+  assert.equal(renameSummary.stat.includes(String.fromCharCode(27)), false, 'Git stats must not contain ANSI escapes');
 
   // Malformed issue data must be normalized, not crash final issue rendering.
   const approvalRepo = await makeRepo();
