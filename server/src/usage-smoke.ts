@@ -7,6 +7,7 @@ import { getUsage } from './usage.ts';
 
 const now = Date.parse('2026-06-01T12:00:00Z');
 const nowSec = now / 1000;
+const off = { live: false };
 const root = await mkdtemp(path.join(tmpdir(), 'ai-duo-usage-'));
 process.env.CODEX_HOME = root;
 
@@ -24,7 +25,7 @@ const tokenCount = (primary: number, secondary: number, resetsAt: number) => JSO
 
 try {
   // Missing sessions folder: everything undefined, no throw.
-  const empty = await getUsage(undefined, now);
+  const empty = await getUsage(undefined, now, off);
   assert.equal(empty.codex.fiveHour, undefined);
   assert.equal(empty.claude.fiveHour, undefined);
 
@@ -42,7 +43,7 @@ try {
     '',
   ].join('\n'));
 
-  const usage = await getUsage(undefined, now);
+  const usage = await getUsage(undefined, now, off);
   assert.equal(usage.codex.fiveHour?.usedPercent, 42.3, 'last token_count wins, rounded to 0.1');
   assert.equal(usage.codex.fiveHour?.windowMinutes, 300);
   assert.equal(usage.codex.fiveHour?.resetsAt, new Date((nowSec + 7200) * 1000).toISOString());
@@ -53,18 +54,18 @@ try {
 
   // Stale: reset time already passed.
   await writeFile(path.join(day, 'rollout-2026-06-01T11-00-00-c.jsonl'), tokenCount(80, 30, nowSec - 60) + '\n');
-  const stale = await getUsage(undefined, now);
+  const stale = await getUsage(undefined, now, off);
   assert.equal(stale.codex.fiveHour?.stale, true);
   assert.equal(stale.codex.fiveHour?.usedPercent, 80);
 
   // Only the tail of a big file is read; an early cut line is tolerated.
   await writeFile(path.join(day, 'rollout-2026-06-01T12-00-00-d.jsonl'), tokenCount(1, 1, nowSec + 10) + '\n' + 'x'.repeat(400 * 1024) + '\n' + tokenCount(55, 5, nowSec + 500) + '\n');
-  assert.equal((await getUsage(undefined, now)).codex.fiveHour?.usedPercent, 55);
+  assert.equal((await getUsage(undefined, now, off)).codex.fiveHour?.usedPercent, 55);
 
   // A newest snapshot without windows (limit_id "premium") is skipped for the earlier good one.
   const premium = JSON.stringify({ timestamp: '2026-06-01T11:30:00.000Z', type: 'event_msg', payload: { type: 'token_count', rate_limits: { limit_id: 'premium', primary: null, secondary: null } } });
   await writeFile(path.join(day, 'rollout-2026-06-01T13-00-00-e.jsonl'), [tokenCount(61, 9, nowSec + 900), premium, ''].join('\n'));
-  const skippedNull = await getUsage(undefined, now);
+  const skippedNull = await getUsage(undefined, now, off);
   assert.equal(skippedNull.codex.fiveHour?.usedPercent, 61);
   assert.equal(skippedNull.codex.weekly?.usedPercent, 9);
 
@@ -74,7 +75,7 @@ try {
     run('a', 1000, { five_hour: { utilization: 0.9, resetsAt: nowSec + 60 } }),
     run('b', 3000, { five_hour: { utilization: 0.25, resetsAt: nowSec + 600 }, seven_day: { utilization: 0.5, resetsAt: nowSec - 5 } }),
     run('c', 5000),
-  ], now)).claude;
+  ], now, off)).claude;
   assert.equal(claude.fiveHour?.usedPercent, 25);
   assert.equal(claude.weekly?.usedPercent, 50);
   assert.equal(claude.weekly?.stale, true);

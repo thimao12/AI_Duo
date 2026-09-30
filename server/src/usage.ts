@@ -2,13 +2,12 @@ import { open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { RunSummary } from './store.ts';
-import type { AgentUsage, UsageReport, UsageWindow } from './types.ts';
+import type { AgentUsage, UsageReport } from './types.ts';
+import { buildWindow, fetchClaudeLive, fetchCodexLive, FIVE_HOUR_MINUTES, WEEK_MINUTES, type LiveDeps, type LiveResult } from './usage-live.ts';
 
-export type { AgentUsage, UsageReport, UsageWindow };
+export type { AgentUsage, UsageReport, UsageWindow } from './types.ts';
 
 
-const FIVE_HOUR_MINUTES = 300;
-const WEEK_MINUTES = 10080;
 const TAIL_BYTES = 256 * 1024;
 const MAX_FILES = 5;
 const DAY_DEPTH = 3;
@@ -16,16 +15,6 @@ const NEWEST_PER_LEVEL = [2, 2, 3];
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null;
 const finite = (value: unknown): number | undefined => (typeof value === 'number' && Number.isFinite(value) ? value : undefined);
-
-function buildWindow(usedPercent: number | undefined, resetsAtSeconds: number | undefined, windowMinutes: number, now: number): UsageWindow | undefined {
-  if (usedPercent === undefined) return undefined;
-  const window: UsageWindow = { usedPercent: Math.round(usedPercent * 10) / 10, windowMinutes };
-  if (resetsAtSeconds !== undefined) {
-    window.resetsAt = new Date(resetsAtSeconds * 1000).toISOString();
-    if (resetsAtSeconds * 1000 < now) window.stale = true;
-  }
-  return window;
-}
 
 /* ---- Claude: newest saved rate-limit readings ---- */
 
@@ -131,7 +120,34 @@ async function codexUsage(now: number): Promise<AgentUsage> {
   return usage;
 }
 
-/** Plan usage windows of both agents, from data the CLIs already left on disk; never calls a model. */
-export async function getUsage(runs?: RunSummary[], now = Date.now()): Promise<UsageReport> {
-  return { claude: claudeUsage(runs, now), codex: await codexUsage(now) };
+export interface UsageOptions {
+  /** Bypass the live cache. */
+  force?: boolean;
+  /** False skips the live queries and reads only what the CLIs left on disk. */
+  live?: boolean;
+  /** Test hooks for the live queries. */
+  deps?: LiveDeps;
+}
+
+/** Live numbers win; on failure the disk data stays, flagged with why live is missing. */
+function withLive(fallback: AgentUsage, live: LiveResult): AgentUsage {
+  if (live.ok) return live.usage;
+  const hasData = Boolean(fallback.fiveHour || fallback.weekly);
+  const usage: AgentUsage = { ...fallback, live: false };
+  if (live.error === 'needsLogin' || !hasData) usage.error = live.error;
+  return usage;
+}
+
+/** Plan usage windows of both agents: asked live when possible, else from data the CLIs left on disk; never calls a model. */
+export async function getUsage(runs?: RunSummary[], now = Date.now(), opts: UsageOptions = {}): Promise<UsageReport> {
+  const deps: LiveDeps = { ...opts.deps, force: opts.force };
+  const skipped: LiveResult = { ok: false, error: 'unavailable' };
+  const [claudeLive, codexLive, codex] = await Promise.all([
+    opts.live === false ? skipped : fetchClaudeLive(deps),
+    opts.live === false ? skipped : fetchCodexLive(deps),
+    codexUsage(now),
+  ]);
+  const claude = claudeUsage(runs, now);
+  if (opts.live === false) return { claude, codex };
+  return { claude: withLive(claude, claudeLive), codex: withLive(codex, codexLive) };
 }

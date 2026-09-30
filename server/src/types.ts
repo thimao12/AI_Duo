@@ -218,11 +218,44 @@ export interface UsageWindow {
   stale?: boolean;
 }
 
+export interface UsageResetCredit {
+  id: string;
+  title?: string;
+  description?: string;
+  /** ISO timestamp; absent when the credit does not expire. */
+  expiresAt?: string;
+  status: 'available' | 'redeeming' | 'redeemed' | 'unknown';
+}
+
 export interface AgentUsage {
   fiveHour?: UsageWindow;
   weekly?: UsageWindow;
+  /** 'live' (asked the CLI/account just now), 'codex-session-log' or 'run-history' (leftovers on disk). */
   source: string;
+  /** When the numbers were measured (ISO). */
   updatedAt?: string;
+  /** True when the numbers came from a live query rather than files left on disk. */
+  live?: boolean;
+  /** Why no live numbers are available: the login is missing/expired, or the query failed. */
+  error?: 'needsLogin' | 'unavailable';
+  /** Plan name reported by the account, e.g. plus. */
+  plan?: string;
+  /** Codex "bank reset" credits that can wipe the 5-hour and weekly windows. */
+  resetCredits?: { availableCount: number; credits: UsageResetCredit[] };
+}
+
+/** Whether a CLI is installed and logged in, plus how to fix it. */
+export interface ConnectionStatus {
+  agent: 'claude' | 'codex';
+  installed: boolean;
+  version: string | null;
+  path: string | null;
+  /** null when it could not be determined. */
+  loggedIn: boolean | null;
+  /** e.g. claude.ai, ChatGPT, API key. */
+  method: string | null;
+  account: string | null;
+  error: string | null;
 }
 
 export interface UsageReport {

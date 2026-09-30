@@ -92,7 +92,7 @@ export default function SettingsModal({ open, onClose, theme }: Readonly<Setting
     ),
     roles: <RolesPanel />,
     pipelines: <PipelinesPanel />,
-    usage: <UsagePanel />,
+    usage: <UsagePanel onOpenCliSettings={() => setTab('cli')} />,
     theme: <ThemePanel pref={theme.pref} onChange={theme.setPref} />,
   };
 

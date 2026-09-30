@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { AgentName } from '../../server/src/agents/types.ts';
-import type { CliSettings, Mode, ModelCatalog, UsageReport, PipelineDef, Run, RunConfig, RoleDef, RoutePlan } from '../../server/src/types.ts';
+import type { CliSettings, ConnectionStatus, Mode, ModelCatalog, UsageReport, PipelineDef, Run, RunConfig, RoleDef, RoutePlan } from '../../server/src/types.ts';
 import { startRunStream } from './run-events.ts';
 
 export type { Message, ModelChoice, PairDecision, PlanDecision, Part, RoutePlan, Run, RunConfig, Verdict, Speaker } from '../../server/src/types.ts';
 export type { AgentName, Usage } from '../../server/src/agents/types.ts';
 export type { CliConfig, CliSettings, Mode, ModelCatalog, ModelInfo, PipelineDef, PipelineStep, Permission, RoleDef } from '../../server/src/types.ts';
-export type { AgentUsage, UsageReport, UsageWindow } from '../../server/src/types.ts';
+export type { AgentUsage, ConnectionStatus, UsageReport, UsageResetCredit, UsageWindow } from '../../server/src/types.ts';
 
 /** The router selects agents within the selected mode. */
 export type NewRunRequest = Omit<Partial<RunConfig>, 'mode' | 'images'> & { mode: Mode; images?: { name: string; dataUrl: string }[] };
@@ -74,7 +74,9 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const api = {
-  usage: () => fetch('/api/usage', { cache: 'no-store' }).then((r) => json<UsageReport>(r)),
+  usage: (refresh = false) => fetch(refresh ? '/api/usage?refresh=1' : '/api/usage', { cache: 'no-store' }).then((r) => json<UsageReport>(r)),
+  connection: (name: AgentName) => fetch(`/api/agents/${name}/connection`, { cache: 'no-store' }).then((r) => json<ConnectionStatus>(r)),
+  openLogin: (name: AgentName) => fetch(`/api/agents/${name}/login`, { method: 'POST', headers: JSON_HEADERS, body: '{}' }).then((r) => json<{ ok: true }>(r)),
   testAgent: (name: AgentName) => fetch(`/api/agents/${name}/test`, { method: 'POST', headers: JSON_HEADERS, body: '{}' }).then((r) => json<AgentTestResult>(r)),
   cliSettings: () => fetch('/api/cli-settings', { cache: 'no-store' }).then((r) => json<{ cli: CliSettings }>(r)),
   saveCliSettings: (cli: CliSettings) => fetch('/api/cli-settings', { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ cli }) }).then((r) => json<{ cli: CliSettings }>(r)),
