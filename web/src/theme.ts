@@ -48,5 +48,5 @@ export function useTheme() {
     return () => media.removeEventListener('change', update);
   }, [pref]);
   const cycle = () => setPref((p) => NEXT_PREF[p]);
-  return { pref, cycle };
+  return { pref, setPref, cycle };
 }

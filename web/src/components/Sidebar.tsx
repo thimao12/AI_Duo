@@ -1,8 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { ChevronRight, Monitor, Moon, MoreHorizontal, PanelLeftClose, Pencil, Search, SquarePen, Sun, Trash2, Users, Workflow, X } from 'lucide-react';
+import { ChevronRight, MoreHorizontal, PanelLeftClose, Pencil, Search, Settings, SquarePen, Trash2, X } from 'lucide-react';
 import type { AgentName, RunSummary } from '../api.ts';
-import type { ThemePref } from '../theme.ts';
-import UsagePopover from './UsagePopover.tsx';
+import { useAgentStatus } from './UsagePanel.tsx';
 import { basename, Kbd, Spinner, timeAgo, titleOf, useInputFocus } from './ui.tsx';
 
 const COLLAPSED_KEY = 'ai-duo:collapsed-projects';
@@ -14,12 +13,6 @@ function loadCollapsed(): Set<string> {
     return new Set();
   }
 }
-
-const THEME: Record<ThemePref, { icon: typeof Sun; label: string }> = {
-  system: { icon: Monitor, label: 'Theo hệ thống' },
-  light: { icon: Sun, label: 'Sáng' },
-  dark: { icon: Moon, label: 'Tối' },
-};
 
 /** Every row leads with a 16px slot (icon, dot or chevron), so all sidebar labels start on one column. */
 const slot = 'grid size-4 shrink-0 place-items-center';
@@ -203,19 +196,28 @@ interface SidebarProps {
   onOpen: (id: string | null) => void;
   onRename: (id: string, title: string) => Promise<void>;
   onDelete: (id: string) => Promise<void>;
-  theme: { pref: ThemePref; cycle: () => void };
   open: boolean;
   onClose: () => void;
   /** Docked (wide) sidebar hidden by the user. */
   hidden: boolean;
   onHide: () => void;
-  /** Opens the pipelines editor (footer entry is inert without it). */
-  onOpenPipelines?: () => void;
-  /** Opens the roles & models editor. */
-  onOpenRoles?: () => void;
+  /** Opens the settings modal. */
+  onOpenSettings: () => void;
 }
 
-export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, theme, open, onClose, hidden, onHide, onOpenPipelines, onOpenRoles }: Readonly<SidebarProps>) {
+/** Claude / Codex connection dots; the text is for screen readers. */
+function ConnectionDots({ claude, codex, known }: Readonly<{ claude: boolean; codex: boolean; known: boolean }>) {
+  const dot = (ok: boolean) => (known && ok ? 'bg-ok' : 'bg-faint');
+  return (
+    <span className="ml-auto flex items-center gap-1">
+      <span aria-hidden className={`size-2 rounded-full ${dot(claude)}`} />
+      <span aria-hidden className={`size-2 rounded-full ${dot(codex)}`} />
+      <span className="sr-only">{`Claude ${claude ? 'đã kết nối' : 'chưa kết nối'}, Codex ${codex ? 'đã kết nối' : 'chưa kết nối'}`}</span>
+    </span>
+  );
+}
+
+export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, open, onClose, hidden, onHide, onOpenSettings }: Readonly<SidebarProps>) {
   const [query, setQuery] = useState('');
   const [agentFilter, setAgentFilter] = useState<AgentFilter>('all');
   const [collapsed, setCollapsed] = useState(loadCollapsed);
@@ -269,7 +271,7 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
       return next;
     });
 
-  const ThemeIcon = THEME[theme.pref].icon;
+  const { status } = useAgentStatus();
   const row = SIDEBAR_ROW;
 
   return (
@@ -383,18 +385,10 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
         </nav>
 
         <div className="shrink-0 border-t border-line px-2 py-2">
-          <button type="button" onClick={onOpenPipelines} className={`${row} h-8 text-muted hover:bg-surface-2 hover:text-fg`}>
-            <Workflow aria-hidden className="size-4 shrink-0" />
-            Pipelines
-          </button>
-          <button type="button" onClick={onOpenRoles} className={`${row} h-8 text-muted hover:bg-surface-2 hover:text-fg`}>
-            <Users aria-hidden className="size-4 shrink-0" />
-            Vai trò &amp; model
-          </button>
-          <UsagePopover />
-          <button type="button" onClick={theme.cycle} title="Đổi giao diện sáng/tối" className={`${row} h-8 text-muted hover:bg-surface-2 hover:text-fg`}>
-            <ThemeIcon aria-hidden className="size-4 shrink-0" />
-            Giao diện: {THEME[theme.pref].label}
+          <button type="button" onClick={onOpenSettings} className={`${row} h-8 text-muted hover:bg-surface-2 hover:text-fg`}>
+            <Settings aria-hidden className="size-4 shrink-0" />
+            Cài đặt
+            <ConnectionDots claude={!!status?.claude} codex={!!status?.codex} known={status !== null} />
           </button>
         </div>
       </aside>

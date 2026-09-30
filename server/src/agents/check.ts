@@ -8,14 +8,16 @@ const label = (agent: AgentName) => (agent === 'claude' ? 'Claude' : 'Codex');
 
 /** `<cli> --version`, or the reason it could not run. */
 export function binVersion(bin: ResolvedBin): Promise<{ version: string | null; error?: string }> {
-  return new Promise((resolve) =>
-    execFile(
-      bin.cmd,
-      [...bin.prefixArgs, '--version'],
-      { timeout: 15000, windowsHide: true, shell: false, env: agentEnv(bin) },
-      (err, out) => resolve(err ? { version: null, error: err.killed ? 'timed out after 15s' : err.message.split('\n')[0] } : { version: out.trim() }),
-    ),
-  );
+  return new Promise((resolve) => {
+    const done = (err: (Error & { killed?: boolean }) | null, out: string) =>
+      resolve(err ? { version: null, error: err.killed ? 'timed out after 15s' : err.message.split('\n')[0] } : { version: out.trim() });
+    try {
+      execFile(bin.cmd, [...bin.prefixArgs, '--version'], { timeout: 15000, windowsHide: true, shell: false, env: agentEnv(bin) }, done);
+    } catch (err) {
+      // Some files cannot even be started (e.g. spawn EFTYPE); that is a result, not a crash.
+      done(err as Error, '');
+    }
+  });
 }
 
 export async function checkAgent(agent: AgentName, cwd: string): Promise<AgentCheck> {

@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
 import type { AgentName } from '../../server/src/agents/types.ts';
-import type { Mode, ModelCatalog, UsageReport, PipelineDef, Run, RunConfig, RoleDef, RoutePlan } from '../../server/src/types.ts';
+import type { CliSettings, Mode, ModelCatalog, UsageReport, PipelineDef, Run, RunConfig, RoleDef, RoutePlan } from '../../server/src/types.ts';
 import { startRunStream } from './run-events.ts';
 
 export type { Message, ModelChoice, PairDecision, PlanDecision, Part, RoutePlan, Run, RunConfig, Verdict, Speaker } from '../../server/src/types.ts';
 export type { AgentName, Usage } from '../../server/src/agents/types.ts';
-export type { Mode, ModelCatalog, ModelInfo, PipelineDef, PipelineStep, Permission, RoleDef } from '../../server/src/types.ts';
+export type { CliConfig, CliSettings, Mode, ModelCatalog, ModelInfo, PipelineDef, PipelineStep, Permission, RoleDef } from '../../server/src/types.ts';
 export type { AgentUsage, UsageReport, UsageWindow } from '../../server/src/types.ts';
 
 /** The router selects agents within the selected mode. */
@@ -57,6 +57,14 @@ export interface FileEntry {
   size?: number;
 }
 
+export interface CliDetect {
+  name: AgentName;
+  resolvedPath: string | null;
+  source: 'env' | 'settings' | 'path' | 'known' | 'none';
+  version: string | null;
+  error: string | null;
+}
+
 const JSON_HEADERS = { 'content-type': 'application/json' };
 
 async function json<T>(res: Response): Promise<T> {
@@ -68,6 +76,9 @@ async function json<T>(res: Response): Promise<T> {
 export const api = {
   usage: () => fetch('/api/usage', { cache: 'no-store' }).then((r) => json<UsageReport>(r)),
   testAgent: (name: AgentName) => fetch(`/api/agents/${name}/test`, { method: 'POST', headers: JSON_HEADERS, body: '{}' }).then((r) => json<AgentTestResult>(r)),
+  cliSettings: () => fetch('/api/cli-settings', { cache: 'no-store' }).then((r) => json<{ cli: CliSettings }>(r)),
+  saveCliSettings: (cli: CliSettings) => fetch('/api/cli-settings', { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ cli }) }).then((r) => json<{ cli: CliSettings }>(r)),
+  detectCli: (name: AgentName) => fetch(`/api/cli-settings/detect/${name}`, { cache: 'no-store' }).then((r) => json<CliDetect>(r)),
   roles: () => fetch('/api/roles').then((r) => json<{ roles: RoleDef[] }>(r)),
   saveRoles: (roles: RoleDef[]) => fetch('/api/roles', { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ roles }) }).then((r) => json<{ roles: RoleDef[] }>(r)),
   resetRoles: () => fetch('/api/roles/reset', { method: 'POST', headers: JSON_HEADERS, body: '{}' }).then((r) => json<{ roles: RoleDef[] }>(r)),

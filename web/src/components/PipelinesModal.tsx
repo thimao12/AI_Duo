@@ -274,25 +274,17 @@ function usePipelinesEditor(open: boolean) {
   return { items, roles, selectedId, setSelectedId, error, busy, nextKey, replace, add, remove, save };
 }
 
-/** Create, edit and delete pipelines: an ordered list of role steps with pass/fail loops. */
-export function PipelinesModal({ open, onClose }: Readonly<{ open: boolean; onClose: () => void }>) {
-  const ed = usePipelinesEditor(open);
+/** Pipelines editor body with its own action bar; `onClose` (modal use) adds a Đóng button and closes after saving. */
+export function PipelinesPanel({ active = true, onClose }: Readonly<{ active?: boolean; onClose?: () => void }>) {
+  const ed = usePipelinesEditor(active);
   const current = ed.items.find((p) => p.id === ed.selectedId);
 
   const saveAndClose = async () => {
-    if (await ed.save()) onClose();
+    if (await ed.save() && onClose) onClose();
   };
 
-  const footer = (
-    <>
-      {ed.error && <p role="alert" className="mr-auto min-w-0 text-[12.5px] text-danger">{ed.error}</p>}
-      <button type="button" className={btnCls} onClick={onClose}>Đóng</button>
-      <button type="button" className={primaryBtnCls} disabled={ed.busy} onClick={() => void saveAndClose()}>Lưu</button>
-    </>
-  );
-
   return (
-    <Modal open={open} onClose={onClose} title="Pipelines" width="max-w-4xl" footer={footer}>
+    <>
       <div className="flex flex-col sm:flex-row">
         <PipelineList items={ed.items} selectedId={ed.selectedId} onSelect={ed.setSelectedId} onAdd={ed.add} />
         {current ? (
@@ -301,6 +293,20 @@ export function PipelinesModal({ open, onClose }: Readonly<{ open: boolean; onCl
           <p className="p-4 text-[13px] text-faint">Chưa có pipeline nào. Nhấn Thêm pipeline để tạo.</p>
         )}
       </div>
+      <div className="sticky bottom-0 flex items-center justify-end gap-2 border-t border-line bg-bg px-5 py-3">
+        {ed.error && <p role="alert" className="mr-auto min-w-0 text-[12.5px] text-danger">{ed.error}</p>}
+        {onClose && <button type="button" className={btnCls} onClick={onClose}>Đóng</button>}
+        <button type="button" className={primaryBtnCls} disabled={ed.busy} onClick={() => void saveAndClose()}>Lưu</button>
+      </div>
+    </>
+  );
+}
+
+/** Create, edit and delete pipelines: an ordered list of role steps with pass/fail loops. */
+export function PipelinesModal({ open, onClose }: Readonly<{ open: boolean; onClose: () => void }>) {
+  return (
+    <Modal open={open} onClose={onClose} title="Pipelines" width="max-w-4xl">
+      <PipelinesPanel active={open} onClose={onClose} />
     </Modal>
   );
 }

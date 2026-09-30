@@ -1,10 +1,12 @@
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { AgentName } from './agents/types.ts';
 import { appDataRoot } from './app-data.ts';
+import { loadCliSettings, validateCliSettings } from './cli-settings.ts';
 import { renameWithRetry } from './data-path.ts';
 import { effortNameProblem, modelNameProblem } from './models.ts';
-import type { PipelineDef, PipelineStep, RoleDef } from './types.ts';
+import type { CliSettings, PipelineDef, PipelineStep, RoleDef } from './types.ts';
 
 /**
  * User settings (roles and pipelines) in one JSON file next to the run history, written atomically.
@@ -24,6 +26,7 @@ export const MAX_SETTINGS_BYTES = 256 * 1024;
 export interface Settings {
   roles: RoleDef[];
   pipelines: PipelineDef[];
+  cli: CliSettings;
 }
 
 export function settingsFile(env: NodeJS.ProcessEnv = process.env): string {
@@ -181,6 +184,28 @@ export function validatePipelines(input: unknown, roles: readonly RoleDef[]): Pi
 
 /* ---- Storage ---- */
 
+// The CLI settings are also read synchronously (resolveBin runs on every spawn), so a copy is kept
+// in memory. It belongs to one settings file: a different AI_DUO_SETTINGS_FILE loads its own.
+let cliCache: { file: string; cli: CliSettings } | undefined;
+
+function rememberCli(cli: CliSettings) {
+  cliCache = { file: settingsFile(), cli };
+}
+
+/** The saved CLI settings without touching the disk after the first use; kept in sync by load and save. */
+export function getCliSettingsSync(): CliSettings {
+  if (cliCache?.file !== settingsFile()) {
+    let stored: unknown;
+    try {
+      stored = JSON.parse(readFileSync(settingsFile(), 'utf8'));
+    } catch {
+      stored = undefined;
+    }
+    rememberCli(loadCliSettings(isObj(stored) ? stored.cli : undefined));
+  }
+  return cliCache!.cli;
+}
+
 export async function loadSettings(): Promise<Settings> {
   let stored: unknown;
   try {
@@ -192,7 +217,9 @@ export async function loadSettings(): Promise<Settings> {
   const roles = validateRoles(saved.roles);
   const cleanRoles = typeof roles === 'string' ? defaultRoles() : roles;
   const pipelines = validatePipelines(saved.pipelines ?? [], cleanRoles);
-  return { roles: cleanRoles, pipelines: typeof pipelines === 'string' ? [] : pipelines };
+  const cli = loadCliSettings(saved.cli);
+  rememberCli(cli);
+  return { roles: cleanRoles, pipelines: typeof pipelines === 'string' ? [] : pipelines, cli };
 }
 
 let tempSequence = 0;
@@ -214,7 +241,10 @@ async function writeSettings(settings: Settings): Promise<void> {
 function update(change: (current: Settings) => Settings | string): Promise<Settings | string> {
   const run = writes.catch(() => {}).then(async () => {
     const next = change(await loadSettings());
-    if (typeof next !== 'string') await writeSettings(next);
+    if (typeof next !== 'string') {
+      await writeSettings(next);
+      rememberCli(next.cli);
+    }
     return next;
   });
   writes = run;
@@ -248,4 +278,13 @@ export function setPipelines(input: unknown): Promise<PipelineDef[] | string> {
     const pipelines = validatePipelines(input, current.roles);
     return typeof pipelines === 'string' ? pipelines : { ...current, pipelines };
   }).then((result) => (typeof result === 'string' ? result : result.pipelines));
+}
+
+export const getCliSettings = async () => (await loadSettings()).cli;
+
+/** Saves the per-CLI configuration; returns the cleaned settings or the first problem (Vietnamese). */
+export function setCliSettings(input: unknown): Promise<CliSettings | string> {
+  const cli = validateCliSettings(input);
+  if (typeof cli === 'string') return Promise.resolve(cli);
+  return update((current) => ({ ...current, cli })).then((result) => (typeof result === 'string' ? result : result.cli));
 }

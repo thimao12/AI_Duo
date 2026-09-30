@@ -61,6 +61,13 @@ try {
   await writeFile(path.join(day, 'rollout-2026-06-01T12-00-00-d.jsonl'), tokenCount(1, 1, nowSec + 10) + '\n' + 'x'.repeat(400 * 1024) + '\n' + tokenCount(55, 5, nowSec + 500) + '\n');
   assert.equal((await getUsage(undefined, now)).codex.fiveHour?.usedPercent, 55);
 
+  // A newest snapshot without windows (limit_id "premium") is skipped for the earlier good one.
+  const premium = JSON.stringify({ timestamp: '2026-06-01T11:30:00.000Z', type: 'event_msg', payload: { type: 'token_count', rate_limits: { limit_id: 'premium', primary: null, secondary: null } } });
+  await writeFile(path.join(day, 'rollout-2026-06-01T13-00-00-e.jsonl'), [tokenCount(61, 9, nowSec + 900), premium, ''].join('\n'));
+  const skippedNull = await getUsage(undefined, now);
+  assert.equal(skippedNull.codex.fiveHour?.usedPercent, 61);
+  assert.equal(skippedNull.codex.weekly?.usedPercent, 9);
+
   // Claude: newest run with limits; utilization is a fraction.
   const run = (id: string, createdAt: number, claudeLimits?: RunSummary['claudeLimits']): RunSummary => ({ id, mode: 'code', agent: 'claude', prompt: '', cwd: '', status: 'done', createdAt, claudeLimits });
   const claude = (await getUsage([

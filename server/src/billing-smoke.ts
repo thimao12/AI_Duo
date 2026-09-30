@@ -9,7 +9,7 @@ import { initialClaudeJsonState, onJson } from './agents/claude.ts';
 // Metered-billing variables never reach an agent CLI.
 process.env.ANTHROPIC_API_KEY = 'sk-test';
 process.env.OPENAI_API_KEY = 'sk-test';
-const env = agentEnv({ cmd: 'x', prefixArgs: [], resolvedFrom: 'x', env: { ELECTRON_RUN_AS_NODE: '1' } });
+const env = agentEnv({ cmd: 'x', prefixArgs: [], resolvedFrom: 'x', source: 'env', env: { ELECTRON_RUN_AS_NODE: '1' } });
 assert.equal(env.ANTHROPIC_API_KEY, undefined);
 assert.equal(env.OPENAI_API_KEY, undefined);
 assert.equal(env.ELECTRON_RUN_AS_NODE, '1');

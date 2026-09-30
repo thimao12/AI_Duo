@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { api, type AgentName, type AgentStatus, type AgentTestResult, type AgentUsage, type UsageReport, type UsageWindow } from '../api.ts';
-import { AGENT_LABEL, Popover, Spinner } from './ui.tsx';
+import { AGENT_LABEL, Spinner } from './ui.tsx';
 
 const REFRESH_MS = 5 * 60_000;
 const AGENTS: AgentName[] = ['claude', 'codex'];
@@ -78,7 +78,7 @@ function UsageBars({ usage }: Readonly<{ usage: AgentUsage | undefined }>) {
 
 /* ---- Agent card ------------------------------------------------------------ */
 
-function TestResult({ result }: Readonly<{ result: AgentTestResult }>) {
+export function TestResult({ result }: Readonly<{ result: AgentTestResult }>) {
   if (result.ok && result.problems.length === 0) {
     return <p className="mt-2 text-[11.5px] text-ok">Kết nối ổn{result.authUnverified ? ' (chưa xác minh đăng nhập)' : ''}.</p>;
   }
@@ -131,7 +131,7 @@ function AgentCard({ name, usage, version, error }: Readonly<AgentCardProps>) {
 
 /* ---- Panel ----------------------------------------------------------------- */
 
-function useAgentStatus() {
+export function useAgentStatus() {
   const [status, setStatus] = useState<AgentStatus | null>(null);
   const refresh = useCallback(() => api.agents().then(setStatus, () => setStatus(null)), []);
   useEffect(() => {
@@ -142,7 +142,7 @@ function useAgentStatus() {
   return { status, refresh };
 }
 
-function UsagePanel({ status, refreshStatus }: Readonly<{ status: AgentStatus | null; refreshStatus: () => Promise<void> }>) {
+function UsageContent({ status, refreshStatus }: Readonly<{ status: AgentStatus | null; refreshStatus: () => Promise<void> }>) {
   const [report, setReport] = useState<UsageReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -164,7 +164,7 @@ function UsagePanel({ status, refreshStatus }: Readonly<{ status: AgentStatus | 
   }, [load]);
 
   return (
-    <div className="p-1.5">
+    <div className="p-4">
       <div className="flex items-center justify-between px-1 pb-2">
         <h2 className="text-[11px] font-semibold tracking-wide text-faint">USAGE &amp; KẾT NỐI</h2>
         <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex h-6 items-center gap-1 rounded-md px-1.5 text-[11.5px] text-muted transition-colors hover:bg-surface hover:text-fg disabled:opacity-60">
@@ -172,7 +172,7 @@ function UsagePanel({ status, refreshStatus }: Readonly<{ status: AgentStatus | 
           Làm mới
         </button>
       </div>
-      <div className="space-y-2">
+      <div className="grid gap-3 sm:grid-cols-2">
         {AGENTS.map((name) => (
           <AgentCard key={name} name={name} usage={report?.[name]} version={status?.[name] ?? null} error={status ? status[`${name}Error`] : null} />
         ))}
@@ -185,36 +185,8 @@ function UsagePanel({ status, refreshStatus }: Readonly<{ status: AgentStatus | 
   );
 }
 
-function connectionText(status: AgentStatus | null): string {
-  if (!status) return 'đang kiểm tra';
-  return status.claude && status.codex ? 'kết nối' : 'chưa đủ CLI';
-}
-
-function StatusLabel({ status }: Readonly<{ status: AgentStatus | null }>) {
-  const dot = (name: AgentName) => (status?.[name] ? 'bg-ok' : 'bg-faint');
-  return (
-    <>
-      <span className="flex items-center gap-1.5"><span aria-hidden className={`size-2 rounded-full ${dot('claude')}`} />Claude</span>
-      <span className="flex items-center gap-1.5"><span aria-hidden className={`size-2 rounded-full ${dot('codex')}`} />Codex</span>
-      <span className="ml-auto text-[11.5px] text-faint">{connectionText(status)}</span>
-    </>
-  );
-}
-
-/** Sidebar status line ("Claude ● Codex ● kết nối") that opens the usage & connection popover. */
-export default function UsagePopover() {
+/** Usage bars and connection status of every agent (Settings tab "Usage & kết nối"). */
+export default function UsagePanel() {
   const { status, refresh } = useAgentStatus();
-  return (
-    <Popover
-      label={<StatusLabel status={status} />}
-      title="Usage & kết nối"
-      side="top"
-      align="start"
-      width="w-[288px]"
-      showChevron={false}
-      triggerClassName="flex h-8 w-full items-center gap-3 rounded-lg px-2.5 text-left text-[13px] text-muted transition-colors hover:bg-surface-2 hover:text-fg aria-expanded:bg-surface-2"
-    >
-      {() => <UsagePanel status={status} refreshStatus={refresh} />}
-    </Popover>
-  );
+  return <UsageContent status={status} refreshStatus={refresh} />;
 }

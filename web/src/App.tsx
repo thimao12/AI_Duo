@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { api, type RunSummary } from './api.ts';
-import PipelinesModal from './components/PipelinesModal.tsx';
-import RolesModal from './components/RolesModal.tsx';
+import SettingsModal from './components/SettingsModal.tsx';
 import Sidebar from './components/Sidebar.tsx';
 import EmptyState from './EmptyState.tsx';
 import Thread from './Thread.tsx';
@@ -28,8 +27,7 @@ export default function App() {
   const [runId, go] = useHashRoute();
   const [runs, setRuns] = useState<RunSummary[]>([]);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [rolesOpen, setRolesOpen] = useState(false);
-  const [pipelinesOpen, setPipelinesOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Wide windows dock the sidebar and remember whether it is hidden; narrow ones slide it over.
   const [sidebarHidden, setSidebarHidden] = useState(() => {
     try {
@@ -95,7 +93,7 @@ export default function App() {
 
   return (
     <div className="flex h-dvh overflow-hidden bg-bg text-fg">
-      <Sidebar runs={runs} activeId={runId} onOpen={open} onRename={rename} onDelete={remove} theme={theme} open={menuOpen} onClose={() => setMenuOpen(false)} hidden={sidebarHidden} onHide={() => setHidden(true)} onOpenRoles={() => setRolesOpen(true)} onOpenPipelines={() => setPipelinesOpen(true)} />
+      <Sidebar runs={runs} activeId={runId} onOpen={open} onRename={rename} onDelete={remove} open={menuOpen} onClose={() => setMenuOpen(false)} hidden={sidebarHidden} onHide={() => setHidden(true)} onOpenSettings={() => setSettingsOpen(true)} />
       <main className="min-w-0 flex-1">
         {runId ? (
           <Thread key={runId} id={runId} title={runs.find((r) => r.id === runId)?.title} projects={projects} onCreated={onCreated} onMenu={showSidebar} sidebarHidden={sidebarHidden} />
@@ -103,8 +101,7 @@ export default function App() {
           <EmptyState projects={projects} onCreated={onCreated} onMenu={showSidebar} sidebarHidden={sidebarHidden} />
         )}
       </main>
-      <RolesModal open={rolesOpen} onClose={() => setRolesOpen(false)} />
-      <PipelinesModal open={pipelinesOpen} onClose={() => setPipelinesOpen(false)} />
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} theme={theme} />
     </div>
   );
 }

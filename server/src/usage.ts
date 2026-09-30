@@ -85,6 +85,8 @@ function parseLine(line: string): CodexSnapshot | undefined {
     const event: unknown = JSON.parse(line);
     const payload = isRecord(event) ? event.payload : undefined;
     if (!isRecord(payload) || payload.type !== 'token_count' || !isRecord(payload.rate_limits)) return undefined;
+    // Some events (e.g. limit_id "premium") carry no windows at all; keep looking for one that does.
+    if (!isRecord(payload.rate_limits.primary) && !isRecord(payload.rate_limits.secondary)) return undefined;
     const timestamp = isRecord(event) && typeof event.timestamp === 'string' ? event.timestamp : undefined;
     return { primary: payload.rate_limits.primary, secondary: payload.rate_limits.secondary, timestamp };
   } catch {

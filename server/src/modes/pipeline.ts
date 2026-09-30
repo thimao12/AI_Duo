@@ -2,7 +2,7 @@ import type { AgentName } from '../agents/types.ts';
 import { diffSince, isGitRepo, snapshotTree } from '../git.ts';
 import { renderTemplate } from '../prompts/index.ts';
 import type { RunContext, TurnResult } from '../run.ts';
-import { DEFAULT_MAX_LOOPS, loadSettings } from '../settings.ts';
+import { DEFAULT_MAX_LOOPS, getCliSettingsSync, loadSettings } from '../settings.ts';
 import type { Permission, PipelineStep, RoleDef, RunConfig, Verdict } from '../types.ts';
 import { lastVerdict } from '../../../shared/text.ts';
 
@@ -21,9 +21,10 @@ export function parseGrade(text: string): Verdict | undefined {
 export function roleModel(cfg: Pick<RunConfig, 'models' | 'efforts'>, role: RoleDef, agent: AgentName): { model?: string; effort?: string } {
   const own = role.agent === agent ? role : undefined;
   const manualModel = cfg.models?.[agent];
-  const model = manualModel || own?.model || undefined;
+  const saved = getCliSettingsSync()[agent];
+  const model = manualModel || own?.model || saved.defaultModel || undefined;
   // A manual model drops the role's effort: it was chosen for the role's own model.
-  const effort = cfg.efforts?.[agent] || (manualModel ? undefined : own?.effort) || undefined;
+  const effort = cfg.efforts?.[agent] || (manualModel ? undefined : own?.effort || saved.defaultEffort) || undefined;
   return { model, effort };
 }
 

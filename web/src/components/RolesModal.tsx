@@ -187,26 +187,17 @@ function useRolesEditor(open: boolean) {
   return { roles, catalog, selectedId, setSelectedId, error, busy, patch, add, remove, run };
 }
 
-/** "Vai trò & model": edit the role list stored on the server. */
-export function RolesModal({ open, onClose }: Readonly<{ open: boolean; onClose: () => void }>) {
-  const ed = useRolesEditor(open);
+/** Roles editor body with its own action bar; `onClose` (modal use) adds a Đóng button and closes after saving. */
+export function RolesPanel({ active = true, onClose }: Readonly<{ active?: boolean; onClose?: () => void }>) {
+  const ed = useRolesEditor(active);
   const current = ed.roles.find((r) => r.id === ed.selectedId);
 
   const save = async () => {
-    if (await ed.run(() => api.saveRoles(ed.roles))) onClose();
+    if (await ed.run(() => api.saveRoles(ed.roles)) && onClose) onClose();
   };
 
-  const footer = (
-    <>
-      {ed.error && <p role="alert" className="mr-auto min-w-0 text-[12.5px] text-danger">{ed.error}</p>}
-      <button type="button" className={btnCls} disabled={ed.busy} onClick={() => void ed.run(api.resetRoles)}>Mặc định</button>
-      <button type="button" className={btnCls} onClick={onClose}>Đóng</button>
-      <button type="button" className={primaryBtnCls} disabled={ed.busy || ed.roles.length === 0} onClick={() => void save()}>Lưu</button>
-    </>
-  );
-
   return (
-    <Modal open={open} onClose={onClose} title="Vai trò & model" width="max-w-4xl" footer={footer}>
+    <>
       <div className="flex flex-col sm:flex-row">
         <RoleList roles={ed.roles} selectedId={ed.selectedId} onSelect={ed.setSelectedId} onAdd={ed.add} />
         {current ? (
@@ -215,6 +206,21 @@ export function RolesModal({ open, onClose }: Readonly<{ open: boolean; onClose:
           <p className="p-4 text-[13px] text-faint">Chưa có vai trò nào. Nhấn Mặc định để khôi phục.</p>
         )}
       </div>
+      <div className="sticky bottom-0 flex items-center justify-end gap-2 border-t border-line bg-bg px-5 py-3">
+        {ed.error && <p role="alert" className="mr-auto min-w-0 text-[12.5px] text-danger">{ed.error}</p>}
+        <button type="button" className={btnCls} disabled={ed.busy} onClick={() => void ed.run(api.resetRoles)}>Mặc định</button>
+        {onClose && <button type="button" className={btnCls} onClick={onClose}>Đóng</button>}
+        <button type="button" className={primaryBtnCls} disabled={ed.busy || ed.roles.length === 0} onClick={() => void save()}>Lưu</button>
+      </div>
+    </>
+  );
+}
+
+/** "Vai trò & model": edit the role list stored on the server. */
+export function RolesModal({ open, onClose }: Readonly<{ open: boolean; onClose: () => void }>) {
+  return (
+    <Modal open={open} onClose={onClose} title="Vai trò & model" width="max-w-4xl">
+      <RolesPanel active={open} onClose={onClose} />
     </Modal>
   );
 }

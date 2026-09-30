@@ -8,8 +8,9 @@ import { runDebate } from './modes/debate.ts';
 import { runPair } from './modes/pair.ts';
 import { planPipeline, runPipeline, runRole } from './modes/pipeline.ts';
 import { runPlan } from './modes/plan.ts';
+import { MAX_TURN_TIMEOUT_MIN } from './cli-settings.ts';
 import { effortNameProblem, modelNameProblem } from './models.ts';
-import { getRoles, ID_PATTERN, loadSettings, type Settings } from './settings.ts';
+import { getCliSettingsSync, getRoles, ID_PATTERN, loadSettings, type Settings } from './settings.ts';
 import { paths } from './paths.ts';
 import { isDataId, writeRunImages } from './data-path.ts';
 import { authorizeDirectory, projectDirectories } from './project-directories.ts';
@@ -195,6 +196,7 @@ function validateRequest(body: any, prompt: string): { mode: Mode; cwd: string }
 
 function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
   const maxRounds = 2;
+  const cli = getCliSettingsSync();
   const coder = isAgent(body.coder) ? body.coder : 'codex';
   return {
     mode: body.mode,
@@ -204,8 +206,8 @@ function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
     judge: isAgent(body.judge) ? body.judge : 'claude',
     coder,
     reviewer: isAgent(body.reviewer) ? body.reviewer : other(coder),
-    testCommand: String(body.testCommand ?? '').trim() || undefined,
-    turnTimeoutMin: Math.min(Math.max(Number(body.turnTimeoutMin) || 30, 1), 180),
+    testCommand: String(body.testCommand ?? '').trim() || cli.testCommand || undefined,
+    turnTimeoutMin: Math.min(Math.max(Number(body.turnTimeoutMin) || cli.turnTimeoutMin || 30, 1), MAX_TURN_TIMEOUT_MIN),
     models: {
       claude: String(body.models?.claude ?? '').trim() || undefined,
       codex: String(body.models?.codex ?? '').trim() || undefined,
@@ -223,6 +225,23 @@ function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
 }
 
 const validId = (value: unknown): string | undefined => (typeof value === 'string' && ID_PATTERN.test(value) ? value : undefined);
+
+/**
+ * The saved default model and effort of each agent the run targets explicitly. A model or effort named
+ * in the request wins; roles and pipelines apply the defaults themselves (see roleModel).
+ */
+function withCliDefaults(cfg: RunConfig): RunConfig {
+  if (cfg.roleId || cfg.mode === 'pipeline') return cfg;
+  const models = { ...cfg.models };
+  const efforts = { ...cfg.efforts };
+  for (const agent of agentsFor(cfg)) {
+    const saved = getCliSettingsSync()[agent];
+    if (models[agent]) continue;
+    if (saved.defaultModel) models[agent] = saved.defaultModel;
+    if (!efforts[agent] && saved.defaultEffort) efforts[agent] = saved.defaultEffort;
+  }
+  return { ...cfg, models, efforts };
+}
 
 /** How a request picks agents: by router (`manual` false) or explicitly, through a role, a pipeline or an agent. */
 interface Selection {
@@ -456,7 +475,7 @@ export class RunService {
   /** The config for a request: routed, or built from an explicit agent, role or pipeline (no router, no model call). */
   private async configure(sel: Selection, mode: Mode, prompt: string, cwd: string, checks: Checks) {
     if (!sel.manual && mode !== 'pipeline') return this.routeAndCheck(sel.body, mode, prompt, cwd, checks);
-    const cfg = manualConfig({ ...sel.body, mode }, prompt, cwd);
+    const cfg = withCliDefaults(manualConfig({ ...sel.body, mode }, prompt, cwd));
     await this.assertPreflight(sel.agents ?? agentsFor(cfg), cwd, sel.body?.skipAuthCheck === true, checks);
     return { cfg, routeUsage: undefined };
   }

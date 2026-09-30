@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { agentEnv, assertPlanOnly } from './billing.ts';
 import { resolveBin } from './bins.ts';
+import { getCliSettingsSync } from '../settings.ts';
 import { checkAgent } from './check.ts';
 import { spawnJsonl } from './process.ts';
 import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult, Usage } from './types.ts';
@@ -102,6 +103,8 @@ export const codex: AgentAdapter = {
     if (o.model) args.push('-m', o.model);
     if (o.effort) args.push('-c', `model_reasoning_effort="${o.effort}"`);
     for (const image of o.images ?? []) args.push('--image', image);
+    // Saved extra arguments stay before the positionals; the prompt is always the trailing '-' on stdin.
+    args.push(...(getCliSettingsSync().codex.extraArgs ?? []));
     if (o.sessionId) args.push(o.sessionId);
     args.push('-'); // prompt from stdin
 

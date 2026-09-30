@@ -229,3 +229,27 @@ export interface UsageReport {
   claude: AgentUsage;
   codex: AgentUsage;
 }
+
+/* ---- Per-CLI manual configuration (kept in settings.json) ---- */
+
+export interface CliConfig {
+  /** Absolute path to the CLI executable; empty = find it on PATH. */
+  binPath?: string;
+  /** Extra arguments appended to the CLI's own arguments. */
+  extraArgs?: string[];
+  /** Extra environment variables for the CLI process. */
+  env?: Record<string, string>;
+  /** Used when a run targets this agent explicitly and names no model. */
+  defaultModel?: string;
+  /** Used when a run targets this agent explicitly and names no effort. */
+  defaultEffort?: string;
+}
+
+export interface CliSettings {
+  claude: CliConfig;
+  codex: CliConfig;
+  /** Default per-turn timeout in minutes when a request omits it. */
+  turnTimeoutMin?: number;
+  /** Default test command when a request omits it. */
+  testCommand?: string;
+}

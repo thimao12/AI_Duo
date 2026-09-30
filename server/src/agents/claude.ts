@@ -1,5 +1,6 @@
 import { agentEnv, assertPlanOnly, blockClaudeUntil, claudeOverageMessage } from './billing.ts';
 import { resolveBin } from './bins.ts';
+import { getCliSettingsSync } from '../settings.ts';
 import { checkAgent } from './check.ts';
 import { AbortedError, spawnJsonl } from './process.ts';
 import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult, Usage } from './types.ts';
@@ -150,6 +151,8 @@ export const claude: AgentAdapter = {
     if (o.model) args.push('--model', o.model);
     if (o.effort) args.push('--effort', o.effort);
     if (o.sessionId) args.push('--resume', o.sessionId);
+    // Saved extra arguments go last; the prompt travels through stdin, so nothing can displace it.
+    args.push(...(getCliSettingsSync().claude.extraArgs ?? []));
 
     let state = initialClaudeJsonState(o.sessionId);
 
