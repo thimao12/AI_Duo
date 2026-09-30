@@ -237,7 +237,7 @@ async function followLiveRun(run: NonNullable<ReturnType<typeof service.handle>>
   unsubscribe();
 }
 
-app.get('/api/runs/:id/events', async (c) => {
+app.get('/api/runs/:id/events', (c) => {
   const id = c.req.param('id');
   return streamSSE(c, async (stream) => {
     const run = service.handle(id);

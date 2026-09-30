@@ -10,8 +10,8 @@
       // Apply a saved light/dark choice before first paint so the window never flashes.
       try {
         var t = localStorage.getItem('ai-duo:theme');
-        if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
-      } catch (e) {}
+        if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+      } catch (e) { /* Storage can be blocked; the system theme then applies. */ }
     </script>
   </head>
   <body>
@@ -60,14 +60,14 @@
       }
       #startup-reload[hidden] { display: none; }
     </style>
-    <div id="startup-state" role="status" aria-live="polite">
+    <output id="startup-state" aria-live="polite">
       <section>
         <h1 id="startup-title">Đang mở AI Duo</h1>
         <p id="startup-message">Đang khởi chạy giao diện…</p>
         <pre id="startup-detail" hidden></pre>
         <button id="startup-reload" type="button" hidden>Tải lại</button>
       </section>
-    </div>
+    </output>
     <script>
       (() => {
         const state = document.getElementById('startup-state');

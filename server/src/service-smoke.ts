@@ -13,6 +13,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createInterface } from 'node:readline';
+import { findExecutable } from '../../shared/exe.ts';
 import type { AgentCheck, AgentName, RunOptions, RunResult } from './agents/types.ts';
 import type { RunEvent } from './types.ts';
 
@@ -40,7 +41,8 @@ async function main() {
   const repo = path.join(temp, 'repo with spaces');
   const plain = path.join(temp, 'plain folder');
   await Promise.all([mkdir(path.join(repo, 'sub'), { recursive: true }), mkdir(plain)]);
-  execFileSync('git', ['init', '-q'], { cwd: repo });
+  const gitBin = findExecutable('git') ?? 'git';
+  execFileSync(gitBin, ['init', '-q'], { cwd: repo });
   await writeFile(path.join(repo, 'baseline.txt'), 'baseline\n');
   process.env.AI_DUO_DATA_DIR = dataDir;
   process.env.AI_DUO_ALLOWED_ROOTS = JSON.stringify([temp]);
@@ -63,14 +65,14 @@ async function main() {
   let check: (agent: AgentName) => AgentCheck = (agent) => ({ agent, path: agent, version: 'fake 1.0', auth: 'ok' });
   const checksRun: AgentName[] = [];
   for (const agent of ['claude', 'codex'] as const) {
-    agents[agent].check = async () => {
+    agents[agent].check = () => {
       checksRun.push(agent);
-      return check(agent);
+      return Promise.resolve(check(agent));
     };
   }
   type Script = (agent: AgentName, o: RunOptions) => Promise<RunResult>;
   const calls: { agent: AgentName; role: string; prompt: string; allowUnverifiedAuth?: boolean }[] = [];
-  let script: Script = async () => ({ finalText: 'unused' });
+  let script: Script = () => Promise.resolve({ finalText: 'unused' });
   for (const agent of ['claude', 'codex'] as const) {
     agents[agent].run = (o) => {
       calls.push({ agent, role: o.role, prompt: o.prompt, allowUnverifiedAuth: o.allowUnverifiedAuth });
@@ -96,9 +98,9 @@ async function main() {
   let classifyCalls = 0;
   const service = new RunService({
     app: 'smoke',
-    classify: async () => {
+    classify: () => {
       classifyCalls++;
-      return { taskType: 'edit', complexity: 'light' };
+      return Promise.resolve({ taskType: 'edit', complexity: 'light' });
     },
   });
   const lockFile = async (dir: string) => (await lockTarget(dir)).file;
@@ -112,14 +114,12 @@ async function main() {
     if (pattern) assert.match(err.message, pattern);
     return err;
   };
-  async function waitFor<T>(fn: () => T | undefined | false, what: string, ms = 10_000): Promise<T> {
-    const deadline = Date.now() + ms;
-    for (;;) {
-      const value = fn();
-      if (value) return value;
-      if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
-      await new Promise((resolve) => setTimeout(resolve, 20));
-    }
+  async function waitFor<T>(fn: () => T | undefined | false, what: string, ms = 10_000, deadline = Date.now() + ms): Promise<T> {
+    const value = fn();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    return waitFor(fn, what, ms, deadline);
   }
   const children: ReturnType<typeof spawn>[] = [];
   /** A second process holding the lock; resolves with its first output line. */
@@ -199,7 +199,7 @@ async function main() {
     await expectError(service.answerPlanDecision(noGit.id, { action: 'approve' }), 'invalid', /still waiting/);
     assert.ok(noGit.run.planDecision, 'a refused approval leaves the plan waiting');
     assert.equal(noGit.run.status, 'running');
-    execFileSync('git', ['init', '-q'], { cwd: late });
+    execFileSync(gitBin, ['init', '-q'], { cwd: late });
     await service.answerPlanDecision(noGit.id, { action: 'approve' });
     const lateDone = await noGit.done;
     assert.equal(lateDone.status, 'done', lateDone.error);
@@ -229,7 +229,7 @@ async function main() {
 
     // ---- Review limit: each decision grants 2 more rounds.
     calls.length = 0;
-    script = async (_agent, o) => (o.role === 'reviewer' ? { finalText: '```json\n{"verdict":"CHANGES_REQUESTED","tests":"fail","issues":[]}\n```' } : { finalText: 'Tried again.' });
+    script = (_agent, o) => Promise.resolve(o.role === 'reviewer' ? { finalText: '```json\n{"verdict":"CHANGES_REQUESTED","tests":"fail","issues":[]}\n```' } : { finalText: 'Tried again.' });
     const limited = await service.start({ mode: 'code', prompt: CODE, cwd: repo });
     const first = await waitFor(() => limited.run.pairDecision ?? undefined, 'first review-limit decision');
     assert.equal(first.extraRounds, 2);

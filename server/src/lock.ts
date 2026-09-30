@@ -111,18 +111,16 @@ export interface RepoLock {
   release(): Promise<void>;
 }
 
-async function removeIfOwned(file: string, token: string) {
-  for (let retry = 0; ; retry++) {
-    const current = await readLockOwner(file);
-    if (current?.token !== token) return;
-    try {
-      await rm(file, { force: true });
-      return;
-    } catch (err) {
-      // Windows refuses to delete a file another process is reading right now.
-      if (retry === 5) throw err;
-      await new Promise((resolve) => setTimeout(resolve, 50 * (retry + 1)));
-    }
+async function removeIfOwned(file: string, token: string, retry = 0): Promise<void> {
+  const current = await readLockOwner(file);
+  if (current?.token !== token) return;
+  try {
+    await rm(file, { force: true });
+  } catch (err) {
+    // Windows refuses to delete a file another process is reading right now.
+    if (retry === 5) throw err;
+    await new Promise((resolve) => setTimeout(resolve, 50 * (retry + 1)));
+    await removeIfOwned(file, token, retry + 1);
   }
 }
 
@@ -144,6 +142,14 @@ async function createLockFile(tmp: string, file: string, contents: string): Prom
   }
 }
 
+async function claimLockFile(target: LockTarget, tmp: string, contents: string, attempt = 0): Promise<void> {
+  if (await createLockFile(tmp, target.file, contents)) return;
+  const existing = await readLockOwner(target.file);
+  // Released between our attempt and the read: try again.
+  if (existing === undefined && attempt < 3) return claimLockFile(target, tmp, contents, attempt + 1);
+  throw new RepoLockedError(target, existing ?? null, ownerState(existing));
+}
+
 /** Throws RepoLockedError when another run (in any process) holds the repository. */
 export async function acquireRepoLock(target: LockTarget, runId: string, app: string): Promise<RepoLock> {
   const owner: LockOwner = { version: 1, token: randomUUID(), pid: process.pid, hostname: hostname(), runId, root: target.root, app, createdAt: Date.now() };
@@ -152,13 +158,7 @@ export async function acquireRepoLock(target: LockTarget, runId: string, app: st
   const tmp = `${target.file}.${process.pid}.${owner.token}.tmp`;
   await writeFile(tmp, contents, 'utf8');
   try {
-    for (let attempt = 0; ; attempt++) {
-      if (await createLockFile(tmp, target.file, contents)) break;
-      const existing = await readLockOwner(target.file);
-      // Released between our attempt and the read: try again.
-      if (existing === undefined && attempt < 3) continue;
-      throw new RepoLockedError(target, existing ?? null, ownerState(existing));
-    }
+    await claimLockFile(target, tmp, contents);
   } finally {
     await rm(tmp, { force: true }).catch(() => {});
   }
@@ -183,13 +183,11 @@ export interface LockInfo {
 
 export async function listLocks(): Promise<LockInfo[]> {
   const names = (await readdir(locksDir()).catch(() => [] as string[])).filter((name) => name.endsWith('.lock'));
-  const out: LockInfo[] = [];
-  for (const name of names) {
+  const infos = await Promise.all(names.map(async (name) => {
     const file = path.join(locksDir(), name);
-    const owner = await readLockOwner(file);
-    if (owner !== undefined) out.push({ file, owner, state: ownerState(owner) });
-  }
-  return out;
+    return { file, owner: await readLockOwner(file) };
+  }));
+  return infos.flatMap(({ file, owner }) => (owner === undefined ? [] : [{ file, owner, state: ownerState(owner) }]));
 }
 
 /**

@@ -19,11 +19,11 @@ const bundledPrompts = [path.join(here, 'prompts'), path.resolve(here, '../../se
 export async function seedPrompts(target = process.env.AI_DUO_PROMPTS_DIR!) {
   if (!bundledPrompts) throw new Error(`Prompt templates not found next to ${here}; reinstall or rebuild the CLI.`);
   await mkdir(target, { recursive: true });
-  for (const name of await readdir(bundledPrompts)) {
-    if (!name.endsWith('.md')) continue;
+  const names = (await readdir(bundledPrompts)).filter((name) => name.endsWith('.md'));
+  await Promise.all(names.map(async (name) => {
     const to = path.join(target, name);
     if (!existsSync(to)) await copyFile(path.join(bundledPrompts, name), to);
-  }
+  }));
 }
 
 /** Where `ai-duo` was typed; pnpm scripts run inside cli/ and keep the original folder in INIT_CWD. */

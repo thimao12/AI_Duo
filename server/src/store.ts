@@ -62,9 +62,9 @@ export interface RunSummary {
 export async function listRuns(): Promise<RunSummary[]> {
   const names = (await readdir(DIR)).filter((n) => n.endsWith('.json'));
   const elsewhere = await runsActiveElsewhere();
+  const loaded = await Promise.all(names.map((n) => loadRun(n.slice(0, -5), elsewhere)));
   const out: RunSummary[] = [];
-  for (const n of names) {
-    const run = await loadRun(n.slice(0, -5), elsewhere);
+  for (const run of loaded) {
     if (run) out.push({ id: run.id, title: run.title, mode: run.config.mode, prompt: run.config.prompt.slice(0, 2000), cwd: run.config.cwd, status: run.status, createdAt: run.createdAt, claudeLimits: run.claudeLimits });
   }
   return out.sort((a, b) => b.createdAt - a.createdAt);

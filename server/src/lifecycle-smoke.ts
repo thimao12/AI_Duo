@@ -7,13 +7,15 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { findExecutable } from '../../shared/exe.ts';
 import type { RunEvent } from './types.ts';
 
 const dataDir = await mkdtemp(path.join(tmpdir(), 'ai-duo-lifecycle-runs-'));
 const routeCwd = await mkdtemp(path.join(tmpdir(), 'ai-duo-lifecycle-route-'));
 process.env.AI_DUO_DATA_DIR = dataDir;
 process.env.AI_DUO_ALLOWED_ROOTS = JSON.stringify([tmpdir()]);
-execFileSync('git', ['init', '-q'], { cwd: routeCwd });
+const gitBin = findExecutable('git') ?? 'git';
+execFileSync(gitBin, ['init', '-q'], { cwd: routeCwd });
 await writeFile(path.join(routeCwd, 'baseline.txt'), 'baseline\n');
 
 const [{ agents }, { AbortedError, spawnJsonl }, { startServer, abortAll }, { active }] = await Promise.all([
@@ -27,7 +29,7 @@ const originalClaude = agents.claude.run;
 const originalCodex = agents.codex.run;
 const originalChecks = { claude: agents.claude.check, codex: agents.codex.check };
 // Mocked agents need no binary or login; preflight itself is covered by service-smoke.
-for (const agent of ['claude', 'codex'] as const) agents[agent].check = async () => ({ agent, path: agent, version: 'mock', auth: 'ok' });
+for (const agent of ['claude', 'codex'] as const) agents[agent].check = () => Promise.resolve({ agent, path: agent, version: 'mock', auth: 'ok' });
 const server = await startServer({ port: 0 });
 const base = server.url;
 const request = (path: string, init?: RequestInit) => fetch(`${base}${path}`, init);
@@ -38,26 +40,30 @@ const postRun = (body: unknown) =>
     body: JSON.stringify(body),
   });
 
-async function waitForRun(id: string) {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const response = await request(`/api/runs/${id}`);
-    assert.equal(response.status, 200);
-    const run = await response.json();
-    if (run.status !== 'running' && !active.has(id)) return run;
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-  throw new Error(`Run ${id} did not finish in time`);
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function waitForRun(id: string, deadline = Date.now() + 10_000): Promise<any> {
+  if (Date.now() >= deadline) throw new Error(`Run ${id} did not finish in time`);
+  const response = await request(`/api/runs/${id}`);
+  assert.equal(response.status, 200);
+  const run = await response.json();
+  if (run.status !== 'running' && !active.has(id)) return run;
+  await sleep(50);
+  return waitForRun(id, deadline);
 }
 
-async function waitForPlanDecision(id: string) {
-  const deadline = Date.now() + 10_000;
-  while (Date.now() < deadline) {
-    const ctx = active.get(id);
-    if (ctx?.run.planDecision) return ctx.run;
-    await new Promise((resolve) => setTimeout(resolve, 25));
-  }
-  throw new Error(`Plan ${id} did not ask for approval`);
+async function waitForPlanDecision(id: string, deadline = Date.now() + 10_000): Promise<any> {
+  if (Date.now() >= deadline) throw new Error(`Plan ${id} did not ask for approval`);
+  const ctx = active.get(id);
+  if (ctx?.run.planDecision) return ctx.run;
+  await sleep(25);
+  return waitForPlanDecision(id, deadline);
+}
+
+async function waitForIdle(deadline: number): Promise<void> {
+  if (!active.size || Date.now() >= deadline) return;
+  await sleep(25);
+  return waitForIdle(deadline);
 }
 
 async function answerPlan(id: string, action: string, feedback?: string) {
@@ -83,16 +89,16 @@ try {
   // Plan runs pause for user approval, accept edits, and continue in the same thread.
   const planCalls: { agent: string; prompt: string; sessionId?: string }[] = [];
   let planReviews = 0;
-  const mockPlanAgent = (agent: string) => async (options: { prompt: string; sessionId?: string }) => {
+  const mockPlanAgent = (agent: string) => (options: { prompt: string; sessionId?: string }) => {
     planCalls.push({ agent, prompt: options.prompt, sessionId: options.sessionId });
     if (options.prompt.includes('Review this proposed implementation plan')) {
       planReviews++;
       const review = planReviews === 1
         ? 'Add a rollback step. PLAN_VERDICT: CHANGES_REQUESTED'
         : 'The plan is complete. PLAN_VERDICT: APPROVE';
-      return { finalText: review, sessionId: `${agent}-session-smoke` };
+      return Promise.resolve({ finalText: review, sessionId: `${agent}-session-smoke` });
     }
-    return { finalText: `Plan draft from ${agent}: inspect files, implement changes, and verify.`, sessionId: `${agent}-session-smoke` };
+    return Promise.resolve({ finalText: `Plan draft from ${agent}: inspect files, implement changes, and verify.`, sessionId: `${agent}-session-smoke` });
   };
   agents.codex.run = mockPlanAgent('codex');
   agents.claude.run = mockPlanAgent('claude');
@@ -139,9 +145,9 @@ try {
     if (options.prompt.includes('Review this proposed implementation plan')) return { finalText: 'Plan looks good. PLAN_VERDICT: APPROVE', sessionId: 'plan-review-smoke' };
     return { finalText: 'Plan: update the settings component and verify it.' , sessionId: 'plan-writer-smoke' };
   };
-  agents.claude.run = async (options) => {
-    if (options.role === 'reviewer') return { finalText: '```json\n{"verdict":"APPROVE","tests":"pass","issues":[]}\n```', sessionId: 'code-review-smoke' };
-    return { finalText: 'Plan review complete. PLAN_VERDICT: APPROVE', sessionId: 'plan-review-smoke' };
+  agents.claude.run = (options) => {
+    if (options.role === 'reviewer') return Promise.resolve({ finalText: '```json\n{"verdict":"APPROVE","tests":"pass","issues":[]}\n```', sessionId: 'code-review-smoke' });
+    return Promise.resolve({ finalText: 'Plan review complete. PLAN_VERDICT: APPROVE', sessionId: 'plan-review-smoke' });
   };
   const approvalStart = await postRun({ mode: 'plan', cwd: routeCwd, prompt: 'Implement, add, and create a settings panel in app.tsx with a test.' });
   assert.equal(approvalStart.status, 200);
@@ -155,7 +161,7 @@ try {
   assert.match(implemented.final, /approve after|approve/);
 
   // A failed Code turn is closed and persisted without leaving a running message.
-  agents.claude.run = async () => ({ finalText: 'unused' });
+  agents.claude.run = () => Promise.resolve({ finalText: 'unused' });
   agents.codex.run = async () => {
     await new Promise((resolve) => setTimeout(resolve, 300));
     throw new Error('Failed to start codex: simulated missing binary');
@@ -196,10 +202,10 @@ try {
     new Promise((_, reject) => {
       signal.addEventListener('abort', () => reject(new AbortedError()), { once: true });
     });
-  agents.claude.run = async () => ({ finalText: 'unused' });
+  agents.claude.run = () => Promise.resolve({ finalText: 'unused' });
   // Throwaway repo: the pair run snapshots its working tree, so keep it off the real one.
   const cwd = await mkdtemp(path.join(tmpdir(), 'ai-duo-lifecycle-repo-'));
-  execFileSync('git', ['init', '-q'], { cwd });
+  execFileSync(gitBin, ['init', '-q'], { cwd });
   const caseVariant = process.platform === 'win32' ? cwd.toUpperCase() : cwd;
   const pairResponse = await postRun({ mode: 'code', cwd, prompt: 'Implement and add a small change.' });
   assert.equal(pairResponse.status, 200);
@@ -221,8 +227,7 @@ try {
   Object.assign(agents.claude, { check: originalChecks.claude });
   Object.assign(agents.codex, { check: originalChecks.codex });
   void abortAll();
-  const cleanupDeadline = Date.now() + 5_000;
-  while (active.size && Date.now() < cleanupDeadline) await new Promise((resolve) => setTimeout(resolve, 25));
+  await waitForIdle(Date.now() + 5_000);
   await server.close();
   await rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(console.error);
   await rm(routeCwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(console.error);

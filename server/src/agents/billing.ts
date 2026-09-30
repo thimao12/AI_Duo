@@ -107,7 +107,7 @@ interface CodexLimits {
   credits?: { has_credits?: boolean; unlimited?: boolean; balance?: string };
 }
 
-const listDir = async (dir: string) => readdir(dir).catch(() => [] as string[]);
+const listDir = (dir: string) => readdir(dir).catch(() => [] as string[]);
 const newestFirst = async (dir: string) => (await listDir(dir)).sort().reverse();
 
 /** Files of one day folder, most recently modified first. */

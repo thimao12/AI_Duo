@@ -79,7 +79,7 @@ try {
   assert.equal(checked.codex.standard.model, 'gpt-6-sol');
   assert.equal(checked.codex.light.model, undefined);
   assert.equal(checked.codex.light.effort, 'low');
-  assert.equal(loadCatalog({}, undefined).codex.heavy.model, 'gpt-6-astra', 'no cache: trust the catalog');
+  assert.equal(loadCatalog({}).codex.heavy.model, 'gpt-6-astra', 'no cache: trust the catalog');
 
   // Haiku reply parsing.
   assert.deepEqual(parseClassification('ok\n```json\n{"taskType":"design","complexity":"heavy"}\n```'), { taskType: 'design', complexity: 'heavy' });
@@ -89,9 +89,9 @@ try {
 
   // Haiku is only asked when the rules are unsure, and a failed call keeps the rules' answer.
   let asked = 0;
-  const haiku = (answer: Awaited<ReturnType<Classifier>>): Classifier => async () => {
+  const haiku = (answer: Awaited<ReturnType<Classifier>>): Classifier => () => {
     asked++;
-    return answer;
+    return Promise.resolve(answer);
   };
   const usage = { inputTokens: 900, outputTokens: 20, cachedInputTokens: 0 };
   const clear = await autoRoute('Sửa typo trong README', { classify: haiku(undefined), catalog: cat });

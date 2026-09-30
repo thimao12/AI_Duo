@@ -43,20 +43,24 @@ export async function readRunFile(id: string): Promise<string> {
 let tempSequence = 0;
 const retryableRenameErrors = new Set(['EPERM', 'EBUSY', 'EACCES']);
 
+/** Windows briefly locks files that antivirus or another reader has open; retry a few times. */
+async function renameWithRetry(from: string, to: string, retry = 0): Promise<void> {
+  try { await rename(from, to); }
+  catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (!retryableRenameErrors.has(code ?? '') || retry === 5) throw err;
+    await new Promise((resolve) => setTimeout(resolve, 50 * (retry + 1)));
+    await renameWithRetry(from, to, retry + 1);
+  }
+}
+
 export async function writeRunFile(id: string, contents: string): Promise<void> {
   const safeId = requireDataId(id);
   const destination = await confinedPath(`${safeId}.json`);
   const temporary = await confinedPath(`${safeId}.${process.pid}.${++tempSequence}.tmp`);
   try {
     await writeFile(temporary, contents, 'utf8');
-    for (let retry = 0; ; retry++) {
-      try { await rename(temporary, destination); return; }
-      catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (!retryableRenameErrors.has(code ?? '') || retry === 5) throw err;
-        await new Promise((resolve) => setTimeout(resolve, 50 * (retry + 1)));
-      }
-    }
+    await renameWithRetry(temporary, destination);
   } finally {
     await rm(temporary, { force: true }).catch(() => {});
   }

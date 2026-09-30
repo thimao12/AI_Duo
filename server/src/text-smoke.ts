@@ -31,7 +31,7 @@ const poisoned = parseStoredForm('{"mode":"plan","prompt":{},"cwd":[],"models":{
 assert.deepEqual(poisoned, defaults);
 assert.equal(Object.hasOwn(poisoned, 'skipAuthCheck'), false);
 assert.equal(Object.hasOwn(poisoned, '__proto__'), false);
-const valid = { ...defaults, mode: 'plan', prompt: 'my draft', cwd: 'C:\\my project', testCommand: 'pnpm test', turnTimeoutMin: 60, models: { claude: 'sonnet', codex: 'gpt-6-sol' }, efforts: { claude: 'high', codex: 'medium' } };
+const valid = { ...defaults, mode: 'plan', prompt: 'my draft', cwd: String.raw`C:\my project`, testCommand: 'pnpm test', turnTimeoutMin: 60, models: { claude: 'sonnet', codex: 'gpt-6-sol' }, efforts: { claude: 'high', codex: 'medium' } };
 assert.deepEqual(parseStoredForm(JSON.stringify(valid)), { ...valid, mode: 'code' });
 assert.deepEqual(normalizeForm(valid), valid);
 for (const timeout of [Number.NaN, Infinity, -1, 181, '60']) assert.equal(normalizeForm({ turnTimeoutMin: timeout }).turnTimeoutMin, 30);

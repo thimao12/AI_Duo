@@ -42,10 +42,11 @@ if (!app.requestSingleInstanceLock()) {
  */
 async function seedPrompts(target) {
   await mkdir(target, { recursive: true });
-  for (const name of await readdir(path.join(dist, 'prompts'))) {
+  const names = await readdir(path.join(dist, 'prompts'));
+  await Promise.all(names.map(async (name) => {
     const to = path.join(target, name);
     if (!existsSync(to)) await copyFile(path.join(dist, 'prompts', name), to);
-  }
+  }));
 }
 
 async function start() {

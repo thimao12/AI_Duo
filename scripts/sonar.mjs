@@ -13,6 +13,11 @@ const baseUrl = 'http://127.0.0.1:9000';
 const projectKey = 'ai-duo-local';
 let credentials;
 
+/** Strip control characters so HTTP- or environment-derived text cannot forge log lines. */
+function clean(value) {
+  return String(value).replaceAll(/[\u0000-\u001f]/g, ' ');
+}
+
 async function prepare() {
   await mkdir(local, { recursive: true });
   try { credentials = JSON.parse(await readFile(credentialsFile, 'utf8')); }
@@ -128,13 +133,13 @@ async function start() {
 
 async function status() {
   const server = await api('/api/system/status', { auth: false });
-  console.log(`SonarQube ${server.version}: ${server.status}`);
+  console.log(`SonarQube ${clean(server.version)}: ${clean(server.status)}`);
   if (server.status !== 'UP') return;
   const gate = await api(`/api/qualitygates/project_status?projectKey=${projectKey}`);
   const issues = await api(`/api/issues/search?componentKeys=${projectKey}&resolved=false&ps=1`);
   const report = { url: `${baseUrl}/dashboard?id=${projectKey}`, gate: gate.projectStatus, openIssues: issues.total, checkedAt: new Date().toISOString() };
   await writeFile(path.join(local, 'analysis.json'), `${JSON.stringify(report, null, 2)}\n`);
-  console.log(`Quality Gate: ${report.gate.status}. Open issues: ${report.openIssues}.`);
+  console.log(`Quality Gate: ${clean(report.gate.status)}. Open issues: ${clean(report.openIssues)}.`);
   for (const condition of report.gate.conditions ?? []) {
     if (condition.status === 'ERROR') console.log(`  ${condition.metricKey}: ${condition.actualValue} (threshold ${condition.errorThreshold})`);
   }
@@ -163,6 +168,6 @@ try {
   for (const secret of [credentials?.adminPassword, credentials?.databasePassword, credentials?.scanToken]) {
     if (secret) message = message.replaceAll(secret, '[redacted]');
   }
-  console.error(message);
+  console.error(clean(message));
   process.exitCode = 1;
 }

@@ -15,6 +15,7 @@ import { chmod, cp, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'nod
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
+import { findExecutable } from '../../shared/exe.ts';
 
 const here = import.meta.dirname;
 const dist = path.resolve(here, '../dist');
@@ -30,7 +31,9 @@ const promptsDir = path.join(temp, 'data', 'prompts');
 const log = path.join(temp, 'agent-calls.log');
 await Promise.all([mkdir(bins), mkdir(repo), mkdir(plain), mkdir(promptsDir, { recursive: true })]);
 await cp(dist, install, { recursive: true });
-execFileSync('git', ['init', '-q'], { cwd: repo });
+const git = findExecutable('git');
+if (!git) throw new Error('git was not found in PATH');
+execFileSync(git, ['init', '-q'], { cwd: repo });
 await writeFile(path.join(repo, 'README.md'), 'fixture\n');
 // A prompt the user customised must survive seeding.
 await writeFile(path.join(promptsDir, 'fix.md'), 'CUSTOM FIX PROMPT {{review}}\n');
@@ -85,7 +88,7 @@ process.stdin.on('end', () => {
 `;
 
 const binFor: Record<'claude' | 'codex', string> = { claude: '', codex: '' };
-for (const agent of ['claude', 'codex'] as const) {
+await Promise.all((['claude', 'codex'] as const).map(async (agent) => {
   const script = path.join(bins, `fake-${agent}.js`);
   await writeFile(script, fakeAgent(agent));
   if (process.platform === 'win32') {
@@ -96,7 +99,7 @@ for (const agent of ['claude', 'codex'] as const) {
     await chmod(script, 0o755);
     binFor[agent] = script;
   }
-}
+}));
 
 const baseEnv: NodeJS.ProcessEnv = { ...process.env, AI_DUO_ALLOWED_ROOTS: JSON.stringify([temp]), AI_DUO_DATA_DIR: dataDir, AI_DUO_PROMPTS_DIR: promptsDir, CLAUDE_BIN: binFor.claude, CODEX_BIN: binFor.codex, CODEX_HOME: path.join(temp, 'codex-home'), FAKE_LOG: log, NO_COLOR: '1' };
 delete baseEnv.INIT_CWD;
@@ -107,14 +110,22 @@ interface Result { code: number; stdout: string; stderr: string }
 /** Run the installed bundle with piped stdio (so no TTY) from `cwd`. */
 function cli(args: string[], { cwd = repo, env = {}, input = '' }: { cwd?: string; env?: NodeJS.ProcessEnv; input?: string } = {}): Promise<Result> {
   return new Promise((resolve) => {
-    const child = execFile(process.execPath, [path.join(install, 'ai-duo.mjs'), ...args], { cwd, env: { ...baseEnv, ...env }, windowsHide: true, timeout: 60_000 }, (err, stdout, stderr) =>
-      resolve({ code: typeof err?.code === 'number' ? err.code : err ? -1 : 0, stdout, stderr }),
-    );
+    const child = execFile(process.execPath, [path.join(install, 'ai-duo.mjs'), ...args], { cwd, env: { ...baseEnv, ...env }, windowsHide: true, timeout: 60_000 }, (err, stdout, stderr) => {
+      let code = 0;
+      if (err) code = typeof err.code === 'number' ? err.code : -1;
+      resolve({ code, stdout, stderr });
+    });
     child.stdin!.end(input);
   });
 }
 const calls = async () => (await readFile(log, 'utf8').catch(() => '')).split('\n').filter(Boolean);
 const resetCalls = () => writeFile(log, '');
+/** Poll until `done()` holds, at most `tries` times; recursion keeps the waits strictly sequential. */
+async function waitFor(done: () => boolean | Promise<boolean>, tries: number, ms: number): Promise<void> {
+  if (tries <= 0 || (await done())) return;
+  await new Promise((r) => setTimeout(r, ms));
+  return waitFor(done, tries - 1, ms);
+}
 const show = (r: Result) => `exit ${r.code}\n--- stdout\n${r.stdout}\n--- stderr\n${r.stderr}`;
 
 let failed = false;
@@ -136,12 +147,12 @@ try {
 
   // Roots are fixed at startup. An explicit cwd cannot expand them or start any agent.
   await resetCalls();
-  for (const args of [
+  const deniedRuns = await Promise.all([
     ['run', 'Implement a change', '--cwd', plain],
     ['doctor', '--cwd', plain],
     ['unlock', plain],
-  ]) {
-    const denied = await cli(args, { env: { AI_DUO_ALLOWED_ROOTS: JSON.stringify([repo]) } });
+  ].map((args) => cli(args, { env: { AI_DUO_ALLOWED_ROOTS: JSON.stringify([repo]) } })));
+  for (const denied of deniedRuns) {
     assert.equal(denied.code, 2, show(denied));
     assert.match(denied.stderr, /outside AI_DUO_ALLOWED_ROOTS/);
   }
@@ -230,15 +241,15 @@ try {
   await mkdir(path.join(repo, 'nested'), { recursive: true });
   const hanging = spawn(process.execPath, [path.join(install, 'ai-duo.mjs'), 'run', 'Implement and add a small change.'], { cwd: repo, env: { ...baseEnv, FAKE_HANG: '1' }, stdio: 'ignore', windowsHide: true });
   const locks = path.join(dataDir, 'locks');
-  for (let i = 0; i < 300 && !(await readdir(locks).catch(() => [])).some((f) => f.endsWith('.lock')); i++) await new Promise((r) => setTimeout(r, 50));
-  for (let i = 0; i < 300 && !(await calls()).length; i++) await new Promise((r) => setTimeout(r, 50));
+  await waitFor(async () => (await readdir(locks).catch(() => [])).some((f) => f.endsWith('.lock')), 300, 50);
+  await waitFor(async () => (await calls()).length > 0, 300, 50);
   const blocked = await cli(['run', 'Implement and add a small change.', '--mode', 'plan', '--cwd', path.join(repo, 'nested')]);
   assert.equal(blocked.code, 4, show(blocked));
   assert.match(blocked.stderr, /already active for this repository/);
   const refused = await cli(['unlock']);
   assert.equal(refused.code, 4, 'a live owner is not unlocked');
   // Kill the CLI and its fake agent without letting it clean up.
-  if (process.platform === 'win32') execFileSync('taskkill', ['/PID', String(hanging.pid), '/T', '/F'], { stdio: 'ignore' });
+  if (process.platform === 'win32') execFileSync(path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(hanging.pid), '/T', '/F'], { stdio: 'ignore' });
   else hanging.kill('SIGKILL');
   await new Promise((r) => (hanging.exitCode !== null ? r(null) : hanging.once('exit', r)));
   const stale = await cli(['run', 'Implement and add a small change.']);
@@ -271,7 +282,7 @@ if (!failed) {
       import('../../server/src/lock.ts'),
     ]);
     for (const agent of ['claude', 'codex'] as const) {
-      agents[agent].check = async () => ({ agent, path: agent, version: 'fake', auth: 'ok' });
+      agents[agent].check = () => Promise.resolve({ agent, path: agent, version: 'fake', auth: 'ok' });
     }
     let hang = false;
     let review = 'APPROVE';
@@ -308,7 +319,10 @@ if (!failed) {
           setTimeout(() => (next === null ? stdin.end() : stdin.write(`${next}\n`)), 10);
         }
       });
-      const io = { stdin, stdout, stderr, env: { NO_COLOR: '1' }, cwd: repo, onInterrupt: (fn: () => void) => ((interrupt = fn), () => (interrupt = undefined)) };
+      const io = { stdin, stdout, stderr, env: { NO_COLOR: '1' }, cwd: repo, onInterrupt: (fn: () => void) => {
+        interrupt = fn;
+        return () => { interrupt = undefined; };
+      } };
       return { io, out: () => out, err: () => err, interrupt: () => interrupt?.() };
     }
 
@@ -344,7 +358,7 @@ if (!failed) {
     hang = true;
     const t4 = terminal([]);
     const running = main(['run', 'Implement and add a small change.', '--json'], t4.io);
-    for (let i = 0; i < 200 && !/Run \S+ ·/.test(t4.err()); i++) await new Promise((r) => setTimeout(r, 25));
+    await waitFor(() => /Run \S+ ·/.test(t4.err()), 200, 25);
     await new Promise((r) => setTimeout(r, 100));
     t4.interrupt();
     assert.equal(await running, 130, t4.err());

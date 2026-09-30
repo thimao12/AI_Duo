@@ -55,11 +55,11 @@ try {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ mode: 'code', prompt: 'x', cwd: path.join(temp, 'no such dir'), efforts }),
       });
-    for (const bad of [{ codex: 'high; rm -rf' }, { claude: '--max' }, { codex: 5 }]) {
+    await Promise.all([{ codex: 'high; rm -rf' }, { claude: '--max' }, { codex: 5 }].map(async (bad) => {
       const res = await post(bad);
       assert.equal(res.status, 400);
       assert.match((await res.json()).error, /Invalid efforts/);
-    }
+    }));
     // A valid effort passes validation and fails later on the missing cwd instead.
     const ok = await post({ codex: 'high' });
     assert.doesNotMatch((await ok.json()).error, /Invalid efforts/);

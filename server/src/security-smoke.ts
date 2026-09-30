@@ -36,38 +36,38 @@ try {
   });
   assert.equal(plainText.status, 415, 'plain text run creation must be rejected');
 
-  for (const images of [
+  await Promise.all([
     [{ name: 'fake.png', dataUrl: 'data:image/png;base64,SGVsbG8=' }],
     Array.from({ length: 5 }, () => ({ name: 'image.png', dataUrl: 'data:image/png;base64,SGVsbG8=' })),
-  ]) {
+  ].map(async (images) => {
     const invalidImage = await request('/api/runs', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ mode: 'plan', prompt: 'Inspect image', images }),
     });
     assert.equal(invalidImage.status, 400, 'invalid image uploads must be rejected');
-  }
+  }));
 
-  for (const origin of ['https://evil.com', 'http://localhost:3000']) {
+  await Promise.all(['https://evil.com', 'http://localhost:3000'].map(async (origin) => {
     const rejectedOrigin = await request('/api/runs', {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin },
       body: '{"mode":"invalid"}',
     });
     assert.equal(rejectedOrigin.status, 403, `${origin} must be rejected`);
-  }
+  }));
 
   const rejectedHost = await requestWithHost('/api/runs', 'evil.com');
   assert.equal(rejectedHost, 403, 'non-local Host must be rejected');
 
-  for (const origin of [baseUrl, 'http://localhost:5173', 'http://127.0.0.1:5173']) {
+  await Promise.all([baseUrl, 'http://localhost:5173', 'http://127.0.0.1:5173'].map(async (origin) => {
     const acceptedOrigin = await request('/api/runs', {
       method: 'POST',
       headers: { 'content-type': 'application/json', origin },
       body: '{"mode":"invalid"}',
     });
     assert.equal(acceptedOrigin.status, 400, `${origin} should reach run config validation`);
-  }
+  }));
 
   const cancel = await request('/api/runs/not-active/cancel', {
     method: 'POST',
@@ -78,9 +78,9 @@ try {
 
   const originalFetch = globalThis.fetch;
   let cancelRequest: RequestInit | undefined;
-  globalThis.fetch = async (_input, init) => {
+  globalThis.fetch = (_input, init) => {
     cancelRequest = init;
-    return new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } });
+    return Promise.resolve(new Response('{"ok":true}', { headers: { 'content-type': 'application/json' } }));
   };
   try {
     await api.cancel('test-id');

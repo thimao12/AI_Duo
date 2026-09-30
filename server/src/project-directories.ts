@@ -43,11 +43,18 @@ export class ProjectDirectories {
     try { canonical = realpathSync.native(candidate); }
     catch { throw new DirectoryAccessError(`Working directory not found: ${candidate}`); }
     // Resolve symlinks before stat or process execution, and enforce the configured boundary again.
-    if (!this.roots.some((root) => within(root.canonical, canonical))) {
-      throw new DirectoryAccessError(`Working directory resolves outside AI_DUO_ALLOWED_ROOTS: ${candidate}`);
-    }
-    if (!statSync(canonical).isDirectory()) throw new DirectoryAccessError(`Working directory is not a directory: ${candidate}`);
-    return canonical;
+    const base = this.roots.map((root) => root.canonical).find((root) => within(root, canonical));
+    if (base === undefined) throw new DirectoryAccessError(`Working directory resolves outside AI_DUO_ALLOWED_ROOTS: ${candidate}`);
+    const relative = path.relative(base, canonical);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) throw new DirectoryAccessError(`Working directory resolves outside AI_DUO_ALLOWED_ROOTS: ${candidate}`);
+    const safe = path.join(base, relative);
+    if (!statSync(safe).isDirectory()) throw new DirectoryAccessError(`Working directory is not a directory: ${candidate}`);
+    return safe;
+  }
+
+  /** Canonical allowed roots, for callers that re-validate a path before a process or filesystem call. */
+  canonicalRoots(): string[] {
+    return this.roots.map((root) => root.canonical);
   }
 }
 

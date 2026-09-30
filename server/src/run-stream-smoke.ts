@@ -157,9 +157,7 @@ async function verifyReconnectStateMachine() {
   const stop = startRunStream(
     run.id,
     {
-      isRunMissing: async () => {
-        throw new Error('server unavailable');
-      },
+      isRunMissing: () => Promise.reject(new Error('server unavailable')),
       onRun: (next) => {
         if (next) states.push(next);
       },
@@ -204,7 +202,7 @@ async function verifyMissingRunStopsRetrying() {
   const stop = startRunStream(
     'deleted-run',
     {
-      isRunMissing: async () => true,
+      isRunMissing: () => Promise.resolve(true),
       onRun: () => {},
       onReconnecting: (value) => banner.push(value),
       onError: (value) => errors.push(value),
@@ -226,7 +224,7 @@ function verifyDoneRunDoesNotRetry() {
   const stop = startRunStream(
     run.id,
     {
-      isRunMissing: async () => false,
+      isRunMissing: () => Promise.resolve(false),
       onRun: () => {},
       onReconnecting: (value) => banner.push(value),
       onError: () => {},
@@ -247,7 +245,7 @@ function verifyHiddenTabFlush() {
   const stop = startRunStream(
     run.id,
     {
-      isRunMissing: async () => false,
+      isRunMissing: () => Promise.resolve(false),
       onRun: () => flushes++,
       onReconnecting: () => {},
       onError: () => {},

@@ -5,7 +5,7 @@ import { mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { agents } from './agents/index.ts';
-import { diffTreeSummary, snapshotTree } from './git.ts';
+import { diffTreeSummary, gitExecutable, snapshotTree } from './git.ts';
 import type { RunContext as RunContextType } from './run.ts';
 
 const dataDir = await mkdtemp(path.join(tmpdir(), 'ai-duo-pair-review-runs-'));
@@ -30,15 +30,19 @@ assert.deepEqual(malformedIssues.issues, []);
 
   const tempRepos: string[] = [];
 
+function gitSync(cwd: string, args: string[]) {
+  execFileSync(gitExecutable(), args, { cwd, stdio: 'ignore' });
+}
+
 async function makeRepo() {
   const cwd = await mkdtemp(path.join(tmpdir(), 'ai-duo-pair-review-'));
   tempRepos.push(cwd);
-  execFileSync('git', ['init', '-q'], { cwd, stdio: 'ignore' });
-  execFileSync('git', ['config', 'user.email', 'pair-smoke@example.invalid'], { cwd, stdio: 'ignore' });
-  execFileSync('git', ['config', 'user.name', 'Pair Smoke'], { cwd, stdio: 'ignore' });
+  gitSync(cwd, ['init', '-q']);
+  gitSync(cwd, ['config', 'user.email', 'pair-smoke@example.invalid']);
+  gitSync(cwd, ['config', 'user.name', 'Pair Smoke']);
   await writeFile(path.join(cwd, 'reviewer.txt'), 'baseline\n');
-  execFileSync('git', ['add', 'reviewer.txt'], { cwd, stdio: 'ignore' });
-  execFileSync('git', ['commit', '-qm', 'baseline'], { cwd, stdio: 'ignore' });
+  gitSync(cwd, ['add', 'reviewer.txt']);
+  gitSync(cwd, ['commit', '-qm', 'baseline']);
   return cwd;
 }
 
@@ -51,9 +55,9 @@ function fakeContext(cwd: string, coder: 'claude' | 'codex', maxRounds: number, 
     run: { config: { mode: 'pair', cwd, prompt: 'smoke task', maxRounds, coder, judge: 'claude', turnTimeoutMin: 1 } },
     note: (title: string, text: string) => notes.push({ title, text }),
     update: (patch: Record<string, unknown>) => updates.push(patch),
-    waitForPairDecision: async (decision: unknown) => {
+    waitForPairDecision: (decision: unknown) => {
       decisionsAsked.push(decision);
-      return decisions.shift() ?? false;
+      return Promise.resolve(decisions.shift() ?? false);
     },
     turn: async (turn: { phase: string; prompt: string; parseVerdict?: (text: string) => string | undefined | Promise<string | undefined> }) => {
       const text = await respond(turn);
@@ -68,7 +72,7 @@ function fakeContext(cwd: string, coder: 'claude' | 'codex', maxRounds: number, 
 try {
   const originalClaudeRun = agents.claude.run;
   try {
-    agents.claude.run = async () => ({ finalText: 'review complete' });
+    agents.claude.run = () => Promise.resolve({ finalText: 'review complete' });
     const run = new RunContext({ mode: 'pair', cwd: dataDir, prompt: 'smoke', maxRounds: 1, judge: 'claude', coder: 'codex', turnTimeoutMin: 1 });
     (run as any).scheduleSave = () => {};
     const events: { type: string; verdict?: string }[] = [];
@@ -96,14 +100,14 @@ try {
   }
 
   const renameRepo = await makeRepo();
-  execFileSync('git', ['config', 'color.ui', 'always'], { cwd: renameRepo, stdio: 'ignore' });
-  execFileSync('git', ['config', 'diff.renames', 'true'], { cwd: renameRepo, stdio: 'ignore' });
+  gitSync(renameRepo, ['config', 'color.ui', 'always']);
+  gitSync(renameRepo, ['config', 'diff.renames', 'true']);
   const beforeRename = await snapshotTree(renameRepo);
   await rename(path.join(renameRepo, 'reviewer.txt'), path.join(renameRepo, 'renamed.txt'));
   const afterRename = await snapshotTree(renameRepo);
   const renameSummary = await diffTreeSummary(renameRepo, beforeRename, afterRename);
-  assert.deepEqual(renameSummary.files.sort((a, b) => a.localeCompare(b)), ['renamed.txt', 'reviewer.txt']);
-  assert.equal(renameSummary.stat.includes(String.fromCharCode(27)), false, 'Git stats must not contain ANSI escapes');
+  assert.deepEqual(renameSummary.files.toSorted((a, b) => a.localeCompare(b)), ['renamed.txt', 'reviewer.txt']);
+  assert.equal(renameSummary.stat.includes(String.fromCodePoint(27)), false, 'Git stats must not contain ANSI escapes');
 
   // Malformed issue data must be normalized, not crash final issue rendering.
   const approvalRepo = await makeRepo();
@@ -120,16 +124,16 @@ try {
   assert.equal(approval.notes.some((note) => note.title === 'Reviewer không trả verdict hợp lệ'), false);
 
   const sameAgentRepo = await makeRepo();
-  const sameAgent = fakeContext(sameAgentRepo, 'codex', 1, async (turn) =>
-    turn.phase === 'review' ? fencedReview('APPROVE') : 'Implemented.',
+  const sameAgent = fakeContext(sameAgentRepo, 'codex', 1, (turn) =>
+    Promise.resolve(turn.phase === 'review' ? fencedReview('APPROVE') : 'Implemented.'),
   );
   sameAgent.ctx.run.config.reviewer = 'codex';
   await runPair(sameAgent.ctx);
   assert.equal((sameAgent.turns.find((turn) => turn.phase === 'review') as any)?.agent, 'codex');
 
   const invalidRepo = await makeRepo();
-  const invalid = fakeContext(invalidRepo, 'claude', 1, async (turn) =>
-    turn.phase === 'review' ? 'I would not APPROVE this' : 'Implemented.',
+  const invalid = fakeContext(invalidRepo, 'claude', 1, (turn) =>
+    Promise.resolve(turn.phase === 'review' ? 'I would not APPROVE this' : 'Implemented.'),
   );
   await runPair(invalid.ctx);
   assert.match(String(invalid.updates.at(-1)?.final), /Chưa được approve sau 1 vòng review/);
@@ -139,10 +143,10 @@ try {
 
   const extensionRepo = await makeRepo();
   let extensionReview = 0;
-  const extension = fakeContext(extensionRepo, 'codex', 2, async (turn) => {
-    if (turn.phase === 'code' || turn.phase === 'fix') return 'Processed implementation feedback.';
+  const extension = fakeContext(extensionRepo, 'codex', 2, (turn) => {
+    if (turn.phase === 'code' || turn.phase === 'fix') return Promise.resolve('Processed implementation feedback.');
     extensionReview++;
-    return fencedReview('CHANGES_REQUESTED', '');
+    return Promise.resolve(fencedReview('CHANGES_REQUESTED', ''));
   }, [true, false]);
   await runPair(extension.ctx);
   assert.equal(extensionReview, 4);
@@ -152,7 +156,7 @@ try {
 
   // Both reviewer identities are watched. Their tracked writes warn, block approval,
   // and are named explicitly in the next coder fix prompt.
-  for (const coder of ['claude', 'codex'] as const) {
+  await Promise.all((['claude', 'codex'] as const).map(async (coder) => {
     const cwd = await makeRepo();
     let reviewRound = 0;
     const mutation = fakeContext(cwd, coder, 2, async (turn) => {
@@ -171,7 +175,7 @@ try {
     const fixPrompt = mutation.turns.find((turn) => turn.phase === 'fix')?.prompt ?? '';
     assert.match(fixPrompt, /reviewer\.txt/);
     assert.match(fixPrompt, /CHANGES_REQUESTED/);
-  }
+  }));
 
   console.log('PASS strict review parsing, normalized issues, and fail-closed reviewer write detection for both agents');
 } catch (err) {

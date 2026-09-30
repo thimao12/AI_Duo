@@ -45,11 +45,11 @@ const postConfig = (model: string) =>
   });
 
 try {
-  for (const model of ['x & calc', '--foo']) {
+  await Promise.all(['x & calc', '--foo'].map(async (model) => {
     const response = await postConfig(model);
     assert.equal(response.status, 400, `${JSON.stringify(model)} should be rejected`);
     assert.match((await response.json()).error, /Invalid models\.codex/);
-  }
+  }));
   const validModel = await request('/api/runs', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -71,14 +71,14 @@ try {
       entry,
       [
         "const fs = require('node:fs');",
-        "if (process.argv.includes('--version')) { process.stdout.write('codex npm shim 1.2.3\\n'); process.exit(0); }",
-        "if (process.argv.includes('login')) { process.stdout.write('Logged in using ChatGPT\\n'); process.exit(0); }",
+        String.raw`if (process.argv.includes('--version')) { process.stdout.write('codex npm shim 1.2.3\n'); process.exit(0); }`,
+        String.raw`if (process.argv.includes('login')) { process.stdout.write('Logged in using ChatGPT\n'); process.exit(0); }`,
         "const args = process.argv.slice(2);",
         "const output = args.indexOf('-o');",
         "if (output >= 0) fs.writeFileSync(args[output + 1], 'npm shim completed one turn');",
-        "process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: 'shim-smoke' }) + '\\n');",
-        "process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'shim reply' } }) + '\\n');",
-        "process.stdout.write(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 3, output_tokens: 2 } }) + '\\n');",
+        String.raw`process.stdout.write(JSON.stringify({ type: 'thread.started', thread_id: 'shim-smoke' }) + '\n');`,
+        String.raw`process.stdout.write(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: 'shim reply' } }) + '\n');`,
+        String.raw`process.stdout.write(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 3, output_tokens: 2 } }) + '\n');`,
       ].join('\n'),
     );
     await writeFile(path.join(shimDir, 'codex.cmd'), '"%~dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*\r\n');

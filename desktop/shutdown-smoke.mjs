@@ -6,9 +6,9 @@ let stopped = false;
 await stopRunsAndQuit(async () => { stopped = true; }, () => { assert.ok(stopped); quits++; });
 const errors = [];
 const failure = new Error('shutdown failed');
-for (const abortAll of [() => Promise.reject(failure), () => { throw failure; }]) {
-  await stopRunsAndQuit(abortAll, () => { quits++; }, { reportError: (_message, err) => errors.push(err) });
-}
+const reportError = (_message, err) => errors.push(err);
+await stopRunsAndQuit(() => Promise.reject(failure), () => { quits++; }, { reportError });
+await stopRunsAndQuit(() => { throw failure; }, () => { quits++; }, { reportError });
 assert.deepEqual(errors, [failure, failure]);
 let rejectLate;
 await stopRunsAndQuit(() => new Promise((_resolve, reject) => { rejectLate = reject; }), () => { quits++; }, { timeoutMs: 10 });

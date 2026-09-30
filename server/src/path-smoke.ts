@@ -24,12 +24,13 @@ try {
   await saveRun(run);
   const sentinel = path.join(outside, 'keep.txt');
   await writeFile(sentinel, 'outside untouched');
-  for (const id of ['../outside', '..\\outside', '/absolute', 'C:\\absolute', '%2e%2e', 'a/b', 'a\\b', '.', '..', 'a\u0000b', 'a\n']) {
+  const invalidIds = ['../outside', String.raw`..\outside`, '/absolute', String.raw`C:\absolute`, '%2e%2e', 'a/b', String.raw`a\b`, '.', '..', 'a\u0000b', 'a\n'];
+  await Promise.all(invalidIds.map(async (id) => {
     assert.equal(await loadRun(id), undefined, id);
     assert.equal(await deleteRun(id), false, id);
     await assert.rejects(saveRun({ ...run, id }), /Invalid.*ID/, id);
     await assert.rejects(writeRunImages(id, [{ mimeType: 'image/png', bytes: Buffer.from('bad') }]), /Invalid.*ID/, id);
-  }
+  }));
   assert.deepEqual((await readdir(dataDir)).filter((name) => name.endsWith('.tmp')), []);
   const images = path.join(dataDir, 'images', run.id);
   await writeRunImages(run.id, [{ mimeType: 'image/png', bytes: Buffer.from('initial image') }]);
@@ -45,11 +46,12 @@ try {
     const followUp = await fetch(`${server.url}/api/runs/${run.id}/messages/message-1/images/0`);
     assert.equal(followUp.status, 200);
     assert.equal(await followUp.text(), 'follow-up image');
-    for (const route of [
+    const badRoutes = [
       '/api/runs/a%2Fb/images/0', '/api/runs/a%5Cb/images/0', '/api/runs/%252e%252e/images/0',
       '/api/runs/safe-run/messages/a%2Fb/images/0', '/api/runs/safe-run/messages/a%5Cb/images/0',
       '/api/runs/safe-run/images/-1', '/api/runs/safe-run/images/1.5', '/api/runs/safe-run/images/Infinity',
-    ]) assert.equal((await fetch(`${server.url}${route}`)).status, 404, route);
+    ];
+    await Promise.all(badRoutes.map(async (route) => assert.equal((await fetch(`${server.url}${route}`)).status, 404, route)));
 
     // A junction works without symlink privileges on Windows and exercises directory traversal.
     await rm(images, { recursive: true });
@@ -69,17 +71,17 @@ try {
 
   const repo = path.join(temp, 'repo with spaces');
   await mkdir(repo);
-  execFileSync('git', ['init', '-q'], { cwd: repo });
+  execFileSync(git.gitExecutable(), ['init', '-q'], { cwd: repo });
   await writeFile(path.join(repo, 'baseline.txt'), 'before');
   const before = await git.snapshotTree(repo);
   await writeFile(path.join(repo, 'baseline.txt'), 'after');
   const after = await git.snapshotTree(repo);
   assert.deepEqual((await git.diffTreeSummary(repo, before, after)).files, ['baseline.txt']);
   assert.match(await git.diffSince(repo, before), /baseline\.txt/);
-  for (const invalid of ['--output=outside', '../outside', 'HEAD', 'a'.repeat(39), 'z'.repeat(40), 'a'.repeat(65)]) {
+  await Promise.all(['--output=outside', '../outside', 'HEAD', 'a'.repeat(39), 'z'.repeat(40), 'a'.repeat(65)].map(async (invalid) => {
     await assert.rejects(git.diffTreeSummary(repo, invalid, after), /Invalid Git tree ID/);
     await assert.rejects(git.diffSince(repo, invalid), /Invalid Git tree ID/);
-  }
+  }));
   assert.equal(await git.isGitRepo(path.join(repo, 'baseline.txt')), false);
   assert.equal(await git.isGitRepo(`${repo}\u0000`), false);
   assert.equal(await git.isGitRepo(repo), true);

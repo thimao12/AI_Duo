@@ -3,7 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { findExecutable } from '../../shared/exe.ts';
-import { authorizeDirectory } from './project-directories.ts';
+import { authorizeDirectory, DirectoryAccessError, projectDirectories } from './project-directories.ts';
 
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
@@ -12,9 +12,19 @@ export function gitExecutable(): string {
   return findExecutable('git') ?? 'git';
 }
 
+/** Authorized working directory, re-verified against the allowed roots right before it reaches a child process. */
+function confineDirectory(cwd: string): string {
+  const directory = path.resolve(authorizeDirectory(cwd));
+  for (const root of projectDirectories().canonicalRoots()) {
+    const relative = path.relative(root, directory);
+    if (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)) return path.join(root, relative);
+  }
+  throw new DirectoryAccessError(`Working directory is outside AI_DUO_ALLOWED_ROOTS: ${directory}`);
+}
+
 function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolve, reject) => {
-    const directory = authorizeDirectory(cwd);
+    const directory = confineDirectory(cwd);
     execFile(gitExecutable(), args, { cwd: directory, shell: false, env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       if (err) reject(new Error(`git ${args.join(' ')}: ${stderr || err.message}`));
       else resolve(stdout);

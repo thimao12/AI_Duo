@@ -48,13 +48,13 @@ try {
   let classifications = 0;
   const service = new RunService({
     app: 'roots-smoke',
-    checkAgent: async (agent) => { checks++; return { agent, path: agent, version: 'fake', auth: 'ok' }; },
-    classify: async () => { classifications++; return { taskType: 'edit', complexity: 'light' }; },
+    checkAgent: (agent) => { checks++; return Promise.resolve({ agent, path: agent, version: 'fake', auth: 'ok' }); },
+    classify: () => { classifications++; return Promise.resolve({ taskType: 'edit', complexity: 'light' }); },
   });
-  for (const agent of ['claude', 'codex'] as const) agents[agent].run = async (options) => {
+  for (const agent of ['claude', 'codex'] as const) agents[agent].run = (options) => {
     turns++;
     assert.equal(options.cwd, fs.realpathSync.native(sub));
-    return { finalText: options.prompt.includes('Review this proposed implementation plan') ? 'PLAN_VERDICT: APPROVE' : 'Plan: inspect and verify.' };
+    return Promise.resolve({ finalText: options.prompt.includes('Review this proposed implementation plan') ? 'PLAN_VERDICT: APPROVE' : 'Plan: inspect and verify.' });
   };
   const invalid = (err: unknown) => err instanceof ServiceError && err.code === 'invalid' && /AI_DUO_ALLOWED_ROOTS/.test(err.message);
   const old: Run = {
@@ -96,7 +96,7 @@ try {
   }
 
   // A subfolder of a repository cannot grant permission to snapshot its forbidden parent.
-  childProcess.execFileSync('git', ['init', '-q'], { cwd: temp });
+  childProcess.execFileSync(git.gitExecutable(), ['init', '-q'], { cwd: temp });
   assert.equal(await git.gitToplevel(allowed), null);
   await assert.rejects(git.snapshotTree(allowed), /inside AI_DUO_ALLOWED_ROOTS/);
   const { lockTarget } = await import('./lock.ts');
