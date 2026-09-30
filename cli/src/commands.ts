@@ -4,7 +4,7 @@ import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { parseArgs, type ParseArgsConfig } from 'node:util';
 import type { AgentCheck, AgentName } from '../../server/src/agents/types.ts';
-import { gitRequiredMessage, gitToplevel, isGitRepo } from '../../server/src/git.ts';
+import { gitExecutable, gitRequiredMessage, gitToplevel, isGitRepo } from '../../server/src/git.ts';
 import { describeOwner, listLocks, lockTarget, ownerState, readLockOwner, unlockRepo } from '../../server/src/lock.ts';
 import { paths } from '../../server/src/paths.ts';
 import { authorizeDirectory, DirectoryAccessError } from '../../server/src/project-directories.ts';
@@ -90,7 +90,7 @@ type Flags = ReturnType<typeof parseArgs<{ options: typeof OPTIONS; allowPositio
 
 function readGitVersion(): string | null {
   try {
-    return execFileSync('git', ['--version'], { encoding: 'utf8', windowsHide: true }).trim();
+    return execFileSync(gitExecutable(), ['--version'], { encoding: 'utf8', windowsHide: true }).trim();
   } catch {
     return null;
   }

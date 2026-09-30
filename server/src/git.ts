@@ -2,14 +2,20 @@ import { execFile } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { findExecutable } from '../../shared/exe.ts';
 import { authorizeDirectory } from './project-directories.ts';
 
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
+/** Git binary from the absolute PATH entries; falls back to the bare name only when it is not found. */
+export function gitExecutable(): string {
+  return findExecutable('git') ?? 'git';
+}
+
 function git(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolve, reject) => {
     const directory = authorizeDirectory(cwd);
-    execFile('git', args, { cwd: directory, shell: false, env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
+    execFile(gitExecutable(), args, { cwd: directory, shell: false, env: { ...process.env, ...env }, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       if (err) reject(new Error(`git ${args.join(' ')}: ${stderr || err.message}`));
       else resolve(stdout);
     });

@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { accessSync, constants } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -27,8 +28,21 @@ async function saveCredentials() {
   await writeFile(credentialsFile, `${JSON.stringify(credentials, null, 2)}\n`, { mode: 0o600 });
 }
 
+// Resolve docker from absolute PATH entries only, so a relative entry cannot hijack the command.
+function dockerExecutable() {
+  const names = process.platform === 'win32' ? ['docker.exe'] : ['docker'];
+  for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+    if (!path.isAbsolute(dir)) continue;
+    for (const name of names) {
+      const file = path.join(dir, name);
+      try { accessSync(file, constants.X_OK); return file; } catch { /* keep looking */ }
+    }
+  }
+  throw new Error('docker was not found in PATH');
+}
+
 function compose(args) {
-  const result = spawnSync('docker', ['compose', '--env-file', envFile, '-f', path.join(root, 'compose.sonar.yml'), ...args], { cwd: root, stdio: 'inherit', windowsHide: true });
+  const result = spawnSync(dockerExecutable(), ['compose', '--env-file', envFile, '-f', path.join(root, 'compose.sonar.yml'), ...args], { cwd: root, stdio: 'inherit', windowsHide: true });
   if (result.error) throw result.error;
   return result.status ?? 1;
 }
