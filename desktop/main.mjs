@@ -27,10 +27,13 @@ if (!app.requestSingleInstanceLock()) {
     if (win.isMinimized()) win.restore();
     win.focus();
   });
-  app.whenReady().then(start).catch((err) => {
+  try {
+    await app.whenReady();
+    await start();
+  } catch (err) {
     dialog.showErrorBox('AI Duo failed to start', String(err?.stack || err));
     app.quit();
-  });
+  }
 }
 
 /**
@@ -68,7 +71,10 @@ async function start() {
 
   ipcMain.on('title-bar-colors', (_e, colors) => {
     // The CSS minifier shortens tokens (#ffffff → #fff), so accept both hex forms.
-    const hex = (v) => (typeof v === 'string' && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v) ? (v.length === 4 ? `#${[...v.slice(1)].map((c) => c + c).join('')}` : v) : null);
+    const hex = (v) => {
+      if (typeof v !== 'string' || !/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(v)) return null;
+      return v.length === 4 ? `#${v.slice(1).replaceAll(/./g, '$&$&')}` : v;
+    };
     const color = hex(colors?.color);
     const symbolColor = hex(colors?.symbolColor);
     if (!win || !color || !symbolColor) return;

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 
-type Row = { type: 'hunk' | 'add' | 'del' | 'ctx' | 'meta'; text: string; old?: number; new?: number };
+type Row = { id: number; type: 'hunk' | 'add' | 'del' | 'ctx' | 'meta'; text: string; old?: number; new?: number };
 
 export interface FileDiff {
   name: string;
@@ -11,16 +11,41 @@ export interface FileDiff {
   removed: number;
 }
 
+const HEADER_LINE = /^(index |--- |\+\+\+ |similarity |rename |new file|deleted file|old mode|new mode)/;
+const HUNK_LINE = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/;
+
+/** Append a row of one diff line to its file, advancing the running old/new line numbers. */
+function addRow(cur: FileDiff, line: string, no: { old: number; new: number }) {
+  const push = (row: Omit<Row, 'id'>) => cur.rows.push({ ...row, id: cur.rows.length });
+  const hunk = HUNK_LINE.exec(line);
+  if (hunk) {
+    no.old = Number(hunk[1]);
+    no.new = Number(hunk[2]);
+    push({ type: 'hunk', text: hunk[3].trim() || line });
+  } else if (line.startsWith('+')) {
+    cur.added++;
+    push({ type: 'add', text: line.slice(1), new: no.new++ });
+  } else if (line.startsWith('-')) {
+    cur.removed++;
+    push({ type: 'del', text: line.slice(1), old: no.old++ });
+  } else if (line.startsWith('\\')) {
+    push({ type: 'meta', text: line });
+  } else if (line.startsWith(' ') || (line === '' && cur.rows.length)) {
+    push({ type: 'ctx', text: line.slice(1), old: no.old++, new: no.new++ });
+  } else if (line.startsWith('Binary')) {
+    push({ type: 'meta', text: 'File nhị phân' });
+  }
+}
+
 /** Split a unified `git diff` into files with numbered rows. */
 export function parseDiff(diff: string): FileDiff[] {
   const files: FileDiff[] = [];
   let cur: FileDiff | undefined;
-  let oldNo = 0;
-  let newNo = 0;
+  const no = { old: 0, new: 0 };
   for (const raw of diff.split('\n')) {
     const line = raw.replace(/\r$/, '');
     if (line.startsWith('diff --git ')) {
-      const m = line.match(/ b\/(.+)$/);
+      const m = / b\/(.+)$/.exec(line);
       cur = { name: m?.[1] ?? line, status: 'modified', rows: [], added: 0, removed: 0 };
       files.push(cur);
       continue;
@@ -28,28 +53,11 @@ export function parseDiff(diff: string): FileDiff[] {
     if (!cur) continue;
     if (line.startsWith('new file')) cur.status = 'added';
     else if (line.startsWith('deleted file')) cur.status = 'deleted';
-    if (/^(index |--- |\+\+\+ |similarity |rename |new file|deleted file|old mode|new mode)/.test(line)) continue;
-    const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)$/);
-    if (hunk) {
-      oldNo = Number(hunk[1]);
-      newNo = Number(hunk[2]);
-      cur.rows.push({ type: 'hunk', text: hunk[3].trim() || line });
-    } else if (line.startsWith('+')) {
-      cur.added++;
-      cur.rows.push({ type: 'add', text: line.slice(1), new: newNo++ });
-    } else if (line.startsWith('-')) {
-      cur.removed++;
-      cur.rows.push({ type: 'del', text: line.slice(1), old: oldNo++ });
-    } else if (line.startsWith('\\')) {
-      cur.rows.push({ type: 'meta', text: line });
-    } else if (line.startsWith(' ') || (line === '' && cur.rows.length)) {
-      cur.rows.push({ type: 'ctx', text: line.slice(1), old: oldNo++, new: newNo++ });
-    } else if (line.startsWith('Binary')) {
-      cur.rows.push({ type: 'meta', text: 'File nhị phân' });
-    }
+    if (HEADER_LINE.test(line)) continue;
+    addRow(cur, line, no);
   }
   // A trailing blank line of the diff output is not content.
-  for (const f of files) while (f.rows.length && f.rows[f.rows.length - 1].type === 'ctx' && !f.rows[f.rows.length - 1].text) f.rows.pop();
+  for (const f of files) while (f.rows.at(-1)?.type === 'ctx' && !f.rows.at(-1)?.text) f.rows.pop();
   return files;
 }
 
@@ -63,7 +71,27 @@ const ROW: Record<Row['type'], string> = {
 
 const MARK: Record<Row['type'], string> = { add: '+', del: '−', ctx: ' ', hunk: '', meta: '' };
 
-function FileBlock({ file, defaultOpen }: { file: FileDiff; defaultOpen: boolean }) {
+function DiffRow({ row: r }: Readonly<{ row: Row }>) {
+  if (r.type === 'hunk' || r.type === 'meta') {
+    return (
+      <tr className={ROW[r.type]}>
+        <td colSpan={4} className="px-3 py-0.5 whitespace-pre">
+          {r.text}
+        </td>
+      </tr>
+    );
+  }
+  return (
+    <tr className={ROW[r.type]}>
+      <td className="w-10 px-1.5 text-right align-top text-faint select-none">{r.old ?? ''}</td>
+      <td className="w-10 px-1.5 text-right align-top text-faint select-none">{r.new ?? ''}</td>
+      <td className="w-4 text-center align-top select-none">{MARK[r.type]}</td>
+      <td className="pr-3 whitespace-pre">{r.text || ' '}</td>
+    </tr>
+  );
+}
+
+function FileBlock({ file, defaultOpen }: Readonly<{ file: FileDiff; defaultOpen: boolean }>) {
   const [open, setOpen] = useState(defaultOpen);
   const slash = file.name.lastIndexOf('/');
   const dir = slash >= 0 ? file.name.slice(0, slash + 1) : '';
@@ -89,22 +117,9 @@ function FileBlock({ file, defaultOpen }: { file: FileDiff; defaultOpen: boolean
         <div className="overflow-x-auto pb-1">
           <table className="w-full border-collapse font-mono text-[11.5px] leading-[1.6]">
             <tbody>
-              {file.rows.map((r, i) =>
-                r.type === 'hunk' || r.type === 'meta' ? (
-                  <tr key={i} className={ROW[r.type]}>
-                    <td colSpan={4} className="px-3 py-0.5 whitespace-pre">
-                      {r.text}
-                    </td>
-                  </tr>
-                ) : (
-                  <tr key={i} className={ROW[r.type]}>
-                    <td className="w-10 px-1.5 text-right align-top text-faint select-none">{r.old ?? ''}</td>
-                    <td className="w-10 px-1.5 text-right align-top text-faint select-none">{r.new ?? ''}</td>
-                    <td className="w-4 text-center align-top select-none">{MARK[r.type]}</td>
-                    <td className="pr-3 whitespace-pre">{r.text || ' '}</td>
-                  </tr>
-                ),
-              )}
+              {file.rows.map((r) => (
+                <DiffRow key={r.id} row={r} />
+              ))}
             </tbody>
           </table>
         </div>
@@ -113,7 +128,7 @@ function FileBlock({ file, defaultOpen }: { file: FileDiff; defaultOpen: boolean
   );
 }
 
-export default function DiffView({ files }: { files: FileDiff[] }) {
+export default function DiffView({ files }: Readonly<{ files: FileDiff[] }>) {
   if (!files.length) return <p className="px-4 py-6 text-[13px] text-faint">Chưa có file nào thay đổi.</p>;
   return (
     <div>

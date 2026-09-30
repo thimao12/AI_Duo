@@ -54,7 +54,7 @@ let claudeBlockedUntil = 0;
 
 export function blockClaudeUntil(resetsAtSec: number | undefined) {
   // Without a reset time, hold for five hours (the shortest Claude window).
-  claudeBlockedUntil = Math.max(claudeBlockedUntil, resetsAtSec ? resetsAtSec * 1000 : Date.now() + 5 * 3600_000);
+  claudeBlockedUntil = Math.max(claudeBlockedUntil, resetsAtSec ? resetsAtSec * 1000 : Date.now() + 5 * 3_600_000);
 }
 
 const resetText = (ms: number) => new Date(ms).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
@@ -107,27 +107,41 @@ interface CodexLimits {
   credits?: { has_credits?: boolean; unlimited?: boolean; balance?: string };
 }
 
+const listDir = async (dir: string) => readdir(dir).catch(() => [] as string[]);
+const newestFirst = async (dir: string) => (await listDir(dir)).sort().reverse();
+
+/** Files of one day folder, most recently modified first. */
+async function sessionFilesNewestFirst(dir: string): Promise<string[]> {
+  const files = await Promise.all(
+    (await listDir(dir)).filter((f) => f.endsWith('.jsonl')).map(async (f) => ({ f, t: (await stat(path.join(dir, f))).mtimeMs })),
+  );
+  return files.sort((a, b) => b.t - a.t).map(({ f }) => f);
+}
+
+/** Last rate_limits payload in a session log, if any. */
+async function lastRateLimits(file: string): Promise<CodexLimits | null> {
+  const lines = (await readFile(file, 'utf8').catch(() => '')).split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (!lines[i].includes('"rate_limits"')) continue;
+    try {
+      const limits = JSON.parse(lines[i])?.payload?.rate_limits;
+      if (limits) return limits;
+    } catch {}
+  }
+  return null;
+}
+
 /** Newest rate-limit snapshot Codex wrote to its session logs (exec --json does not stream it). */
 async function latestCodexLimits(): Promise<CodexLimits | null> {
   const root = path.join(process.env.CODEX_HOME || path.join(homedir(), '.codex'), 'sessions');
   // sessions/YYYY/MM/DD/rollout-*.jsonl: walk the newest day folders first.
-  const newest = async (dir: string) => (await readdir(dir).catch(() => [] as string[])).sort().reverse();
-  for (const y of (await newest(root)).slice(0, 2))
-    for (const m of (await newest(path.join(root, y))).slice(0, 2))
-      for (const d of (await newest(path.join(root, y, m))).slice(0, 3)) {
+  for (const y of (await newestFirst(root)).slice(0, 2))
+    for (const m of (await newestFirst(path.join(root, y))).slice(0, 2))
+      for (const d of (await newestFirst(path.join(root, y, m))).slice(0, 3)) {
         const dir = path.join(root, y, m, d);
-        const files = await Promise.all(
-          (await readdir(dir).catch(() => [] as string[])).filter((f) => f.endsWith('.jsonl')).map(async (f) => ({ f, t: (await stat(path.join(dir, f))).mtimeMs })),
-        );
-        for (const { f } of files.sort((a, b) => b.t - a.t)) {
-          const lines = (await readFile(path.join(dir, f), 'utf8').catch(() => '')).split('\n');
-          for (let i = lines.length - 1; i >= 0; i--) {
-            if (!lines[i].includes('"rate_limits"')) continue;
-            try {
-              const limits = JSON.parse(lines[i])?.payload?.rate_limits;
-              if (limits) return limits;
-            } catch {}
-          }
+        for (const f of await sessionFilesNewestFirst(dir)) {
+          const limits = await lastRateLimits(path.join(dir, f));
+          if (limits) return limits;
         }
       }
   return null;
@@ -156,5 +170,6 @@ export async function assertPlanOnly(agent: AgentName, bin: ResolvedBin, cwd: st
 }
 
 export function claudeOverageMessage(resetsAtSec?: number) {
-  return `Claude đã hết hạn mức gói và chuyển sang extra usage (tính tiền). AI Duo đã dừng lượt này${resetsAtSec ? ` và chặn Claude tới ${resetText(resetsAtSec * 1000)}` : ''}.`;
+  const blocked = resetsAtSec ? ' và chặn Claude tới ' + resetText(resetsAtSec * 1000) : '';
+  return `Claude đã hết hạn mức gói và chuyển sang extra usage (tính tiền). AI Duo đã dừng lượt này${blocked}.`;
 }

@@ -61,7 +61,7 @@ function launchFrom(name: AgentName, resolvedFrom: string): ResolvedBin {
     throw new Error(`Only found shim ${shimName}, set ${ENV[name]} to a supported executable path`);
   }
 
-  const match = contents.match(/"%(?:~)?dp0%?\\([^"\r\n]+\.js)"/i);
+  const match = /"%(?:~)?dp0%?\\([^"\r\n]+\.js)"/i.exec(contents);
   if (!match) throw new Error(`Only found shim ${shimName}, set ${ENV[name]} to a supported executable path`);
 
   // npm shims quote a path relative to %dp0%; strip its leading slash before joining

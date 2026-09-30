@@ -95,12 +95,12 @@ export class RepoLockedError extends Error {
   ) {
     const who = owner ? `: ${describeOwner(owner)}` : ' (the lock file is unreadable)';
     const unlock = `ai-duo unlock "${target.root}"`;
-    const hint =
-      state === 'dead'
-        ? `\nThat process is no longer running. Once no agent is still editing the repository, run \`${unlock}\` (or delete ${target.file}).`
-        : state === 'unknown'
-          ? `\nThe owner cannot be checked from here. If you are sure it has stopped, run \`${unlock} --force\` (or delete ${target.file}).`
-          : '';
+    let hint = '';
+    if (state === 'dead') {
+      hint = `\nThat process is no longer running. Once no agent is still editing the repository, run \`${unlock}\` (or delete ${target.file}).`;
+    } else if (state === 'unknown') {
+      hint = `\nThe owner cannot be checked from here. If you are sure it has stopped, run \`${unlock} --force\` (or delete ${target.file}).`;
+    }
     super(`A Code or Plan run is already active for this repository (${target.root})${who}${hint}`);
   }
 }
@@ -126,6 +126,24 @@ async function removeIfOwned(file: string, token: string) {
   }
 }
 
+/** True when the lock file was created; false when another run already holds it. */
+async function createLockFile(tmp: string, file: string, contents: string): Promise<boolean> {
+  try {
+    await link(tmp, file);
+    return true;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
+    // File systems without hard links: exclusive create is still atomic, just not all-or-nothing.
+    try {
+      await writeFile(file, contents, { encoding: 'utf8', flag: 'wx' });
+      return true;
+    } catch (error_) {
+      if ((error_ as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
+      return false;
+    }
+  }
+}
+
 /** Throws RepoLockedError when another run (in any process) holds the repository. */
 export async function acquireRepoLock(target: LockTarget, runId: string, app: string): Promise<RepoLock> {
   const owner: LockOwner = { version: 1, token: randomUUID(), pid: process.pid, hostname: hostname(), runId, root: target.root, app, createdAt: Date.now() };
@@ -135,25 +153,11 @@ export async function acquireRepoLock(target: LockTarget, runId: string, app: st
   await writeFile(tmp, contents, 'utf8');
   try {
     for (let attempt = 0; ; attempt++) {
-      try {
-        await link(tmp, target.file);
-        break;
-      } catch (err) {
-        const code = (err as NodeJS.ErrnoException).code;
-        if (code !== 'EEXIST') {
-          // File systems without hard links: exclusive create is still atomic, just not all-or-nothing.
-          try {
-            await writeFile(target.file, contents, { encoding: 'utf8', flag: 'wx' });
-            break;
-          } catch (fallback) {
-            if ((fallback as NodeJS.ErrnoException).code !== 'EEXIST') throw err;
-          }
-        }
-        const existing = await readLockOwner(target.file);
-        // Released between our attempt and the read: try again.
-        if (existing === undefined && attempt < 3) continue;
-        throw new RepoLockedError(target, existing ?? null, ownerState(existing));
-      }
+      if (await createLockFile(tmp, target.file, contents)) break;
+      const existing = await readLockOwner(target.file);
+      // Released between our attempt and the read: try again.
+      if (existing === undefined && attempt < 3) continue;
+      throw new RepoLockedError(target, existing ?? null, ownerState(existing));
     }
   } finally {
     await rm(tmp, { force: true }).catch(() => {});

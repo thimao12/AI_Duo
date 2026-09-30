@@ -9,7 +9,7 @@ const SIDEBAR_KEY = 'ai-duo:sidebar-hidden';
 const isWide = () => window.matchMedia('(min-width: 768px)').matches;
 
 function useHashRoute() {
-  const read = () => window.location.hash.match(/^#\/run\/([\w-]+)/)?.[1] ?? null;
+  const read = () => /^#\/run\/([\w-]+)/.exec(window.location.hash)?.[1] ?? null;
   const [runId, setRunId] = useState(read);
   useEffect(() => {
     const on = () => setRunId(read());
@@ -83,7 +83,11 @@ export default function App() {
     void refresh();
   };
   const rename = async (id: string, title: string) => { await api.rename(id, title); await refresh(); };
-  const remove = async (id: string) => { await api.delete(id); if (runId === id) open(null); await refresh(); };
+  const remove = async (id: string) => {
+    await api.delete(id);
+    if (runId === id) open(null);
+    await refresh();
+  };
 
   return (
     <div className="flex h-dvh overflow-hidden bg-bg text-fg">

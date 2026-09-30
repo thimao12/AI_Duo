@@ -12,7 +12,7 @@ const row = (active: boolean) =>
 const badge = (active: boolean) =>
   `grid size-6 shrink-0 place-items-center rounded-md text-[12px] font-semibold tabular-nums ${active ? 'bg-bg text-focus' : 'border border-line bg-surface text-muted'}`;
 
-export default function ChoiceQuestion({ runId, text, onContinue }: { runId: string; text: string; onContinue: () => void }) {
+export default function ChoiceQuestion({ runId, text, onContinue }: Readonly<{ runId: string; text: string; onContinue: () => void }>) {
   const question = parseChoiceQuestion(text);
   const [selected, setSelected] = useState<number | 'other' | null>(null);
   const [custom, setCustom] = useState('');
@@ -23,7 +23,9 @@ export default function ChoiceQuestion({ runId, text, onContinue }: { runId: str
   if (!question) return null;
 
   const questionText = question.question;
-  const answer = selected === 'other' ? custom.trim() : selected === null ? '' : question.options[selected];
+  let answer = '';
+  if (selected === 'other') answer = custom.trim();
+  else if (selected !== null) answer = question.options[selected] ?? '';
   async function submit() {
     if (!answer || busy) return;
     setBusy(true);
@@ -47,7 +49,7 @@ export default function ChoiceQuestion({ runId, text, onContinue }: { runId: str
       <div className="p-3">
         <div role="radiogroup" aria-label={question.question} className="space-y-2">
           {question.options.map((option, index) => (
-            <label key={index} className={row(selected === index)}>
+            <label key={option} className={row(selected === index)}>
               <input type="radio" name={`choice-${runId}`} checked={selected === index} onChange={() => setSelected(index)} disabled={busy} className="sr-only" />
               <span aria-hidden className={badge(selected === index)}>{index + 1}</span>
               <span className="min-w-0 pt-0.5 break-words">{option}</span>

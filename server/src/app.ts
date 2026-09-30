@@ -185,60 +185,65 @@ app.post('/api/runs/:id/plan-decision', (c) =>
   }),
 );
 
+type SseStream = Parameters<Parameters<typeof streamSSE>[1]>[0];
+
+async function followSavedRun(id: string, stream: SseStream, send: (e: RunEvent) => Promise<void>) {
+  let saved = await loadRun(id);
+  if (saved) await send({ type: 'snapshot', run: saved });
+  // Still "running" on disk only while another process (CLI, desktop) runs it: follow its checkpoints.
+  let last = JSON.stringify(saved);
+  let lastPing = Date.now();
+  while (saved?.status === 'running' && !stream.aborted) {
+    await stream.sleep(1500);
+    saved = await loadRun(id);
+    const text = JSON.stringify(saved);
+    if (saved && text !== last) {
+      await send({ type: 'snapshot', run: saved });
+      last = text;
+    } else if (Date.now() - lastPing > 14000) {
+      await stream.writeSSE({ event: 'ping', data: '' });
+      lastPing = Date.now();
+    }
+  }
+}
+
+async function followLiveRun(run: NonNullable<ReturnType<typeof service.handle>>, stream: SseStream, send: (e: RunEvent) => Promise<void>) {
+  const queue: RunEvent[] = [];
+  let wake: (() => void) | undefined;
+  const unsubscribe = run.subscribe((e) => {
+    queue.push(e);
+    wake?.();
+  });
+  stream.onAbort(() => {
+    unsubscribe();
+    wake?.();
+  });
+
+  await send({ type: 'snapshot', run: run.run });
+  let lastPing = Date.now();
+  while (!stream.aborted) {
+    while (queue.length) await send(queue.shift()!);
+    if (run.run.status !== 'running') break;
+    await new Promise<void>((r) => {
+      wake = r;
+      setTimeout(r, 15000);
+    });
+    wake = undefined;
+    if (Date.now() - lastPing > 14000) {
+      await stream.writeSSE({ event: 'ping', data: '' });
+      lastPing = Date.now();
+    }
+  }
+  unsubscribe();
+}
+
 app.get('/api/runs/:id/events', async (c) => {
   const id = c.req.param('id');
   return streamSSE(c, async (stream) => {
     const run = service.handle(id);
     const send = (e: RunEvent) => stream.writeSSE({ data: JSON.stringify(e) });
-
-    if (!run) {
-      let saved = await loadRun(id);
-      if (saved) await send({ type: 'snapshot', run: saved });
-      // Still "running" on disk only while another process (CLI, desktop) runs it: follow its checkpoints.
-      let last = JSON.stringify(saved);
-      let lastPing = Date.now();
-      while (saved?.status === 'running' && !stream.aborted) {
-        await stream.sleep(1500);
-        saved = await loadRun(id);
-        const text = JSON.stringify(saved);
-        if (saved && text !== last) {
-          await send({ type: 'snapshot', run: saved });
-          last = text;
-        } else if (Date.now() - lastPing > 14000) {
-          await stream.writeSSE({ event: 'ping', data: '' });
-          lastPing = Date.now();
-        }
-      }
-      return;
-    }
-
-    const queue: RunEvent[] = [];
-    let wake: (() => void) | undefined;
-    const unsubscribe = run.subscribe((e) => {
-      queue.push(e);
-      wake?.();
-    });
-    stream.onAbort(() => {
-      unsubscribe();
-      wake?.();
-    });
-
-    await send({ type: 'snapshot', run: run.run });
-    let lastPing = Date.now();
-    while (!stream.aborted) {
-      while (queue.length) await send(queue.shift()!);
-      if (run.run.status !== 'running') break;
-      await new Promise<void>((r) => {
-        wake = r;
-        setTimeout(r, 15000);
-      });
-      wake = undefined;
-      if (Date.now() - lastPing > 14000) {
-        await stream.writeSSE({ event: 'ping', data: '' });
-        lastPing = Date.now();
-      }
-    }
-    unsubscribe();
+    if (run) await followLiveRun(run, stream, send);
+    else await followSavedRun(id, stream, send);
   });
 });
 

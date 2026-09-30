@@ -53,9 +53,9 @@ export class RunContext {
   readonly abort = new AbortController();
   userCancelled = false;
   private finished = false;
-  private listeners = new Set<(e: RunEvent) => void>();
-  private inflightTurns = new Set<Promise<unknown>>();
-  private sessions: Map<string, string>;
+  private readonly listeners = new Set<(e: RunEvent) => void>();
+  private readonly inflightTurns = new Set<Promise<unknown>>();
+  private readonly sessions: Map<string, string>;
   private currentImages?: string[];
   private saveTimer?: NodeJS.Timeout;
   private saveInFlight?: Promise<void>;
@@ -204,7 +204,7 @@ export class RunContext {
     try {
       const res = await agents[t.agent].run({
         prompt: t.prompt,
-        images: this.currentImages ?? this.run.config.images?.map((image, index) => path.join(paths.dataDir, 'images', this.run.id, `${index}.${image.mimeType.split('/')[1] === 'jpeg' ? 'jpg' : image.mimeType.split('/')[1]}`)),
+        images: this.currentImages ?? this.imagePaths(),
         cwd: authorizeDirectory(this.run.config.cwd),
         role: t.role,
         sessionId: key ? this.sessions.get(key) : undefined,
@@ -226,16 +226,27 @@ export class RunContext {
       this.endMessage(m, 'done', verdict, res.usage);
       return { text: res.finalText, verdict };
     } catch (err) {
-      // An internal abort means another turn failed. Leave this message running so
-      // finish() can mark it as stopped without reporting a user cancellation.
-      if (err instanceof AbortedError && !this.userCancelled) throw err;
-      const rawMsg = this.userCancelled && err instanceof AbortedError ? 'Cancelled' : (err as Error).message;
-      const msg = classifyError(rawMsg);
-      this.pushEvent(m, { kind: 'error', content: msg });
-      this.endMessage(m, 'error');
-      if (msg === rawMsg) throw err;
-      throw new Error(msg, { cause: err });
+      this.failTurn(m, err);
     }
+  }
+
+  private imagePaths(): string[] | undefined {
+    return this.run.config.images?.map((image, index) => {
+      const subtype = image.mimeType.split('/')[1];
+      return path.join(paths.dataDir, 'images', this.run.id, index + '.' + (subtype === 'jpeg' ? 'jpg' : subtype));
+    });
+  }
+
+  private failTurn(m: Message, err: unknown): never {
+    // An internal abort means another turn failed. Leave this message running so
+    // finish() can mark it as stopped without reporting a user cancellation.
+    if (err instanceof AbortedError && !this.userCancelled) throw err;
+    const rawMsg = this.userCancelled && err instanceof AbortedError ? 'Cancelled' : (err as Error).message;
+    const msg = classifyError(rawMsg);
+    this.pushEvent(m, { kind: 'error', content: msg });
+    this.endMessage(m, 'error');
+    if (msg === rawMsg) throw err;
+    throw new Error(msg, { cause: err });
   }
 
   update(patch: Extract<RunEvent, { type: 'run.update' }>['patch']) {

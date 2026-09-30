@@ -56,7 +56,7 @@ export interface RunSummary {
   cwd: string;
   status: Run['status'];
   createdAt: number;
-  claudeLimits?: Run['claudeLimits'];
+  claudeLimits?: NonNullable<Run['claudeLimits']>;
 }
 
 export async function listRuns(): Promise<RunSummary[]> {

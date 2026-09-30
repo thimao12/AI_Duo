@@ -23,9 +23,11 @@ const THEME: Record<ThemePref, { icon: typeof Sun; label: string }> = {
 /** Every row leads with a 16px slot (icon, dot or chevron), so all sidebar labels start on one column. */
 const slot = 'grid size-4 shrink-0 place-items-center';
 
-function StatusMark({ status }: { status: RunSummary['status'] }) {
+const STATUS_DOT: Partial<Record<RunSummary['status'], string>> = { error: 'bg-danger', cancelled: 'bg-faint/60' };
+
+function StatusMark({ status }: Readonly<{ status: RunSummary['status'] }>) {
   if (status === 'running') return <span className={slot}><Spinner className="size-3.5 text-info" /></span>;
-  const cls = status === 'error' ? 'bg-danger' : status === 'cancelled' ? 'bg-faint/60' : 'bg-transparent';
+  const cls = STATUS_DOT[status] ?? 'bg-transparent';
   return <span aria-hidden className={slot}><span className={`size-2 rounded-full ${cls}`} /></span>;
 }
 
@@ -33,7 +35,7 @@ function StatusMark({ status }: { status: RunSummary['status'] }) {
  * Floating menu for one session, pinned to its ⋯ button. Fixed-positioned (and rendered outside the
  * aside, whose translate would otherwise trap it) so the scrolling list never clips or shifts it.
  */
-function SessionMenu({ anchor, label, onDismiss, children }: { anchor: HTMLElement; label: string; onDismiss: () => void; children: ReactNode }) {
+function SessionMenu({ anchor, label, onDismiss, children }: Readonly<{ anchor: HTMLElement; label: string; onDismiss: () => void; children: ReactNode }>) {
   const panel = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
 
@@ -102,7 +104,137 @@ function SessionMenu({ anchor, label, onDismiss, children }: { anchor: HTMLEleme
   );
 }
 
+const SIDEBAR_ROW = 'flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors';
+
 const menuRow = 'flex h-8 w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors hover:bg-surface focus-visible:bg-surface focus-visible:outline-none';
+
+type ClaudeLimit = { utilization: number; resetsAt?: number; createdAt: number };
+
+const LIMIT_LABEL: Record<string, string> = { five_hour: '5 giờ', seven_day: '7 ngày' };
+
+const cliState = (agents: AgentStatus | null, name: 'claude' | 'codex') => {
+  if (!agents) return 'Đang kiểm tra';
+  return agents[name] ? 'CLI sẵn sàng' : 'CLI chưa sẵn sàng';
+};
+
+function latestClaudeLimits(runs: RunSummary[]) {
+  return runs.flatMap((run) => Object.entries(run.claudeLimits ?? {}).map(([type, limit]) => ({ type, ...limit, createdAt: run.createdAt }))).reduce<Record<string, ClaudeLimit>>((latest, limit) => {
+    const existing = latest[limit.type];
+    if (!existing || limit.createdAt > existing.createdAt) latest[limit.type] = limit;
+    return latest;
+  }, {});
+}
+
+/** Sidebar footer: CLI availability plus the latest Claude quota seen in any run. */
+function AgentStatusPanel({ runs }: Readonly<{ runs: RunSummary[] }>) {
+  const [agents, setAgents] = useState<AgentStatus | null>(null);
+  const [showClaudeUsage, setShowClaudeUsage] = useState(false);
+  const [showCodexStatus, setShowCodexStatus] = useState(false);
+  const claudeLimits = latestClaudeLimits(runs);
+  const row = SIDEBAR_ROW;
+
+  useEffect(() => {
+    let mounted = true;
+    const refresh = () => api.agents().then((value) => { if (mounted) setAgents(value); }, () => { if (mounted) setAgents(null); });
+    void refresh();
+    const timer = setInterval(() => { void refresh(); }, 60_000);
+    return () => { mounted = false; clearInterval(timer); };
+  }, []);
+
+  return (
+  <div className="mb-2 space-y-0.5">
+    <button type="button" aria-expanded={showClaudeUsage} onClick={() => setShowClaudeUsage((shown) => !shown)} className={`${row} h-9 text-muted hover:bg-surface-2 hover:text-fg`}>
+      <span aria-hidden className={slot}><span className="size-2 rounded-full bg-claude" /></span>
+      <span className="min-w-0 flex-1">Claude usage</span>
+      <span className={`text-[11px] ${agents?.claude ? 'text-ok' : 'text-faint'}`}>{cliState(agents, 'claude')}</span>
+      <ChevronRight aria-hidden className={`size-3 transition-transform ${showClaudeUsage ? 'rotate-90' : ''}`} />
+    </button>
+    {showClaudeUsage && (
+      <div className="mx-2 rounded-lg border border-line bg-bg px-2.5 py-2 text-[11.5px] leading-relaxed text-muted">
+        {Object.keys(claudeLimits).length ? Object.entries(claudeLimits).map(([type, limit]) => (
+          <div key={type} className="flex justify-between gap-2">
+            <span>{LIMIT_LABEL[type] ?? type}</span>
+            <span className="font-medium text-fg">{Math.round(limit.utilization * 100)}%{limit.resetsAt ? ` · reset ${new Date(limit.resetsAt * 1000).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}</span>
+          </div>
+        )) : <p>Chưa có dữ liệu. Phần trăm sẽ hiện sau khi Claude gửi thông tin quota trong phiên làm việc.</p>}
+      </div>
+    )}
+    <button type="button" aria-expanded={showCodexStatus} onClick={() => setShowCodexStatus((shown) => !shown)} className={`${row} h-9 text-muted hover:bg-surface-2 hover:text-fg`}>
+      <span aria-hidden className={slot}><span className="size-2 rounded-full bg-codex" /></span>
+      <span className="min-w-0 flex-1">Codex status</span>
+      <span className={`text-[11px] ${agents?.codex ? 'text-ok' : 'text-faint'}`}>{cliState(agents, 'codex')}</span>
+      <ChevronRight aria-hidden className={`size-3 transition-transform ${showCodexStatus ? 'rotate-90' : ''}`} />
+    </button>
+    {showCodexStatus && (
+      <div className="mx-2 rounded-lg border border-line bg-bg px-2.5 py-2 text-[11.5px] leading-relaxed text-muted">
+        <p>{agents?.codex ? `Codex CLI ${agents.codex}` : agents?.codexError || 'Chưa đọc được trạng thái Codex CLI.'}</p>
+        <p className="mt-1">Để xem hạn mức tài khoản, nhập <code className="font-mono text-fg">/status</code> trong Codex.</p>
+      </div>
+    )}
+  </div>
+  );
+}
+
+interface SessionMenuBodyProps {
+  run: RunSummary;
+  editing: boolean;
+  confirming: boolean;
+  draftTitle: string;
+  pending: boolean;
+  titleInput: (element: HTMLInputElement | null) => void;
+  onDraftChange: (title: string) => void;
+  onRename: () => void;
+  onRemove: () => void;
+  onCancel: () => void;
+  onStartRename: () => void;
+  onStartRemove: () => void;
+}
+
+function SessionMenuBody({ editing, confirming, draftTitle, pending, titleInput, onDraftChange, onRename, onRemove, onCancel, onStartRename, onStartRemove }: Readonly<SessionMenuBodyProps>) {
+  if (editing) {
+    return (
+      <form onSubmit={(e) => { e.preventDefault(); onRename(); }} className="p-1.5">
+        <input
+          ref={titleInput}
+          maxLength={120}
+          aria-label="Tên phiên mới"
+          value={draftTitle}
+          onChange={(e) => onDraftChange(e.target.value)}
+          onFocus={(e) => e.currentTarget.select()}
+          className="h-8 w-full rounded-lg border border-line bg-bg px-2.5 text-[13px] text-fg focus:border-line-strong focus:outline-none"
+        />
+        <div className="mt-2 flex justify-end gap-1">
+          <button type="button" onClick={onCancel} className="h-7 rounded-lg px-2.5 text-[12.5px] text-muted hover:bg-surface hover:text-fg">Hủy</button>
+          <button type="submit" disabled={!draftTitle.trim() || pending} className="h-7 rounded-lg bg-primary px-2.5 text-[12.5px] font-medium text-primary-fg disabled:opacity-50">Lưu</button>
+        </div>
+      </form>
+    );
+  }
+  if (confirming) {
+    return (
+      <div className="p-1.5">
+        <p className="px-1 text-[13px] text-fg">Xóa phiên này?</p>
+        <p className="mt-0.5 px-1 text-[12px] leading-snug text-faint">Lịch sử và ảnh đính kèm sẽ bị xóa vĩnh viễn.</p>
+        <div className="mt-2 flex justify-end gap-1">
+          <button type="button" onClick={onCancel} className="h-7 rounded-lg px-2.5 text-[12.5px] text-muted hover:bg-surface hover:text-fg">Hủy</button>
+          <button type="button" disabled={pending} onClick={onRemove} className="h-7 rounded-lg bg-danger px-2.5 text-[12.5px] font-medium text-white disabled:opacity-50">Xóa</button>
+        </div>
+      </div>
+    );
+  }
+  return (
+    <>
+      <button type="button" role="menuitem" onClick={onStartRename} className={`${menuRow} text-fg`}>
+        <Pencil aria-hidden className="size-4 shrink-0 text-muted" />
+        Đổi tên
+      </button>
+      <button type="button" role="menuitem" onClick={onStartRemove} className={`${menuRow} text-danger`}>
+        <Trash2 aria-hidden className="size-4 shrink-0" />
+        Xóa
+      </button>
+    </>
+  );
+}
 
 interface SidebarProps {
   runs: RunSummary[];
@@ -118,7 +250,7 @@ interface SidebarProps {
   onHide: () => void;
 }
 
-export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, theme, open, onClose, hidden, onHide }: SidebarProps) {
+export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, theme, open, onClose, hidden, onHide }: Readonly<SidebarProps>) {
   const [query, setQuery] = useState('');
   const [collapsed, setCollapsed] = useState(loadCollapsed);
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -129,22 +261,6 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [agents, setAgents] = useState<AgentStatus | null>(null);
-  const [showClaudeUsage, setShowClaudeUsage] = useState(false);
-  const [showCodexStatus, setShowCodexStatus] = useState(false);
-  const claudeLimits = runs.flatMap((run) => Object.entries(run.claudeLimits ?? {}).map(([type, limit]) => ({ type, ...limit, createdAt: run.createdAt }))).reduce<Record<string, { utilization: number; resetsAt?: number; createdAt: number }>>((latest, limit) => {
-    const existing = latest[limit.type];
-    if (!existing || limit.createdAt > existing.createdAt) latest[limit.type] = limit;
-    return latest;
-  }, {});
-
-  useEffect(() => {
-    let mounted = true;
-    const refresh = () => api.agents().then((value) => { if (mounted) setAgents(value); }, () => { if (mounted) setAgents(null); });
-    void refresh();
-    const timer = setInterval(() => { void refresh(); }, 60_000);
-    return () => { mounted = false; clearInterval(timer); };
-  }, []);
 
   const closeActions = () => { setMenuId(null); setMenuAnchor(null); setEditingId(null); setConfirmId(null); setActionError(null); };
   const menuRun = menuId ? runs.find((r) => r.id === menuId) : undefined;
@@ -187,7 +303,7 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
     });
 
   const ThemeIcon = THEME[theme.pref].icon;
-  const row = 'flex w-full items-center gap-2.5 rounded-lg px-2.5 text-left text-[13px] transition-colors';
+  const row = SIDEBAR_ROW;
 
   return (
     <>
@@ -299,36 +415,7 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
         </nav>
 
         <div className="shrink-0 border-t border-line px-2 py-2">
-          <div className="mb-2 space-y-0.5">
-            <button type="button" aria-expanded={showClaudeUsage} onClick={() => setShowClaudeUsage((shown) => !shown)} className={`${row} h-9 text-muted hover:bg-surface-2 hover:text-fg`}>
-              <span aria-hidden className={slot}><span className="size-2 rounded-full bg-claude" /></span>
-              <span className="min-w-0 flex-1">Claude usage</span>
-              <span className={`text-[11px] ${agents?.claude ? 'text-ok' : 'text-faint'}`}>{agents ? agents.claude ? 'CLI sẵn sàng' : 'CLI chưa sẵn sàng' : 'Đang kiểm tra'}</span>
-              <ChevronRight aria-hidden className={`size-3 transition-transform ${showClaudeUsage ? 'rotate-90' : ''}`} />
-            </button>
-            {showClaudeUsage && (
-              <div className="mx-2 rounded-lg border border-line bg-bg px-2.5 py-2 text-[11.5px] leading-relaxed text-muted">
-                {Object.keys(claudeLimits).length ? Object.entries(claudeLimits).map(([type, limit]) => (
-                  <div key={type} className="flex justify-between gap-2">
-                    <span>{type === 'five_hour' ? '5 giờ' : type === 'seven_day' ? '7 ngày' : type}</span>
-                    <span className="font-medium text-fg">{Math.round(limit.utilization * 100)}%{limit.resetsAt ? ` · reset ${new Date(limit.resetsAt * 1000).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}` : ''}</span>
-                  </div>
-                )) : <p>Chưa có dữ liệu. Phần trăm sẽ hiện sau khi Claude gửi thông tin quota trong phiên làm việc.</p>}
-              </div>
-            )}
-            <button type="button" aria-expanded={showCodexStatus} onClick={() => setShowCodexStatus((shown) => !shown)} className={`${row} h-9 text-muted hover:bg-surface-2 hover:text-fg`}>
-              <span aria-hidden className={slot}><span className="size-2 rounded-full bg-codex" /></span>
-              <span className="min-w-0 flex-1">Codex status</span>
-              <span className={`text-[11px] ${agents?.codex ? 'text-ok' : 'text-faint'}`}>{agents ? agents.codex ? 'CLI sẵn sàng' : 'CLI chưa sẵn sàng' : 'Đang kiểm tra'}</span>
-              <ChevronRight aria-hidden className={`size-3 transition-transform ${showCodexStatus ? 'rotate-90' : ''}`} />
-            </button>
-            {showCodexStatus && (
-              <div className="mx-2 rounded-lg border border-line bg-bg px-2.5 py-2 text-[11.5px] leading-relaxed text-muted">
-                <p>{agents?.codex ? `Codex CLI ${agents.codex}` : agents?.codexError || 'Chưa đọc được trạng thái Codex CLI.'}</p>
-                <p className="mt-1">Để xem hạn mức tài khoản, nhập <code className="font-mono text-fg">/status</code> trong Codex.</p>
-              </div>
-            )}
-          </div>
+          <AgentStatusPanel runs={runs} />
           <button type="button" onClick={theme.cycle} title="Đổi giao diện sáng/tối" className={`${row} h-8 text-muted hover:bg-surface-2 hover:text-fg`}>
             <ThemeIcon aria-hidden className="size-4 shrink-0" />
             Giao diện: {THEME[theme.pref].label}
@@ -338,43 +425,20 @@ export default function Sidebar({ runs, activeId, onOpen, onRename, onDelete, th
       {open && <div aria-hidden className="fixed inset-0 z-30 bg-black/40 md:hidden" onClick={onClose} />}
       {menuRun && menuAnchor && (
         <SessionMenu anchor={menuAnchor} label={`Tùy chọn phiên ${menuRun.title || titleOf(menuRun.prompt)}`} onDismiss={closeActions}>
-          {editingId === menuRun.id ? (
-            <form onSubmit={(e) => { e.preventDefault(); void rename(menuRun.id); }} className="p-1.5">
-              <input
-                ref={titleInput}
-                maxLength={120}
-                aria-label="Tên phiên mới"
-                value={draftTitle}
-                onChange={(e) => setDraftTitle(e.target.value)}
-                onFocus={(e) => e.currentTarget.select()}
-                className="h-8 w-full rounded-lg border border-line bg-bg px-2.5 text-[13px] text-fg focus:border-line-strong focus:outline-none"
-              />
-              <div className="mt-2 flex justify-end gap-1">
-                <button type="button" onClick={closeActions} className="h-7 rounded-lg px-2.5 text-[12.5px] text-muted hover:bg-surface hover:text-fg">Hủy</button>
-                <button type="submit" disabled={!draftTitle.trim() || pending} className="h-7 rounded-lg bg-primary px-2.5 text-[12.5px] font-medium text-primary-fg disabled:opacity-50">Lưu</button>
-              </div>
-            </form>
-          ) : confirmId === menuRun.id ? (
-            <div className="p-1.5">
-              <p className="px-1 text-[13px] text-fg">Xóa phiên này?</p>
-              <p className="mt-0.5 px-1 text-[12px] leading-snug text-faint">Lịch sử và ảnh đính kèm sẽ bị xóa vĩnh viễn.</p>
-              <div className="mt-2 flex justify-end gap-1">
-                <button type="button" onClick={closeActions} className="h-7 rounded-lg px-2.5 text-[12.5px] text-muted hover:bg-surface hover:text-fg">Hủy</button>
-                <button type="button" disabled={pending} onClick={() => void remove(menuRun.id)} className="h-7 rounded-lg bg-danger px-2.5 text-[12.5px] font-medium text-white disabled:opacity-50">Xóa</button>
-              </div>
-            </div>
-          ) : (
-            <>
-              <button type="button" role="menuitem" onClick={() => { setEditingId(menuRun.id); setDraftTitle(menuRun.title || titleOf(menuRun.prompt)); }} className={`${menuRow} text-fg`}>
-                <Pencil aria-hidden className="size-4 shrink-0 text-muted" />
-                Đổi tên
-              </button>
-              <button type="button" role="menuitem" onClick={() => setConfirmId(menuRun.id)} className={`${menuRow} text-danger`}>
-                <Trash2 aria-hidden className="size-4 shrink-0" />
-                Xóa
-              </button>
-            </>
-          )}
+          <SessionMenuBody
+            run={menuRun}
+            editing={editingId === menuRun.id}
+            confirming={confirmId === menuRun.id}
+            draftTitle={draftTitle}
+            pending={pending}
+            titleInput={titleInput}
+            onDraftChange={setDraftTitle}
+            onRename={() => void rename(menuRun.id)}
+            onRemove={() => void remove(menuRun.id)}
+            onCancel={closeActions}
+            onStartRename={() => { setEditingId(menuRun.id); setDraftTitle(menuRun.title || titleOf(menuRun.prompt)); }}
+            onStartRemove={() => setConfirmId(menuRun.id)}
+          />
           {actionError && <p role="alert" className="px-2.5 py-1 text-[12px] text-danger">{actionError}</p>}
         </SessionMenu>
       )}

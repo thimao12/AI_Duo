@@ -2,7 +2,7 @@ import { Check, Copy, X } from 'lucide-react';
 import { useState } from 'react';
 import DiffView, { type FileDiff } from './DiffView.tsx';
 
-export default function ChangesPanel({ files, diff, onClose }: { files: FileDiff[]; diff: string; onClose: () => void }) {
+export default function ChangesPanel({ files, diff, onClose }: Readonly<{ files: FileDiff[]; diff: string; onClose: () => void }>) {
   const [copied, setCopied] = useState(false);
   const added = files.reduce((s, f) => s + f.added, 0);
   const removed = files.reduce((s, f) => s + f.removed, 0);

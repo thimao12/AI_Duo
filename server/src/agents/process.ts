@@ -1,4 +1,5 @@
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import path from 'node:path';
 
 export interface SpawnJsonlOptions {
   cwd: string;
@@ -72,7 +73,7 @@ function killTree(pid: number | undefined, child?: ChildProcess): Promise<void> 
   if (!pid) return Promise.resolve();
   if (process.platform === 'win32') {
     return new Promise((resolve) => {
-      execFile('taskkill', ['/PID', String(pid), '/T', '/F'], (err) => {
+      execFile(path.join(process.env.SystemRoot ?? String.raw`C:\Windows`, 'System32', 'taskkill.exe'), ['/PID', String(pid), '/T', '/F'], (err) => {
         if (err) child?.kill();
         resolve();
       });

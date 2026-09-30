@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ArrowUp, CircleAlert, Folder, FolderOpen, GitMerge, ImagePlus, ListTodo, SlidersHorizontal, Sparkles, Waypoints, X } from 'lucide-react';
-import { api, type AgentName, type AgentStatus, type ModelCatalog, type NewRunRequest, type RoutePreview, type RunConfig } from '../api.ts';
+import { api, type AgentStatus, type ModelCatalog, type NewRunRequest, type RoutePreview, type RunConfig } from '../api.ts';
 import ModelPicker from './ModelPicker.tsx';
 import { AGENT_LABEL, basename, MenuItem, MenuLabel, MODE_LABEL, Popover, Spinner, useInputFocus } from './ui.tsx';
 import { loadDraftImages, saveDraftImages, type DraftImage } from '../draft-images.ts';
@@ -132,7 +132,7 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
     try {
       const added = await Promise.all(files.map((file) => new Promise<DraftImage>((resolve, reject) => {
         const reader = new FileReader();
-        reader.onload = () => resolve({ name: file.name, dataUrl: String(reader.result) });
+        reader.onload = () => resolve({ name: file.name, dataUrl: typeof reader.result === 'string' ? reader.result : '' });
         reader.onerror = () => reject(new Error(reader.error?.message ?? 'Image file could not be read', { cause: reader.error }));
         reader.readAsDataURL(file);
       })));
@@ -158,6 +158,113 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
   return { form, set, setForm, agents, catalog, preview, error, busy, submit, auto, images, imagesReady, removeImage, addImages };
 }
 
+function placeholderFor(hero: boolean, threadId: string | undefined, cwd: string): string {
+  if (hero) return 'Mô tả vấn đề hoặc task. Ví dụ: sửa lỗi upload file rỗng, viết test cho nó';
+  if (threadId) return 'Nhắn tiếp trong phiên này…';
+  return `Task mới trong ${basename(cwd || '…')}. Sẽ tạo phiên mới.`;
+}
+
+function submitLabel(busy: boolean, analyzing: boolean): string {
+  if (!busy) return 'Gửi';
+  return analyzing ? 'Đang phân tích task' : 'Đang khởi động';
+}
+
+function modeHint(mode: Mode, preview: RoutePreview | null): string {
+  if (mode === 'code') {
+    return preview
+      ? `${AGENT_LABEL[preview.coder]} code, ${AGENT_LABEL[preview.reviewer]} review và chạy test. Hỏi bạn sau 2 vòng chưa approve.`
+      : 'Router tự chọn agent code và review theo task.';
+  }
+  return preview
+    ? `${AGENT_LABEL[preview.coder]} lập kế hoạch, ${AGENT_LABEL[preview.reviewer]} review. Chỉ sửa repo sau khi bạn duyệt.`
+    : 'Hai agent sẽ lập và review kế hoạch trước khi hỏi bạn.';
+}
+
+function ImageStrip({ images, onRemove }: Readonly<{ images: DraftImage[]; onRemove: (index: number) => Promise<void> }>) {
+  if (images.length === 0) return null;
+  return (
+    <div className="mb-2 flex flex-wrap gap-2 px-1" aria-label="Ảnh đính kèm">
+      {images.map((image, index) => (
+        <div key={`${image.name}-${index}`} className="relative size-16 overflow-hidden rounded-lg border border-line bg-surface" title={image.name}>
+          <img src={image.dataUrl} alt={image.name} className="size-full object-cover" />
+          <button type="button" onClick={() => void onRemove(index)} aria-label={`Xóa ảnh ${image.name}`} className="absolute top-0 right-0 rounded-bl bg-bg/90 p-0.5 text-fg">
+            <X aria-hidden className="size-3.5" />
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ProjectPicker({ side, cwd, recent, onChange }: Readonly<{ side: 'top' | 'bottom'; cwd: string; recent: string[]; onChange: (cwd: string) => void }>) {
+  const [typingPath, setTypingPath] = useState(false);
+  const pathInput = useInputFocus<HTMLInputElement>();
+
+  const pick = async (close: () => void) => {
+    const dir = await desktop?.pickFolder(cwd);
+    if (dir) onChange(dir);
+    close();
+  };
+
+  return (
+    <Popover
+      side={side}
+      width="w-80"
+      title={cwd}
+      label={
+        <>
+          <Folder aria-hidden className="size-3.5 shrink-0" />
+          <span className="truncate">{cwd ? basename(cwd) : 'Chọn project'}</span>
+        </>
+      }
+    >
+      {(close) => (
+        <>
+          <MenuLabel>Project</MenuLabel>
+          {recent.map((p) => (
+            <MenuItem
+              key={p}
+              selected={p === cwd}
+              icon={<Folder className="size-3.5" />}
+              label={basename(p)}
+              hint={<span className="block truncate font-mono text-[11px]">{p}</span>}
+              onSelect={() => {
+                onChange(p);
+                close();
+              }}
+            />
+          ))}
+          <div className="my-1 border-t border-line" />
+          {desktop && <MenuItem icon={<FolderOpen className="size-3.5" />} label="Chọn thư mục…" onSelect={() => void pick(close)} />}
+          {typingPath ? (
+            <div className="px-1.5 py-1">
+              <input
+                ref={pathInput}
+                defaultValue={cwd}
+                placeholder="C:\path\to\repo"
+                className={`${field} font-mono`}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    onChange(e.currentTarget.value.trim());
+                    setTypingPath(false);
+                    close();
+                  }
+                }}
+              />
+            </div>
+          ) : (
+            <MenuItem label="Nhập đường dẫn…" onSelect={() => setTypingPath(true)} />
+          )}
+          <p className="px-2.5 pt-1 pb-1.5 text-[11.5px] leading-snug text-faint">
+            Code có thể sửa file trong repo Git (không tự commit). Plan chỉ đọc cho tới khi bạn duyệt kế hoạch.
+          </p>
+        </>
+      )}
+    </Popover>
+  );
+}
+
 export interface ComposerSeed {
   prompt: string;
   mode: Mode;
@@ -180,12 +287,10 @@ interface ComposerProps {
 const field =
   'w-full rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[13px] text-fg placeholder:text-faint transition-colors hover:border-line-strong focus:border-focus focus:outline-none placeholder:font-sans';
 
-export default function Composer({ variant, projects, onCreated, threadCwd, threadId, threadMode, onContinue, seed, onAgents }: ComposerProps) {
+export default function Composer({ variant, projects, onCreated, threadCwd, threadId, threadMode, onContinue, seed, onAgents }: Readonly<ComposerProps>) {
   const { form, set, setForm, agents, catalog, preview, error, busy, submit, auto, images, imagesReady, removeImage, addImages } = useNewRunForm(onCreated, threadCwd, threadId, threadMode, onContinue);
   const text = useRef<HTMLTextAreaElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
-  const [typingPath, setTypingPath] = useState(false);
-  const pathInput = useInputFocus<HTMLInputElement>();
   const hero = variant === 'hero';
   const side = hero ? 'bottom' : 'top';
 
@@ -209,26 +314,23 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
   const recent = [...new Set([form.cwd, ...projects].filter(Boolean))].slice(0, 8);
   const canSend = imagesReady && (!!form.prompt.trim() || images.length > 0) && !busy;
 
-  const pick = async (close: () => void) => {
-    const dir = await desktop?.pickFolder(form.cwd);
-    if (dir) set('cwd', dir);
-    close();
+  const onPromptKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const composing = e.nativeEvent.isComposing || e.keyCode === 229;
+    // Enter sends, Shift+Enter breaks the line; never while an IME (Telex/VNI) is composing.
+    if (e.key === 'Enter' && !e.shiftKey && !composing) {
+      e.preventDefault();
+      void submit();
+    }
+    // Shift+Tab toggles Code ↔ Plan; plain Tab still moves focus.
+    if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.repeat && !composing) {
+      e.preventDefault();
+      setForm((f) => ({ ...f, mode: f.mode === 'plan' ? 'code' : 'plan', maxRounds: 2 }));
+    }
   };
 
   return (
     <div className={hero ? '' : 'pb-4'}>
-      {images.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-2 px-1" aria-label="Ảnh đính kèm">
-          {images.map((image, index) => (
-            <div key={`${image.name}-${index}`} className="relative size-16 overflow-hidden rounded-lg border border-line bg-surface" title={image.name}>
-              <img src={image.dataUrl} alt={image.name} className="size-full object-cover" />
-              <button type="button" onClick={() => void removeImage(index)} aria-label={`Xóa ảnh ${image.name}`} className="absolute top-0 right-0 rounded-bl bg-bg/90 p-0.5 text-fg">
-                <X aria-hidden className="size-3.5" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <ImageStrip images={images} onRemove={removeImage} />
       <form
         onSubmit={(e) => {
           e.preventDefault();
@@ -252,23 +354,8 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
               void addImages(files);
             }
           }}
-          onKeyDown={(e) => {
-            // Enter sends, Shift+Enter breaks the line; never while an IME (Telex/VNI) is composing.
-            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing && e.keyCode !== 229) {
-              e.preventDefault();
-              void submit();
-            }
-            // Shift+Tab toggles Code ↔ Plan; plain Tab still moves focus.
-            if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.repeat && !e.nativeEvent.isComposing && e.keyCode !== 229) {
-              e.preventDefault();
-              setForm((f) => ({ ...f, mode: f.mode === 'plan' ? 'code' : 'plan', maxRounds: 2 }));
-            }
-          }}
-          placeholder={
-            hero
-              ? 'Mô tả vấn đề hoặc task. Ví dụ: sửa lỗi upload file rỗng, viết test cho nó'
-              : threadId ? 'Nhắn tiếp trong phiên này…' : `Task mới trong ${basename(form.cwd || '…')}. Sẽ tạo phiên mới.`
-          }
+          onKeyDown={onPromptKeyDown}
+          placeholder={placeholderFor(hero, threadId, form.cwd)}
           className={`composer-input block w-full resize-none bg-transparent px-4 text-[14.5px] leading-relaxed text-fg placeholder:text-faint focus:outline-none ${hero ? 'min-h-24 pt-4 pb-2' : 'min-h-11 pt-3 pb-1'}`}
         />
 
@@ -288,75 +375,20 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
             <button type="button" onClick={() => imageInput.current?.click()} aria-label="Thêm ảnh" title="Thêm ảnh" disabled={!imagesReady} className="grid size-8 shrink-0 place-items-center rounded-lg text-muted hover:bg-surface hover:text-fg disabled:opacity-50">
               <ImagePlus aria-hidden className="size-4" />
             </button>
-            <>
             {threadId ? (
               <span title={threadCwd || form.cwd} className="inline-flex h-8 max-w-40 items-center gap-1.5 px-2 text-[12.5px] text-muted">
                 <Folder aria-hidden className="size-3.5 shrink-0" />
                 <span className="truncate">{basename(threadCwd || form.cwd || 'Project')}</span>
               </span>
             ) : (
-            <Popover
-              side={side}
-              width="w-80"
-              title={form.cwd}
-              label={
-                <>
-                  <Folder aria-hidden className="size-3.5 shrink-0" />
-                  <span className="truncate">{form.cwd ? basename(form.cwd) : 'Chọn project'}</span>
-                </>
-              }
-            >
-              {(close) => (
-                <>
-                  <MenuLabel>Project</MenuLabel>
-                  {recent.map((p) => (
-                    <MenuItem
-                      key={p}
-                      selected={p === form.cwd}
-                      icon={<Folder className="size-3.5" />}
-                      label={basename(p)}
-                      hint={<span className="block truncate font-mono text-[11px]">{p}</span>}
-                      onSelect={() => {
-                        set('cwd', p);
-                        close();
-                      }}
-                    />
-                  ))}
-                  <div className="my-1 border-t border-line" />
-                  {desktop && <MenuItem icon={<FolderOpen className="size-3.5" />} label="Chọn thư mục…" onSelect={() => void pick(close)} />}
-                  {typingPath ? (
-                    <div className="px-1.5 py-1">
-                      <input
-                        ref={pathInput}
-                        defaultValue={form.cwd}
-                        placeholder="C:\path\to\repo"
-                        className={`${field} font-mono`}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            set('cwd', e.currentTarget.value.trim());
-                            setTypingPath(false);
-                            close();
-                          }
-                        }}
-                      />
-                    </div>
-                  ) : (
-                    <MenuItem label="Nhập đường dẫn…" onSelect={() => setTypingPath(true)} />
-                  )}
-                  <p className="px-2.5 pt-1 pb-1.5 text-[11.5px] leading-snug text-faint">
-                    Code có thể sửa file trong repo Git (không tự commit). Plan chỉ đọc cho tới khi bạn duyệt kế hoạch.
-                  </p>
-                </>
-              )}
-            </Popover>
+              <ProjectPicker side={side} cwd={form.cwd} recent={recent} onChange={(cwd) => set('cwd', cwd)} />
             )}
 
             {form.mode === 'plan' && (
-              <span role="status" title="Shift + Tab để quay lại Code" className="inline-flex h-8 items-center gap-1.5 px-2 text-[12.5px] font-medium text-fg">
+              <output title="Shift + Tab để quay lại Code" className="inline-flex h-8 items-center gap-1.5 px-2 text-[12.5px] font-medium text-fg">
                 <PlanIcon aria-hidden className="size-3.5 shrink-0" />
                 {MODE_LABEL.plan}
-              </span>
+              </output>
             )}
 
             {(['codex', 'claude'] as const).map((a) => (
@@ -407,13 +439,12 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
                 </div>
               )}
             </Popover>
-            </>
           </div>
 
           <button
             type="submit"
             disabled={!canSend}
-            aria-label={busy ? (auto && preview?.askHaiku ? 'Đang phân tích task' : 'Đang khởi động') : 'Gửi'}
+            aria-label={submitLabel(busy, auto && !!preview?.askHaiku)}
             title="Gửi (Enter)"
             className="grid size-8 shrink-0 place-items-center rounded-full bg-primary text-primary-fg transition-[opacity,transform] hover:opacity-85 active:scale-95 disabled:bg-surface-2 disabled:text-faint"
           >
@@ -430,9 +461,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
       )}
       {hero && (
         <p className="mt-2.5 px-2 text-[12px] text-faint">
-            {form.mode === 'code'
-              ? preview ? `${AGENT_LABEL[preview.coder]} code, ${AGENT_LABEL[preview.reviewer]} review và chạy test. Hỏi bạn sau 2 vòng chưa approve.` : 'Router tự chọn agent code và review theo task.'
-              : preview ? `${AGENT_LABEL[preview.coder]} lập kế hoạch, ${AGENT_LABEL[preview.reviewer]} review. Chỉ sửa repo sau khi bạn duyệt.` : 'Hai agent sẽ lập và review kế hoạch trước khi hỏi bạn.'}
+            {modeHint(form.mode, preview)}
             {' '}Enter để gửi, Shift + Enter để xuống dòng, Shift + Tab để chuyển Code/Plan.
         </p>
       )}

@@ -18,7 +18,7 @@ export function cliVersionLabel(version: string): string {
   return label.startsWith('codex-cli') ? label.slice('codex-cli'.length).trimStart() : label;
 }
 
-function CliStatus({ agents }: { agents: AgentStatus | null }) {
+function CliStatus({ agents }: Readonly<{ agents: AgentStatus | null }>) {
   if (!agents) return null;
   const items = [
     { name: 'Claude', version: agents.claude, error: agents.claudeError, path: agents.claudePath },
@@ -38,7 +38,7 @@ function CliStatus({ agents }: { agents: AgentStatus | null }) {
   );
 }
 
-export default function EmptyState({ projects, onCreated, onMenu, sidebarHidden }: { projects: string[]; onCreated: (id: string) => void; onMenu: () => void; sidebarHidden: boolean }) {
+export default function EmptyState({ projects, onCreated, onMenu, sidebarHidden }: Readonly<{ projects: string[]; onCreated: (id: string) => void; onMenu: () => void; sidebarHidden: boolean }>) {
   const [seed, setSeed] = useState<ComposerSeed>();
   const [agents, setAgents] = useState<AgentStatus | null>(null);
   const onAgents = useCallback((a: AgentStatus | null) => setAgents(a), []);

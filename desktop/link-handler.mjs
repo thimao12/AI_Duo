@@ -29,7 +29,7 @@ export function openAgentLink(raw, appUrl, { statSync, shell }) {
   // UNC / device paths (\\server\share, //?/…): even stat() would contact the remote host and can leak NTLM credentials.
   if (/^[\\/]{2}/.test(p)) return;
   // A ':' after the drive letter is an NTFS alternate data stream (run.bat:x.md) that would fool the extension check.
-  if (p.indexOf(':', 2) !== -1) return;
+  if (p.includes(':', 2)) return;
 
   let stats;
   try {

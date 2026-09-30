@@ -83,18 +83,36 @@ export class DecisionController {
 
   private async plan(decision: PlanDecision) {
     const handle = this.handle!;
-    const { style } = this.io;
     if (!handle.run.planDecision) return;
     if (this.policy.plan || !this.policy.interactive) {
-      const action = this.policy.plan ?? 'stop';
-      this.say(style.cyan(`Plan decision: ${action}${this.policy.plan ? ' (--plan-decision)' : ' (no terminal; pass --plan-decision=approve to implement the plan)'}`));
-      if (!(await this.answerPlan({ action })) && action === 'approve') {
-        // Code cannot start here: keep the plan and fail the command instead of leaving it waiting.
-        this.problem = 'Plan approval was refused, so the plan was stopped without running Code.';
-        await this.answerPlan({ action: 'stop' });
-      }
+      await this.planByPolicy();
       return;
     }
+    await this.planByAsking(decision);
+  }
+
+  private async planByPolicy() {
+    const { style } = this.io;
+    const action = this.policy.plan ?? 'stop';
+    const source = this.policy.plan ? ' (--plan-decision)' : ' (no terminal; pass --plan-decision=approve to implement the plan)';
+    this.say(style.cyan(`Plan decision: ${action}${source}`));
+    if (!(await this.answerPlan({ action })) && action === 'approve') {
+      // Code cannot start here: keep the plan and fail the command instead of leaving it waiting.
+      this.problem = 'Plan approval was refused, so the plan was stopped without running Code.';
+      await this.answerPlan({ action: 'stop' });
+    }
+  }
+
+  /** stdin closed while a plan prompt was open: stop the plan unless it was answered meanwhile. */
+  private async stopPlanOnClosedStdin() {
+    if (!this.handle!.run.planDecision) return; // answered or cancelled meanwhile
+    this.say(this.io.style.yellow('stdin closed; cannot collect decision'));
+    await this.answerPlan({ action: 'stop' });
+  }
+
+  private async planByAsking(decision: PlanDecision) {
+    const handle = this.handle!;
+    const { style } = this.io;
     this.say(`\n${style.bold('── Kế hoạch ──')}\n${handle.run.final ?? ''}\n`);
     const reviewed = decision.reviewRounds ? `, ${decision.reviewRounds} review round(s)` : '';
     this.say(style.bold(`Plan ready (revision ${decision.revision}${reviewed}).`));
@@ -103,44 +121,56 @@ export class DecisionController {
       const approve = decision.codeBlocked ? style.dim('[a]pprove (needs Git)') : `${style.bold('[a]pprove')} and implement`;
       const answer = await this.ask(`${approve} · ${style.bold('[r]efine')} with feedback · ${style.bold('[s]top')} › `);
       if (answer === undefined) {
-        if (!handle.run.planDecision) return; // answered or cancelled meanwhile
-        this.say(style.yellow('stdin closed; cannot collect decision'));
-        await this.answerPlan({ action: 'stop' });
+        await this.stopPlanOnClosedStdin();
         return;
       }
-      const choice = answer.trim().toLowerCase();
-      // A refused approval (not a Git repository) leaves the plan waiting: ask again.
-      if ((choice === 'a' || choice === 'approve') && (await this.answerPlan({ action: 'approve' }))) return;
-      if (choice === 's' || choice === 'stop') {
-        await this.answerPlan({ action: 'stop' });
-        return;
-      }
-      if (choice === 'r' || choice === 'refine') {
-        const feedback = await this.ask('Feedback › ');
-        if (feedback === undefined) {
-          if (!handle.run.planDecision) return;
-          this.say(style.yellow('stdin closed; cannot collect decision'));
-          await this.answerPlan({ action: 'stop' });
-          return;
-        }
-        if (feedback.trim() && (await this.answerPlan({ action: 'refine', feedback: feedback.trim() }))) return;
-      }
+      if (await this.handlePlanChoice(answer.trim().toLowerCase())) return;
       // Anything else (including a bare Enter) asks again: approving must be explicit.
     }
   }
 
+  /** Apply one typed choice; returns true when the decision is settled. */
+  private async handlePlanChoice(choice: string): Promise<boolean> {
+    // A refused approval (not a Git repository) leaves the plan waiting: ask again.
+    if (choice === 'a' || choice === 'approve') return this.answerPlan({ action: 'approve' });
+    if (choice === 's' || choice === 'stop') {
+      await this.answerPlan({ action: 'stop' });
+      return true;
+    }
+    if (choice === 'r' || choice === 'refine') {
+      const feedback = await this.ask('Feedback › ');
+      if (feedback === undefined) {
+        await this.stopPlanOnClosedStdin();
+        return true;
+      }
+      return !!feedback.trim() && (await this.answerPlan({ action: 'refine', feedback: feedback.trim() }));
+    }
+    return false;
+  }
+
   private async pair(decision: PairDecision) {
-    const handle = this.handle!;
-    const { style } = this.io;
-    if (!handle.run.pairDecision) return;
+    if (!this.handle!.run.pairDecision) return;
     if (this.policy.pairExtraRounds !== undefined || !this.policy.interactive) {
-      const budget = this.policy.pairExtraRounds ?? 0;
-      const go = this.grantedRounds + decision.extraRounds <= budget;
-      if (go) this.grantedRounds += decision.extraRounds;
-      this.say(style.cyan(`Review limit reached: ${go ? `continuing with ${decision.extraRounds} more round(s)` : 'stopping'} (extra-round budget ${this.grantedRounds}/${budget}${this.policy.pairExtraRounds === undefined ? '; pass --pair-extra-rounds=N to allow more' : ''})`));
-      handle.answerPairDecision(go);
+      this.pairByPolicy(decision);
       return;
     }
+    await this.pairByAsking(decision);
+  }
+
+  private pairByPolicy(decision: PairDecision) {
+    const { style } = this.io;
+    const budget = this.policy.pairExtraRounds ?? 0;
+    const go = this.grantedRounds + decision.extraRounds <= budget;
+    if (go) this.grantedRounds += decision.extraRounds;
+    const outcome = go ? `continuing with ${decision.extraRounds} more round(s)` : 'stopping';
+    const hint = this.policy.pairExtraRounds === undefined ? '; pass --pair-extra-rounds=N to allow more' : '';
+    this.say(style.cyan(`Review limit reached: ${outcome} (extra-round budget ${this.grantedRounds}/${budget}${hint})`));
+    this.handle!.answerPairDecision(go);
+  }
+
+  private async pairByAsking(decision: PairDecision) {
+    const handle = this.handle!;
+    const { style } = this.io;
     this.say(style.bold(`Not approved after round ${decision.round}.`));
     for (;;) {
       const answer = await this.ask(`${style.bold('[c]ontinue')} with ${decision.extraRounds} more rounds · ${style.bold('[s]top')} › `);
@@ -151,8 +181,14 @@ export class DecisionController {
         return;
       }
       const choice = answer.trim().toLowerCase();
-      if (choice === 'c' || choice === 'continue') return void handle.answerPairDecision(true);
-      if (choice === 's' || choice === 'stop') return void handle.answerPairDecision(false);
+      if (choice === 'c' || choice === 'continue') {
+        handle.answerPairDecision(true);
+        return;
+      }
+      if (choice === 's' || choice === 'stop') {
+        handle.answerPairDecision(false);
+        return;
+      }
     }
   }
 

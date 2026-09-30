@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { AgentName } from '../../server/src/agents/types.ts';
-import type { Mode, Run, RunConfig, RoutePlan } from '../../server/src/types.ts';
-import type { ModelCatalog } from '../../server/src/types.ts';
+import type { Mode, ModelCatalog, Run, RunConfig, RoutePlan } from '../../server/src/types.ts';
 import { startRunStream } from './run-events.ts';
 
 export type { Message, ModelChoice, PairDecision, PlanDecision, Part, RoutePlan, Run, RunConfig, Verdict, Speaker } from '../../server/src/types.ts';

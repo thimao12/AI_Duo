@@ -20,7 +20,7 @@ interface ModelPickerProps {
   onChange: (next: { model: string; effort: string }) => void;
 }
 
-export default function ModelPicker({ agent, catalog, model, effort, auto, side, onChange }: ModelPickerProps) {
+export default function ModelPicker({ agent, catalog, model, effort, auto, side, onChange }: Readonly<ModelPickerProps>) {
   const [typing, setTyping] = useState(false);
   const modelInput = useInputFocus<HTMLInputElement>();
   const info = catalog?.[agent];
@@ -43,7 +43,15 @@ export default function ModelPicker({ agent, catalog, model, effort, auto, side,
 
   const emptyLabel = auto ? 'Tự chọn' : 'Mặc định';
   // With nothing picked, name the agent: the dot's colour alone must not carry identity.
-  const label = `${model ? (selected?.name ?? model) : `${AGENT_LABEL[agent]} ${emptyLabel.toLowerCase()}`}${effort ? ` · ${effortLabel(effort)}` : ''}`;
+  const modelLabel = model ? (selected?.name ?? model) : `${AGENT_LABEL[agent]} ${emptyLabel.toLowerCase()}`;
+  const label = effort ? `${modelLabel} · ${effortLabel(effort)}` : modelLabel;
+  let defaultHint = `Theo cấu hình của ${AGENT_LABEL[agent]} CLI.`;
+  if (auto) defaultHint = 'Chọn model theo độ khó của task.';
+  else if (fallback.model) {
+    const fallbackEffort = fallback.effort ? ` · ${effortLabel(fallback.effort)}` : '';
+    defaultHint = `${fallbackModel?.name ?? fallback.model}${fallbackEffort} (config.toml)`;
+  }
+  const defaultEffortTitle = auto ? 'Router tự chọn mức' : 'Mức mặc định của model';
 
   return (
     <Popover
@@ -63,13 +71,7 @@ export default function ModelPicker({ agent, catalog, model, effort, auto, side,
           <MenuItem
             selected={!model}
             label={auto ? 'Router tự chọn' : 'Mặc định của CLI'}
-            hint={
-              auto
-                ? 'Chọn model theo độ khó của task.'
-                : fallback.model
-                  ? `${fallbackModel?.name ?? fallback.model}${fallback.effort ? ` · ${effortLabel(fallback.effort)}` : ''} (config.toml)`
-                  : `Theo cấu hình của ${AGENT_LABEL[agent]} CLI.`
-            }
+            hint={defaultHint}
             onSelect={() => onChange({ model: '', effort })}
           />
           {models.map((m) => (
@@ -113,7 +115,7 @@ export default function ModelPicker({ agent, catalog, model, effort, auto, side,
                     role="radio"
                     aria-checked={on}
                     onClick={() => onChange({ model, effort: e })}
-                    title={e ? undefined : auto ? 'Router tự chọn mức' : 'Mức mặc định của model'}
+                    title={e ? undefined : defaultEffortTitle}
                     className={`h-7 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors ${
                       on ? 'border-fg bg-fg text-bg' : 'border-line text-muted hover:border-line-strong hover:text-fg'
                     }`}

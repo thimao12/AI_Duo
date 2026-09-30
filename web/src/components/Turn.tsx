@@ -48,6 +48,7 @@ export function turnLabel(m: Message): string {
 
 type ToolKind = 'run' | 'read' | 'search' | 'edit' | 'other';
 interface ToolCall {
+  id: number;
   kind: ToolKind;
   label: string;
   files: number;
@@ -57,11 +58,11 @@ interface ToolCall {
 
 /** Codex wraps shell commands in `powershell.exe -Command '…'`; show the command itself. */
 function unwrapShell(cmd: string): string {
-  const m = cmd.match(/-Command\s+(['"])([\s\S]*)\1\s*$/);
-  return (m ? m[2] : cmd).replace(/''/g, "'").trim();
+  const m = /-Command\s+(['"])([\s\S]*)\1\s*$/.exec(cmd);
+  return (m ? m[2] : cmd).replaceAll("''", "'").trim();
 }
 
-function parseTool(part: Part, result?: Part): ToolCall {
+function parseTool(part: Part, result?: Part): Omit<ToolCall, 'id'> {
   const [head, ...rest] = part.content.split('\n');
   const i = head.indexOf(':');
   const name = i > 0 ? head.slice(0, i) : head;
@@ -103,7 +104,7 @@ function summarize(calls: ToolCall[]): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
-function ToolRow({ call }: { call: ToolCall }) {
+function ToolRow({ call }: Readonly<{ call: ToolCall }>) {
   const [open, setOpen] = useState(false);
   const Icon = TOOL_ICON[call.kind];
   const failed = call.exit !== undefined && call.exit !== 0;
@@ -131,9 +132,9 @@ function ToolRow({ call }: { call: ToolCall }) {
   );
 }
 
-function ToolGroup({ calls, live }: { calls: ToolCall[]; live: boolean }) {
+function ToolGroup({ calls, live }: Readonly<{ calls: ToolCall[]; live: boolean }>) {
   const [open, setOpen] = useState(false);
-  const last = calls[calls.length - 1];
+  const last = calls.at(-1);
   const failures = calls.filter((c) => c.exit !== undefined && c.exit !== 0).length;
   return (
     <div className="-mx-2">
@@ -151,7 +152,7 @@ function ToolGroup({ calls, live }: { calls: ToolCall[]; live: boolean }) {
       {!open && live && last && (
         <p className="truncate pl-7 font-mono text-[12px] text-faint">{last.label}</p>
       )}
-      {open && <ul className="mt-0.5 border-l border-line pl-2 ml-3.5">{calls.map((c, i) => <ToolRow key={i} call={c} />)}</ul>}
+      {open && <ul className="mt-0.5 border-l border-line pl-2 ml-3.5">{calls.map((c) => <ToolRow key={c.id} call={c} />)}</ul>}
     </div>
   );
 }
@@ -160,48 +161,55 @@ function ToolGroup({ calls, live }: { calls: ToolCall[]; live: boolean }) {
 
 type Block = { type: 'text'; text: string } | { type: 'tools'; calls: ToolCall[] } | { type: 'error'; text: string } | { type: 'note'; text: string };
 
-function toBlocks(parts: Part[]): Block[] {
+type KeyedBlock = Block & { id: number };
+
+type ToolEntry = { part: Part; result?: Part };
+
+function toBlocks(parts: Part[]): KeyedBlock[] {
   const blocks: Block[] = [];
   // Parallel tool calls arrive as call, call, result, result: match results to calls in order.
-  let pending: { part: Part; result?: Part }[] = [];
-  let group: { part: Part; result?: Part }[] | null = null;
+  let pending: ToolEntry[] = [];
+  let group: ToolEntry[] | null = null;
   // Notes (e.g. quota warnings) can land between a call and its result; show them after the group.
   let deferred: Block[] = [];
   const flush = () => {
-    if (group?.length) blocks.push({ type: 'tools', calls: group.map((c) => parseTool(c.part, c.result)) });
+    if (group?.length) blocks.push({ type: 'tools', calls: group.map((c, id) => ({ ...parseTool(c.part, c.result), id })) });
     blocks.push(...deferred);
     group = null;
     pending = [];
     deferred = [];
   };
+  const addCall = (p: Part) => {
+    group ??= [];
+    const entry = { part: p };
+    group.push(entry);
+    pending.push(entry);
+  };
+  const addResult = (p: Part) => {
+    group ??= [];
+    const target = pending.shift();
+    if (target) target.result = p;
+    else group.push({ part: { kind: 'tool', content: 'Kết quả công cụ' }, result: p });
+  };
+  const addStandalone = (block: Block) => {
+    flush();
+    blocks.push(block);
+  };
   for (const p of parts) {
-    if (p.kind === 'tool') {
-      group ??= [];
-      const entry = { part: p };
-      group.push(entry);
-      pending.push(entry);
-    } else if (p.kind === 'tool_result') {
-      group ??= [];
-      const target = pending.shift();
-      if (target) target.result = p;
-      else group.push({ part: { kind: 'tool', content: 'Kết quả công cụ' }, result: p });
-    } else if (p.kind === 'text') {
-      flush();
+    if (p.kind === 'tool') addCall(p);
+    else if (p.kind === 'tool_result') addResult(p);
+    else if (p.kind === 'text') {
       const text = cleanText(p.content);
-      if (text) blocks.push({ type: 'text', text });
-    } else if (p.kind === 'error') {
       flush();
-      blocks.push({ type: 'error', text: p.content });
-    } else if (p.content.trim()) {
-      if (group) deferred.push({ type: 'note', text: p.content });
-      else blocks.push({ type: 'note', text: p.content });
-    }
+      if (text) blocks.push({ type: 'text', text });
+    } else if (p.kind === 'error') addStandalone({ type: 'error', text: p.content });
+    else if (p.content.trim()) (group ? deferred : blocks).push({ type: 'note', text: p.content });
   }
   flush();
-  return blocks;
+  return blocks.map((block, id) => ({ ...block, id }));
 }
 
-function excerpt(blocks: Block[]): string {
+function excerpt(blocks: KeyedBlock[]): string {
   const text = [...blocks].reverse().find((b) => b.type === 'text') as { text: string } | undefined;
   return (text?.text ?? '')
     .replace(/[#*_`>|-]+/g, ' ')
@@ -214,12 +222,12 @@ function excerpt(blocks: Block[]): string {
 
 /** Runs saved before the server spoke Vietnamese still carry these English notes. */
 const LEGACY_NOTES: Record<string, (text: string) => [string, string]> = {
-  'Baseline captured': (t) => ['Đã chụp trạng thái ban đầu', `Snapshot working tree${t.match(/\(tree \w+\)/)?.[0].replace('(tree', ' (tree') ?? ''}. Diff cuối phiên chỉ gồm thay đổi của agent. Không có gì được commit.`],
-  'Consensus reached': (t) => ['Đã đồng thuận', `Cả hai agent đồng ý sau vòng ${t.match(/round (\d+)/)?.[1] ?? '?'}.`],
-  'No full consensus': (t) => ['Chưa đồng thuận hoàn toàn', `Dừng sau ${t.match(/after (\d+)/)?.[1] ?? '?'} vòng; người chốt sẽ xử lý các điểm còn khác nhau.`],
+  'Baseline captured': (t) => ['Đã chụp trạng thái ban đầu', `Snapshot working tree${/\(tree \w+\)/.exec(t)?.[0].replace('(tree', ' (tree') ?? ''}. Diff cuối phiên chỉ gồm thay đổi của agent. Không có gì được commit.`],
+  'Consensus reached': (t) => ['Đã đồng thuận', `Cả hai agent đồng ý sau vòng ${/round (\d+)/.exec(t)?.[1] ?? '?'}.`],
+  'No full consensus': (t) => ['Chưa đồng thuận hoàn toàn', `Dừng sau ${/after (\d+)/.exec(t)?.[1] ?? '?'} vòng; người chốt sẽ xử lý các điểm còn khác nhau.`],
 };
 
-export function SystemNote({ message: m }: { message: Message }) {
+export function SystemNote({ message: m }: Readonly<{ message: Message }>) {
   const Icon = m.title.startsWith('Định tuyến') ? Waypoints : Info;
   const raw = m.parts.map((p) => p.content).join(' ');
   const [title, text] = LEGACY_NOTES[m.title]?.(raw) ?? [m.title, raw];
@@ -234,7 +242,44 @@ export function SystemNote({ message: m }: { message: Message }) {
   );
 }
 
-export default function Turn({ message: m, compact }: { message: Message; compact: boolean }) {
+function BlockView({ block: b, live }: Readonly<{ block: Block; live: boolean }>) {
+  if (b.type === 'text') return <Markdown>{b.text}</Markdown>;
+  if (b.type === 'tools') return <ToolGroup calls={b.calls} live={live} />;
+  if (b.type === 'error') {
+    return (
+      <p role="alert" className="flex gap-2 rounded-lg bg-danger/8 px-3 py-2 text-[12.5px] text-danger">
+        <CircleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+        <span className="min-w-0 font-mono whitespace-pre-wrap">{b.text}</span>
+      </p>
+    );
+  }
+  return (
+    <p className="flex gap-1.5 text-[12px] text-faint">
+      <Info aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+      <span className="min-w-0 break-words">{b.text}</span>
+    </p>
+  );
+}
+
+function TurnStats({ message: m, now, open }: Readonly<{ message: Message; now: number; open: boolean }>) {
+  const running = m.status === 'running';
+  return (
+    <span className="ml-auto flex shrink-0 items-center gap-2.5 pl-2 text-[12px] text-faint">
+      {m.model && <span className="hidden font-mono text-[11.5px] md:inline">{m.model}</span>}
+      {m.usage && (
+        <span className="hidden font-mono text-[11.5px] lg:inline" title={formatUsage(m.usage)}>
+          {formatUsageShort(m.usage)}
+        </span>
+      )}
+      {m.status === 'error' && <span className="font-medium text-danger">Lỗi</span>}
+      {running && <Spinner className="size-3.5" />}
+      <span className="tabular-nums">{formatDuration((m.endedAt ?? now) - m.startedAt)}</span>
+      <ChevronRight aria-hidden className={`size-3.5 transition-transform ${open ? 'rotate-90' : ''}`} />
+    </span>
+  );
+}
+
+export default function Turn({ message: m, compact }: Readonly<{ message: Message; compact: boolean }>) {
   const running = m.status === 'running';
   const now = useNow(running);
   const [override, setOverride] = useState<boolean | null>(null);
@@ -255,18 +300,7 @@ export default function Turn({ message: m, compact }: { message: Message; compac
         <span className={`text-[13.5px] font-semibold ${AGENT_TEXT[agent]}`}>{AGENT_LABEL[agent]}</span>
         <span className="min-w-0 truncate text-[13px] text-muted">{turnLabel(m)}</span>
         {m.verdict && <VerdictBadge verdict={m.verdict} />}
-        <span className="ml-auto flex shrink-0 items-center gap-2.5 pl-2 text-[12px] text-faint">
-          {m.model && <span className="hidden font-mono text-[11.5px] md:inline">{m.model}</span>}
-          {m.usage && (
-            <span className="hidden font-mono text-[11.5px] lg:inline" title={formatUsage(m.usage)}>
-              {formatUsageShort(m.usage)}
-            </span>
-          )}
-          {m.status === 'error' && <span className="font-medium text-danger">Lỗi</span>}
-          {running && <Spinner className="size-3.5" />}
-          <span className="tabular-nums">{formatDuration((m.endedAt ?? now) - m.startedAt)}</span>
-          <ChevronRight aria-hidden className={`size-3.5 transition-transform ${open ? 'rotate-90' : ''}`} />
-        </span>
+        <TurnStats message={m} now={now} open={open} />
       </button>
 
       {!open ? (
@@ -274,23 +308,9 @@ export default function Turn({ message: m, compact }: { message: Message; compac
       ) : (
         <div className="mt-1.5 space-y-2.5 pl-4">
           {blocks.length === 0 && running && <p className="thinking text-[13.5px]">Đang suy nghĩ…</p>}
-          {blocks.map((b, i) =>
-            b.type === 'text' ? (
-              <Markdown key={i}>{b.text}</Markdown>
-            ) : b.type === 'tools' ? (
-              <ToolGroup key={i} calls={b.calls} live={running && i === lastIndex} />
-            ) : b.type === 'error' ? (
-              <p key={i} role="alert" className="flex gap-2 rounded-lg bg-danger/8 px-3 py-2 text-[12.5px] text-danger">
-                <CircleAlert aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                <span className="min-w-0 font-mono whitespace-pre-wrap">{b.text}</span>
-              </p>
-            ) : (
-              <p key={i} className="flex gap-1.5 text-[12px] text-faint">
-                <Info aria-hidden className="mt-0.5 size-3.5 shrink-0" />
-                <span className="min-w-0 break-words">{b.text}</span>
-              </p>
-            ),
-          )}
+          {blocks.map((b, i) => (
+            <BlockView key={b.id} block={b} live={running && i === lastIndex} />
+          ))}
           {running && blocks.length > 0 && blocks[lastIndex].type === 'text' && <p className="thinking text-[13px]">Đang làm tiếp…</p>}
         </div>
       )}

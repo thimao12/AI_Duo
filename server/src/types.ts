@@ -138,7 +138,7 @@ export function addUsage(a: Usage | undefined, b: Usage): Usage {
 
 /** Same reducer runs on the server and in the browser. */
 export function applyAgentEvent(parts: Part[], e: AgentEvent) {
-  const last = parts[parts.length - 1];
+  const last = parts.at(-1);
   if (e.kind === 'text_delta') {
     if (last?.kind === 'text') last.content += e.content;
     else parts.push({ kind: 'text', content: e.content });

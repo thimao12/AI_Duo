@@ -18,6 +18,15 @@ const CLAUDE_MODELS: ModelInfo[] = [
 
 const codexHome = (env: NodeJS.ProcessEnv) => env.CODEX_HOME || path.join(homedir(), '.codex');
 
+const CODEX_DEFAULT_KEYS = new Map<string, 'model' | 'effort'>([['model', 'model'], ['model_reasoning_effort', 'effort']]);
+
+/** The quoted string value of a `key = "value"` line, if it is one. */
+function quotedValue(raw: string): string | undefined {
+  const value = raw.trimStart();
+  const end = value.indexOf('"', 1);
+  return value.startsWith('"') && end >= 1 ? value.slice(1, end) : undefined;
+}
+
 /** Top-level `model` / `model_reasoning_effort` from Codex's config.toml (before any [section]). */
 export function codexDefaults(env = process.env): { model?: string; effort?: string } {
   let text: string;
@@ -33,11 +42,10 @@ export function codexDefaults(env = process.env): { model?: string; effort?: str
     const equals = line.indexOf('=');
     if (equals < 0) continue;
     const key = line.slice(0, equals).trimEnd();
-    const name = key === 'model' ? 'model' : key === 'model_reasoning_effort' ? 'effort' : undefined;
+    const name = CODEX_DEFAULT_KEYS.get(key);
     if (!name || defaults[name] !== undefined) continue;
-    const value = line.slice(equals + 1).trimStart();
-    const end = value.indexOf('"', 1);
-    if (value.startsWith('"') && end >= 1) defaults[name] = value.slice(1, end);
+    const value = quotedValue(line.slice(equals + 1));
+    if (value !== undefined) defaults[name] = value;
   }
   return { model: defaults.model, effort: defaults.effort };
 }

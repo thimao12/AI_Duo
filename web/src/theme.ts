@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 export type ThemePref = 'system' | 'light' | 'dark';
 
 const KEY = 'ai-duo:theme';
+const NEXT_PREF: Record<ThemePref, ThemePref> = { system: 'light', light: 'dark', dark: 'system' };
 
 function read(): ThemePref {
   try {
@@ -14,12 +15,13 @@ function read(): ThemePref {
 }
 
 export function resolvedTheme(pref: ThemePref, systemDark: boolean): 'light' | 'dark' {
-  return pref === 'system' ? (systemDark ? 'dark' : 'light') : pref;
+  if (pref !== 'system') return pref;
+  return systemDark ? 'dark' : 'light';
 }
 
 /** Resolve system preference explicitly so tokens and Tailwind variants use the same selector. */
 function apply(pref: ThemePref) {
-  document.documentElement.setAttribute('data-theme', resolvedTheme(pref, matchMedia('(prefers-color-scheme: dark)').matches));
+  document.documentElement.dataset.theme = resolvedTheme(pref, matchMedia('(prefers-color-scheme: dark)').matches);
 }
 
 const desktop = (window as { aiDuo?: { setTitleBarColors?: (color: string, symbolColor: string) => void } }).aiDuo;
@@ -45,6 +47,6 @@ export function useTheme() {
     media.addEventListener('change', update);
     return () => media.removeEventListener('change', update);
   }, [pref]);
-  const cycle = () => setPref((p) => (p === 'system' ? 'light' : p === 'light' ? 'dark' : 'system'));
+  const cycle = () => setPref((p) => NEXT_PREF[p]);
   return { pref, cycle };
 }

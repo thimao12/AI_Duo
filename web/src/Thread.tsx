@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction, type ReactNode, type RefObject } from 'react';
 import { ArrowDown, Check, CircleAlert, Copy, FileDiff, ListChevronsDownUp, ListChevronsUpDown, PanelLeft, Square, WifiOff } from 'lucide-react';
 import { api, useRun, type Message, type PairDecision, type PlanDecision, type Run } from './api.ts';
 import ChangesPanel from './components/ChangesPanel.tsx';
@@ -24,7 +24,7 @@ function progressOf(run: Run): string | null {
   return last ? phaseTitle(last, run) : null;
 }
 
-function RunStatus({ run }: { run: Run }) {
+function RunStatus({ run }: Readonly<{ run: Run }>) {
   if (run.planDecision) return <span className="text-info">Chờ bạn duyệt kế hoạch</span>;
   if (run.pairDecision) return <span className="text-info">Chờ bạn chọn bước tiếp</span>;
   return <StatusText status={run.status} />;
@@ -38,7 +38,7 @@ function keepLineBreaks(text: string): string {
     .join('');
 }
 
-function PromptBubble({ run, message }: { run: Run; message?: Message }) {
+function PromptBubble({ run, message }: Readonly<{ run: Run; message?: Message }>) {
   const { cwd } = run.config;
   const prompt = message?.parts[0]?.content ?? run.config.prompt;
   const images = message?.images ?? run.config.images;
@@ -50,7 +50,7 @@ function PromptBubble({ run, message }: { run: Run; message?: Message }) {
       <div className="max-w-[88%] rounded-2xl bg-surface px-4 py-2.5 text-[14px] leading-relaxed">
         {!!images?.length && <div className="mb-2 flex flex-wrap gap-2">{images.map((image, index) => {
           const url = message ? `/api/runs/${run.id}/messages/${message.id}/images/${index}` : `/api/runs/${run.id}/images/${index}`;
-          return <a key={index} href={url} target="_blank" rel="noreferrer"><img src={url} alt={image.name} className="max-h-40 max-w-40 rounded-lg object-contain" /></a>;
+          return <a key={url} href={url} target="_blank" rel="noreferrer"><img src={url} alt={image.name} className="max-h-40 max-w-40 rounded-lg object-contain" /></a>;
         })}</div>}
         <div className={`prompt-md ${long && !expanded ? 'max-h-64 overflow-hidden [mask-image:linear-gradient(to_bottom,black_75%,transparent)]' : ''}`}>
           {prompt && <Markdown>{keepLineBreaks(prompt)}</Markdown>}
@@ -68,12 +68,15 @@ function PromptBubble({ run, message }: { run: Run; message?: Message }) {
   );
 }
 
-function FinalBlock({ run, files, onShowChanges }: { run: Run; files: number; onShowChanges: () => void }) {
+const FINAL_HEADING: Partial<Record<string, string>> = { debate: 'Giải pháp cuối', plan: 'Kế hoạch' };
+
+function FinalBlock({ run, files, onShowChanges }: Readonly<{ run: Run; files: number; onShowChanges: () => void }>) {
   const [copied, setCopied] = useState(false);
+  const heading = FINAL_HEADING[run.config.mode] ?? 'Kết quả';
   return (
     <section aria-label="Kết quả" className="mt-10">
       <div className="mb-2 flex items-center gap-2">
-        <h2 className="text-[13.5px] font-semibold">{run.config.mode === 'debate' ? 'Giải pháp cuối' : run.config.mode === 'plan' ? 'Kế hoạch' : 'Kết quả'}</h2>
+        <h2 className="text-[13.5px] font-semibold">{heading}</h2>
         {files > 0 && (
           <button type="button" onClick={onShowChanges} className="text-[12.5px] text-muted underline-offset-2 hover:text-fg hover:underline">
             Xem thay đổi ({files} file)
@@ -100,7 +103,7 @@ function FinalBlock({ run, files, onShowChanges }: { run: Run; files: number; on
   );
 }
 
-function PairFailureDecision({ runId, decision }: { runId: string; decision: PairDecision }) {
+function PairFailureDecision({ runId, decision }: Readonly<{ runId: string; decision: PairDecision }>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
 
@@ -134,7 +137,7 @@ function PairFailureDecision({ runId, decision }: { runId: string; decision: Pai
   );
 }
 
-function PlanApprovalDecision({ runId, decision }: { runId: string; decision: PlanDecision }) {
+function PlanApprovalDecision({ runId, decision }: Readonly<{ runId: string; decision: PlanDecision }>) {
   const feedbackInput = useInputFocus<HTMLTextAreaElement>();
   const [refining, setRefining] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -183,6 +186,33 @@ function PlanApprovalDecision({ runId, decision }: { runId: string; decision: Pl
   );
 }
 
+function MessageRow({ run, message: m, prev, compact }: Readonly<{ run: Run; message: Message; prev?: Message; compact: boolean }>) {
+  if (m.agent === 'user') return <div className="mt-8"><PromptBubble run={run} message={m} /></div>;
+  const divider = m.agent !== 'system' && m.phase !== 'info' && (prev?.phase !== m.phase || prev.round !== m.round);
+  let body: ReactNode;
+  if (m.agent !== 'system') body = <Turn message={m} compact={compact} />;
+  else if (m.phase === 'result') {
+    body = (
+      <section className="rounded-2xl border border-line bg-surface/60 px-5 py-4">
+        <h2 className="mb-2 text-[13.5px] font-semibold">Kết quả lượt trước</h2>
+        <Markdown>{m.parts.map((part) => part.content).join('\n')}</Markdown>
+      </section>
+    );
+  } else body = <SystemNote message={m} />;
+  return (
+    <>
+      {divider && (
+        <div role="separator" className="flex items-center gap-3 pt-3 text-[11.5px] font-medium text-faint">
+          <span className="h-px flex-1 bg-line" />
+          {phaseTitle(m, run)}
+          <span className="h-px flex-1 bg-line" />
+        </div>
+      )}
+      {body}
+    </>
+  );
+}
+
 interface ThreadProps {
   id: string;
   title?: string;
@@ -192,20 +222,23 @@ interface ThreadProps {
   sidebarHidden: boolean;
 }
 
-export default function Thread({ id, title, projects, onCreated, onMenu, sidebarHidden }: ThreadProps) {
-  const [revision, setRevision] = useState(0);
-  const { run, reconnecting, error } = useRun(id, revision);
-  const [compact, setCompact] = useState(false);
-  const [panelOpen, setPanelOpen] = useState(false);
-  const [atBottom, setAtBottom] = useState(true);
-  const scroller = useRef<HTMLDivElement>(null);
-  const positioned = useRef(false);
-
-  const files = useMemo(() => parseDiff(run?.diff ?? ''), [run?.diff]);
-  const added = files.reduce((s, f) => s + f.added, 0);
-  const removed = files.reduce((s, f) => s + f.removed, 0);
-  const running = run?.status === 'running';
-
+function useFollowBottom({
+  id,
+  run,
+  scroller,
+  positioned,
+  atBottom,
+  setPanelOpen,
+  setCompact,
+}: Readonly<{
+  id: string;
+  run: Run | null | undefined;
+  scroller: RefObject<HTMLDivElement | null>;
+  positioned: MutableRefObject<boolean>;
+  atBottom: boolean;
+  setPanelOpen: (open: boolean) => void;
+  setCompact: (compact: boolean) => void;
+}>) {
   const lastLen = run?.messages.at(-1)?.parts.reduce((n, p) => n + p.content.length, 0);
 
   // Follow the bottom while the user is there; a live run opens at the bottom, a finished one at the top.
@@ -225,10 +258,155 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
     setPanelOpen(false);
     setCompact(false);
   }, [id]);
+}
+
+function RunStatusInfo({ run, progress, panelOpen }: Readonly<{ run: Run; progress: string | null; panelOpen: boolean }>) {
+  const ModeIcon = MODE_ICON[run.config.mode as keyof typeof MODE_ICON] ?? null;
+  return (
+    <div className="mr-1 hidden items-center gap-3 lg:flex">
+      <RunStatus run={run} />
+      {progress && <span className="text-[12px] text-muted">{progress}</span>}
+      {ModeIcon && (
+        <span className="inline-flex items-center gap-1.5 text-[12px] text-faint" title={run.config.route?.reason}>
+          <ModeIcon aria-hidden className="size-3.5" />
+          {MODE_LABEL[run.config.mode]}
+          {run.config.route && ' · tự động'}
+        </span>
+      )}
+      {run.usage && !panelOpen && (
+        <span className="hidden font-mono text-[11.5px] text-faint xl:inline" title={`Tổng cả phiên: ${formatUsage(run.usage)}`}>
+          Tổng {formatUsageShort(run.usage)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function DiffToggle({ files, panelOpen, setPanelOpen }: Readonly<{ files: ReturnType<typeof parseDiff>; panelOpen: boolean; setPanelOpen: Dispatch<SetStateAction<boolean>> }>) {
+  const added = files.reduce((s, f) => s + f.added, 0);
+  const removed = files.reduce((s, f) => s + f.removed, 0);
+  const label = panelOpen ? 'Ẩn bảng thay đổi' : 'Hiện bảng thay đổi';
+  return (
+    <button
+      type="button"
+      onClick={() => setPanelOpen((open) => !open)}
+      aria-pressed={panelOpen}
+      aria-label={label}
+      title={label}
+      className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[12px] transition-colors hover:bg-surface ${panelOpen ? 'bg-surface text-fg' : 'text-muted'}`}
+    >
+      <FileDiff aria-hidden className="size-4" />
+      <span className="font-mono text-add-fg">+{added}</span>
+      <span className="font-mono text-del-fg">−{removed}</span>
+    </button>
+  );
+}
+
+function RunControls({ run, progress, files, panelOpen, compact, setCompact, setPanelOpen }: Readonly<{
+  run: Run;
+  progress: string | null;
+  files: ReturnType<typeof parseDiff>;
+  panelOpen: boolean;
+  compact: boolean;
+  setCompact: Dispatch<SetStateAction<boolean>>;
+  setPanelOpen: Dispatch<SetStateAction<boolean>>;
+}>) {
+  const compactLabel = compact ? 'Mở rộng tất cả lượt' : 'Thu gọn tất cả lượt';
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <RunStatusInfo run={run} progress={progress} panelOpen={panelOpen} />
+      {/* Narrow windows: the running step matters more than the word "running". */}
+      <span className="min-w-0 truncate lg:hidden">
+        {progress ? (
+          <span className="inline-flex items-center gap-1.5 text-[12px] text-info">
+            <Spinner className="size-3 text-info" />
+            <span className="truncate">{progress}</span>
+          </span>
+        ) : (
+          <RunStatus run={run} />
+        )}
+      </span>
+      <button type="button" onClick={() => setCompact((c) => !c)} title={compactLabel} aria-pressed={compact} className={iconBtn}>
+        {compact ? <ListChevronsUpDown aria-hidden className="size-4" /> : <ListChevronsDownUp aria-hidden className="size-4" />}
+        <span className="sr-only">{compactLabel}</span>
+      </button>
+      {files.length > 0 && <DiffToggle files={files} panelOpen={panelOpen} setPanelOpen={setPanelOpen} />}
+      {run.status === 'running' && (
+        <button
+          type="button"
+          onClick={() => void api.cancel(run.id)}
+          className="ml-1 inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12.5px] font-medium text-fg transition-colors hover:border-danger/50 hover:bg-danger/8 hover:text-danger"
+        >
+          <Square aria-hidden className="size-3 fill-current" />
+          Dừng
+        </button>
+      )}
+    </div>
+  );
+}
+
+function RunBody({ run, files, compact, setPanelOpen, onContinue }: Readonly<{
+  run: Run;
+  files: number;
+  compact: boolean;
+  setPanelOpen: Dispatch<SetStateAction<boolean>>;
+  onContinue: () => void;
+}>) {
+  return (
+    <div className="mx-auto max-w-[760px] px-5 pt-8 pb-12">
+      <PromptBubble run={run} />
+      <div className="mt-8 space-y-5">
+        {run.messages.map((m, i) => (
+          <MessageRow key={m.id} run={run} message={m} prev={run.messages[i - 1]} compact={compact} />
+        ))}
+      </div>
+  
+      {run.pairDecision && <PairFailureDecision runId={run.id} decision={run.pairDecision} />}
+  
+      {run.error && (
+        <p role="alert" className="mt-8 flex gap-2 rounded-xl bg-danger/8 px-4 py-3 text-[13px] text-danger">
+          <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
+          <span className="min-w-0 font-mono whitespace-pre-wrap">{run.error}</span>
+        </p>
+      )}
+      {run.status === 'cancelled' && <p className="mt-8 text-center text-[12.5px] text-faint">Phiên đã dừng.</p>}
+      {run.final && <FinalBlock run={run} files={files} onShowChanges={() => setPanelOpen(true)} />}
+      {run.planDecision && <PlanApprovalDecision runId={run.id} decision={run.planDecision} />}
+      {run.status === 'done' && run.final && run.config.mode !== 'plan' && (
+        <ChoiceQuestion
+          key={run.messages.at(-1)?.id}
+          runId={run.id}
+          text={run.final}
+          onContinue={onContinue}
+        />
+      )}
+    </div>
+  );
+}
+
+export default function Thread({ id, title, projects, onCreated, onMenu, sidebarHidden }: Readonly<ThreadProps>) {
+  const [revision, setRevision] = useState(0);
+  const { run, reconnecting, error } = useRun(id, revision);
+  const [compact, setCompact] = useState(false);
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [atBottom, setAtBottom] = useState(true);
+  const scroller = useRef<HTMLDivElement>(null);
+  const positioned = useRef(false);
+
+  const files = useMemo(() => parseDiff(run?.diff ?? ''), [run?.diff]);
+  const running = run?.status === 'running';
+
+  useFollowBottom({ id, run, scroller, positioned, atBottom, setPanelOpen, setCompact });
 
   const onScroll = () => {
     const el = scroller.current;
     if (el) setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 80);
+  };
+
+  const onContinue = () => {
+    positioned.current = false;
+    setAtBottom(true);
+    setRevision((n) => n + 1);
   };
 
   if (error)
@@ -241,7 +419,6 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
       </div>
     );
 
-  const ModeIcon = run ? MODE_ICON[run.config.mode as keyof typeof MODE_ICON] : null;
   const progress = run && running ? progressOf(run) : null;
 
   return (
@@ -256,78 +433,14 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
             <h1 className="min-w-0 truncate text-[13.5px] font-semibold">{run ? title || run.title || titleOf(run.config.prompt) : 'Đang tải…'}</h1>
             {run && <span className="hidden shrink-0 text-[12.5px] text-faint sm:inline">{basename(run.config.cwd)}</span>}
           </div>
-          {run && (
-            <div className="flex shrink-0 items-center gap-1">
-              <div className="mr-1 hidden items-center gap-3 lg:flex">
-                <RunStatus run={run} />
-                {progress && <span className="text-[12px] text-muted">{progress}</span>}
-                {ModeIcon && (
-                  <span className="inline-flex items-center gap-1.5 text-[12px] text-faint" title={run.config.route?.reason}>
-                    <ModeIcon aria-hidden className="size-3.5" />
-                    {MODE_LABEL[run.config.mode]}
-                    {run.config.route && ' · tự động'}
-                  </span>
-                )}
-                {run.usage && !panelOpen && (
-                  <span className="hidden font-mono text-[11.5px] text-faint xl:inline" title={`Tổng cả phiên: ${formatUsage(run.usage)}`}>
-                    Tổng {formatUsageShort(run.usage)}
-                  </span>
-                )}
-              </div>
-              {/* Narrow windows: the running step matters more than the word "running". */}
-              <span className="min-w-0 truncate lg:hidden">
-                {progress ? (
-                  <span className="inline-flex items-center gap-1.5 text-[12px] text-info">
-                    <Spinner className="size-3 text-info" />
-                    <span className="truncate">{progress}</span>
-                  </span>
-                ) : (
-                  <RunStatus run={run} />
-                )}
-              </span>
-              <button
-                type="button"
-                onClick={() => setCompact((c) => !c)}
-                title={compact ? 'Mở rộng tất cả lượt' : 'Thu gọn tất cả lượt'}
-                aria-pressed={compact}
-                className={iconBtn}
-              >
-                {compact ? <ListChevronsUpDown aria-hidden className="size-4" /> : <ListChevronsDownUp aria-hidden className="size-4" />}
-                <span className="sr-only">{compact ? 'Mở rộng tất cả lượt' : 'Thu gọn tất cả lượt'}</span>
-              </button>
-              {files.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => setPanelOpen((open) => !open)}
-                  aria-pressed={panelOpen}
-                  aria-label={panelOpen ? 'Ẩn bảng thay đổi' : 'Hiện bảng thay đổi'}
-                  title={panelOpen ? 'Ẩn bảng thay đổi' : 'Hiện bảng thay đổi'}
-                  className={`inline-flex h-8 items-center gap-1.5 rounded-lg px-2 text-[12px] transition-colors hover:bg-surface ${panelOpen ? 'bg-surface text-fg' : 'text-muted'}`}
-                >
-                  <FileDiff aria-hidden className="size-4" />
-                  <span className="font-mono text-add-fg">+{added}</span>
-                  <span className="font-mono text-del-fg">−{removed}</span>
-                </button>
-              )}
-              {running && (
-                <button
-                  type="button"
-                  onClick={() => void api.cancel(run.id)}
-                  className="ml-1 inline-flex h-8 items-center gap-1.5 rounded-lg border border-line px-2.5 text-[12.5px] font-medium text-fg transition-colors hover:border-danger/50 hover:bg-danger/8 hover:text-danger"
-                >
-                  <Square aria-hidden className="size-3 fill-current" />
-                  Dừng
-                </button>
-              )}
-            </div>
-          )}
+          {run && <RunControls run={run} progress={progress} files={files} panelOpen={panelOpen} compact={compact} setCompact={setCompact} setPanelOpen={setPanelOpen} />}
         </header>
 
         {reconnecting && (
-          <p role="status" className="flex items-center justify-center gap-2 border-b border-line bg-warn/10 px-4 py-1.5 text-[12.5px] text-warn">
+          <output className="flex items-center justify-center gap-2 border-b border-line bg-warn/10 px-4 py-1.5 text-[12.5px] text-warn">
             <WifiOff aria-hidden className="size-3.5" />
             Mất kết nối, đang kết nối lại…
-          </p>
+          </output>
         )}
 
         <div ref={scroller} onScroll={onScroll} className="relative min-h-0 flex-1 overflow-y-auto">
@@ -338,53 +451,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
               <div className="h-24 animate-pulse rounded-xl bg-surface" />
             </div>
           ) : (
-            <div className="mx-auto max-w-[760px] px-5 pt-8 pb-12">
-              <PromptBubble run={run} />
-              <div className="mt-8 space-y-5">
-                {run.messages.map((m, i) => {
-                  if (m.agent === 'user') return <div key={m.id} className="mt-8"><PromptBubble run={run} message={m} /></div>;
-                  const prev = run.messages[i - 1];
-                  const divider = m.agent !== 'system' && m.phase !== 'info' && (!prev || prev.phase !== m.phase || prev.round !== m.round);
-                  return (
-                    <Fragment key={m.id}>
-                      {divider && (
-                        <div role="separator" className="flex items-center gap-3 pt-3 text-[11.5px] font-medium text-faint">
-                          <span className="h-px flex-1 bg-line" />
-                          {phaseTitle(m, run)}
-                          <span className="h-px flex-1 bg-line" />
-                        </div>
-                      )}
-                      {m.agent === 'system' ? m.phase === 'result' ? (
-                        <section className="rounded-2xl border border-line bg-surface/60 px-5 py-4">
-                          <h2 className="mb-2 text-[13.5px] font-semibold">Kết quả lượt trước</h2>
-                          <Markdown>{m.parts.map((part) => part.content).join('\n')}</Markdown>
-                        </section>
-                      ) : <SystemNote message={m} /> : <Turn message={m} compact={compact} />}
-                    </Fragment>
-                  );
-                })}
-              </div>
-
-              {run.pairDecision && <PairFailureDecision runId={run.id} decision={run.pairDecision} />}
-
-              {run.error && (
-                <p role="alert" className="mt-8 flex gap-2 rounded-xl bg-danger/8 px-4 py-3 text-[13px] text-danger">
-                  <CircleAlert aria-hidden className="mt-0.5 size-4 shrink-0" />
-                  <span className="min-w-0 font-mono whitespace-pre-wrap">{run.error}</span>
-                </p>
-              )}
-              {run.status === 'cancelled' && <p className="mt-8 text-center text-[12.5px] text-faint">Phiên đã dừng.</p>}
-              {run.final && <FinalBlock run={run} files={files.length} onShowChanges={() => setPanelOpen(true)} />}
-              {run.planDecision && <PlanApprovalDecision runId={run.id} decision={run.planDecision} />}
-              {run.status === 'done' && run.final && run.config.mode !== 'plan' && (
-                <ChoiceQuestion
-                  key={run.messages.at(-1)?.id}
-                  runId={run.id}
-                  text={run.final}
-                  onContinue={() => { positioned.current = false; setAtBottom(true); setRevision((n) => n + 1); }}
-                />
-              )}
-            </div>
+            <RunBody run={run} files={files.length} compact={compact} setPanelOpen={setPanelOpen} onContinue={onContinue} />
           )}
         </div>
 
@@ -400,17 +467,15 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
             </button>
           )}
           <div className="mx-auto max-w-[760px]">
-            <Composer variant="dock" projects={projects} onCreated={onCreated} threadCwd={run?.config.cwd} threadId={id} threadMode={run?.config.mode} onContinue={() => { positioned.current = false; setAtBottom(true); setRevision((n) => n + 1); }} />
+            <Composer variant="dock" projects={projects} onCreated={onCreated} threadCwd={run?.config.cwd} threadId={id} threadMode={run?.config.mode} onContinue={onContinue} />
           </div>
         </div>
       </div>
 
       {panelOpen && run?.diff !== undefined && (
-        <>
-          <div className="fixed inset-0 z-40 lg:static lg:z-auto lg:w-[min(40vw,560px)] lg:shrink-0 lg:border-l lg:border-line">
-            <ChangesPanel files={files} diff={run.diff ?? ''} onClose={() => setPanelOpen(false)} />
-          </div>
-        </>
+        <div className="fixed inset-0 z-40 lg:static lg:z-auto lg:w-[min(40vw,560px)] lg:shrink-0 lg:border-l lg:border-line">
+          <ChangesPanel files={files} diff={run.diff ?? ''} onClose={() => setPanelOpen(false)} />
+        </div>
       )}
     </div>
   );

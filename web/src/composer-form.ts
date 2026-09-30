@@ -20,7 +20,7 @@ function record(value: unknown): Record<string, unknown> {
 const text = (value: unknown) => typeof value === 'string' && !value.includes('\u0000') ? value : '';
 const model = (value: unknown) => {
   const name = text(value).trim();
-  return /^[\w.:\/-]{1,64}$/.test(name) && !name.startsWith('-') ? name : '';
+  return /^[\w.:/-]{1,64}$/.test(name) && !name.startsWith('-') ? name : '';
 };
 const effort = (value: unknown) => /^[a-z]{1,16}$/.test(text(value)) ? text(value) : '';
 

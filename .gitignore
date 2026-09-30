@@ -6,3 +6,5 @@ data/runs/*.json
 .impeccable/config.json
 .impeccable/review/
 .debug-user-data/
+.local/sonar/
+.scannerwork/

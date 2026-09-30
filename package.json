@@ -10,7 +10,12 @@
     "start": "pnpm --filter server start",
     "cli": "pnpm --silent --filter ai-duo-cli dev",
     "cli:build": "pnpm --filter ai-duo-cli build",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "sonar:up": "node scripts/sonar.mjs up",
+    "sonar:scan": "node scripts/sonar.mjs scan",
+    "sonar:status": "node scripts/sonar.mjs status",
+    "sonar:down": "node scripts/sonar.mjs down",
+    "sonar:logs": "node scripts/sonar.mjs logs"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

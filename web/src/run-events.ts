@@ -10,7 +10,7 @@ export function reconnectDelay(attempt: number): number {
 export function coalesceTextDeltas(events: readonly RunEvent[]): RunEvent[] {
   const combined: RunEvent[] = [];
   for (const event of events) {
-    const previous = combined[combined.length - 1];
+    const previous = combined.at(-1);
     if (
       previous?.type === 'message.event' &&
       event.type === 'message.event' &&
@@ -29,65 +29,74 @@ export function coalesceTextDeltas(events: readonly RunEvent[]): RunEvent[] {
   return combined;
 }
 
-/** Apply a frame's events while copying each changed message's parts at most once. */
-export function reduceRunEvents(initial: Run | null, events: readonly RunEvent[]): Run | null {
-  let run = initial;
-  let messagesCopied = false;
-  let messageIndexes: Map<string, number> | undefined;
-  const copiedParts = new Set<string>();
+/** Copy-on-write editor over a run's messages: each changed message's parts are copied at most once per frame. */
+class RunEditor {
+  run: Run | null;
+  private messagesCopied = false;
+  private messageIndexes: Map<string, number> | undefined;
+  private readonly copiedParts = new Set<string>();
 
-  const resetForSnapshot = () => {
-    messagesCopied = false;
-    messageIndexes = undefined;
-    copiedParts.clear();
-  };
-  const ensureMessages = () => {
-    if (!run) return;
-    if (!messagesCopied) {
-      run = { ...run, messages: [...run.messages] };
-      messagesCopied = true;
-      messageIndexes = new Map(run.messages.map((message, index) => [message.id, index]));
-    }
-  };
-  const messageIndex = (id: string) => {
-    if (!run) return -1;
-    if (!messageIndexes) messageIndexes = new Map(run.messages.map((message, index) => [message.id, index]));
-    return messageIndexes.get(id) ?? -1;
-  };
+  constructor(initial: Run | null) {
+    this.run = initial;
+  }
 
-  for (const event of coalesceTextDeltas(events)) {
+  private static indexMessages(source: Run) {
+    return new Map(source.messages.map((message, index) => [message.id, index]));
+  }
+
+  private resetForSnapshot() {
+    this.messagesCopied = false;
+    this.messageIndexes = undefined;
+    this.copiedParts.clear();
+  }
+
+  private ensureMessages() {
+    if (!this.run || this.messagesCopied) return;
+    this.run = { ...this.run, messages: [...this.run.messages] };
+    this.messagesCopied = true;
+    this.messageIndexes = RunEditor.indexMessages(this.run);
+  }
+
+  private messageIndex(id: string) {
+    if (!this.run) return -1;
+    this.messageIndexes ??= RunEditor.indexMessages(this.run);
+    return this.messageIndexes.get(id) ?? -1;
+  }
+
+  apply(event: RunEvent) {
     if (event.type === 'snapshot') {
-      run = event.run;
-      resetForSnapshot();
-      continue;
+      this.run = event.run;
+      this.resetForSnapshot();
+      return;
     }
-    if (!run) continue;
+    if (!this.run) return;
 
     switch (event.type) {
       case 'message.start':
-        ensureMessages();
-        run!.messages.push(event.message);
-        messageIndexes!.set(event.message.id, run!.messages.length - 1);
+        this.ensureMessages();
+        this.run!.messages.push(event.message);
+        this.messageIndexes!.set(event.message.id, this.run!.messages.length - 1);
         break;
       case 'message.event': {
-        const index = messageIndex(event.id);
+        const index = this.messageIndex(event.id);
         if (index < 0) break;
-        ensureMessages();
-        const message = run!.messages[index]!;
-        if (!copiedParts.has(event.id)) {
-          run!.messages[index] = { ...message, parts: message.parts.map((part) => ({ ...part })) };
-          copiedParts.add(event.id);
+        this.ensureMessages();
+        const messages = this.run!.messages;
+        const message = messages[index]!;
+        if (!this.copiedParts.has(event.id)) {
+          messages[index] = { ...message, parts: message.parts.map((part) => ({ ...part })) };
+          this.copiedParts.add(event.id);
         }
-        applyAgentEvent(run!.messages[index]!.parts, event.event);
+        applyAgentEvent(messages[index]!.parts, event.event);
         break;
       }
       case 'message.end': {
-        const index = messageIndex(event.id);
+        const index = this.messageIndex(event.id);
         if (index < 0) break;
-        ensureMessages();
-        const message = run!.messages[index]!;
-        run!.messages[index] = {
-          ...message,
+        this.ensureMessages();
+        const messages = this.run!.messages;
+        messages[index] = {
+          ...messages[index]!,
           status: event.status,
           verdict: event.verdict,
           usage: event.usage,
@@ -96,11 +105,17 @@ export function reduceRunEvents(initial: Run | null, events: readonly RunEvent[]
         break;
       }
       case 'run.update':
-        run = { ...run, ...event.patch };
+        this.run = { ...this.run, ...event.patch };
         break;
     }
   }
-  return run;
+}
+
+/** Apply a frame's events while copying each changed message's parts at most once. */
+export function reduceRunEvents(initial: Run | null, events: readonly RunEvent[]): Run | null {
+  const editor = new RunEditor(initial);
+  for (const event of coalesceTextDeltas(events)) editor.apply(event);
+  return editor.run;
 }
 
 export interface RunEventSource {

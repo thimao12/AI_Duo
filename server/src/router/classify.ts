@@ -8,8 +8,8 @@ import { render } from '../prompts/index.ts';
 import type { TaskType, Tier } from '../types.ts';
 import { fencedBlocks } from '../../../shared/text.ts';
 
-const TASK_TYPES: TaskType[] = ['edit', 'bugfix', 'refactor', 'design', 'explain'];
-const TIERS: Tier[] = ['light', 'standard', 'heavy'];
+const TASK_TYPES = new Set<TaskType>(['edit', 'bugfix', 'refactor', 'design', 'explain']);
+const TIERS = new Set<Tier>(['light', 'standard', 'heavy']);
 /** Only the start of a long prompt is needed to tell what kind of task it is. */
 const MAX_PROMPT_CHARS = 4000;
 
@@ -25,7 +25,7 @@ export function parseClassification(text: string): Omit<ModelClassification, 'us
   if (!raw) return undefined;
   try {
     const v = JSON.parse(raw);
-    if (TASK_TYPES.includes(v?.taskType) && TIERS.includes(v?.complexity)) return { taskType: v.taskType, complexity: v.complexity };
+    if (TASK_TYPES.has(v?.taskType) && TIERS.has(v?.complexity)) return { taskType: v.taskType, complexity: v.complexity };
   } catch {}
   return undefined;
 }

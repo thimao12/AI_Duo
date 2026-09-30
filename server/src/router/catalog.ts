@@ -44,22 +44,21 @@ function knownCodexModels(): Set<string> | undefined {
  * subset of agents/tiers). Unsafe values are dropped, and a Codex model the local CLI doesn't
  * list falls back to the CLI default instead of failing the turn.
  */
-export function loadCatalog(env = process.env, codexModels = knownCodexModels()): Catalog {
-  const catalog: Catalog = structuredClone(DEFAULT_CATALOG);
-  const file = env.AI_DUO_ROUTER_CATALOG;
-  if (file && existsSync(file)) {
-    try {
-      const override = JSON.parse(readFileSync(file, 'utf8'));
-      for (const agent of ['claude', 'codex'] as const) {
-        for (const tier of TIERS) {
-          const o = override?.[agent]?.[tier];
-          if (o && typeof o === 'object') catalog[agent][tier] = { model: o.model, effort: o.effort };
-        }
+function applyOverride(catalog: Catalog, file: string) {
+  try {
+    const override = JSON.parse(readFileSync(file, 'utf8'));
+    for (const agent of ['claude', 'codex'] as const) {
+      for (const tier of TIERS) {
+        const o = override?.[agent]?.[tier];
+        if (o && typeof o === 'object') catalog[agent][tier] = { model: o.model, effort: o.effort };
       }
-    } catch (err) {
-      console.error(`Ignoring AI_DUO_ROUTER_CATALOG (${file}):`, (err as Error).message);
     }
+  } catch (err) {
+    console.error(`Ignoring AI_DUO_ROUTER_CATALOG (${file}):`, (err as Error).message);
   }
+}
+
+function sanitizeCatalog(catalog: Catalog, codexModels: Set<string> | undefined) {
   for (const agent of ['claude', 'codex'] as const) {
     for (const tier of TIERS) {
       const c = catalog[agent][tier];
@@ -68,5 +67,12 @@ export function loadCatalog(env = process.env, codexModels = knownCodexModels())
       if (agent === 'codex' && c.model && codexModels && !codexModels.has(c.model)) c.model = undefined;
     }
   }
+}
+
+export function loadCatalog(env = process.env, codexModels = knownCodexModels()): Catalog {
+  const catalog: Catalog = structuredClone(DEFAULT_CATALOG);
+  const file = env.AI_DUO_ROUTER_CATALOG;
+  if (file && existsSync(file)) applyOverride(catalog, file);
+  sanitizeCatalog(catalog, codexModels);
   return catalog;
 }

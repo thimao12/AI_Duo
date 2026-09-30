@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Check, ChevronDown, LoaderCircle } from 'lucide-react';
@@ -6,7 +6,10 @@ import type { Run, Speaker, Usage, Verdict } from '../api.ts';
 
 /* ---- Formatting ------------------------------------------------------------ */
 
-const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k` : String(n));
+const k = (n: number) => {
+  if (n < 1000) return String(n);
+  return `${(n / 1000).toFixed(n >= 100_000 ? 0 : 1)}k`;
+};
 
 /** e.g. "12.3k in (9.1k cache) · 450 out · $0.021" */
 export function formatUsage(u: Usage): string {
@@ -42,7 +45,7 @@ export function basename(p: string): string {
   let end = p.length;
   while (end > 0 && (p[end - 1] === '/' || p[end - 1] === '\\')) end--;
   const parts = p.slice(0, end).split(/[\\/]/);
-  return parts[parts.length - 1] || p;
+  return parts.at(-1) || p;
 }
 
 /**
@@ -123,15 +126,15 @@ const STATUS: Record<Run['status'], { label: string; cls: string }> = {
 
 /* ---- Small components ------------------------------------------------------ */
 
-export function AgentDot({ agent, className = '' }: { agent: Speaker; className?: string }) {
+export function AgentDot({ agent, className = '' }: Readonly<{ agent: Speaker; className?: string }>) {
   return <span aria-hidden className={`inline-block size-2 shrink-0 rounded-full ${AGENT_DOT[agent]} ${className}`} />;
 }
 
-export function Spinner({ className = 'size-3.5' }: { className?: string }) {
+export function Spinner({ className = 'size-3.5' }: Readonly<{ className?: string }>) {
   return <LoaderCircle aria-hidden className={`shrink-0 animate-spin text-faint ${className}`} strokeWidth={2.2} />;
 }
 
-export function StatusText({ status }: { status: Run['status'] }) {
+export function StatusText({ status }: Readonly<{ status: Run['status'] }>) {
   const s = STATUS[status];
   return (
     <span className={`inline-flex items-center gap-1.5 text-xs font-medium ${s.cls}`}>
@@ -148,7 +151,7 @@ const VERDICT: Record<Verdict, { label: string; cls: string }> = {
   CHANGES_REQUESTED: { label: 'Yêu cầu sửa', cls: 'text-warn bg-warn/10 ring-warn/25' },
 };
 
-export function VerdictBadge({ verdict }: { verdict: Verdict }) {
+export function VerdictBadge({ verdict }: Readonly<{ verdict: Verdict }>) {
   const v = VERDICT[verdict];
   return (
     <span title={verdict} className={`inline-flex items-center rounded-full px-2 py-px text-[11px] font-semibold ring-1 ring-inset ${v.cls}`}>
@@ -157,13 +160,19 @@ export function VerdictBadge({ verdict }: { verdict: Verdict }) {
   );
 }
 
-export function Markdown({ children }: { children: string }) {
+function MarkdownLink({ node: _node, ...props }: ComponentProps<'a'> & { node?: unknown }) {
+  // Agent output links to files and websites; never navigate the app itself away.
+  return <a {...props} target="_blank" rel="noreferrer" />;
+}
+
+const MARKDOWN_COMPONENTS = { a: MarkdownLink };
+
+export function Markdown({ children }: Readonly<{ children: string }>) {
   return (
     <div className="md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        // Agent output links to files and websites; never navigate the app itself away.
-        components={{ a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" /> }}
+        components={MARKDOWN_COMPONENTS}
       >
         {children}
       </ReactMarkdown>
@@ -171,7 +180,7 @@ export function Markdown({ children }: { children: string }) {
   );
 }
 
-export function Kbd({ children }: { children: ReactNode }) {
+export function Kbd({ children }: Readonly<{ children: ReactNode }>) {
   return <kbd className="rounded border border-line bg-bg px-1 font-sans text-[11.5px] font-medium text-faint">{children}</kbd>;
 }
 
@@ -216,11 +225,11 @@ interface PopoverProps {
   children: (close: () => void) => ReactNode;
 }
 
-export function Popover({ label, title, side = 'top', align = 'start', width = 'w-64', showChevron = true, triggerClassName = chipCls, children }: PopoverProps) {
+export function Popover({ label, title, side = 'top', align = 'start', width = 'w-64', showChevron = true, triggerClassName = chipCls, children }: Readonly<PopoverProps>) {
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
-  const panel = useRef<HTMLDivElement>(null);
+  const panel = useRef<HTMLDialogElement>(null);
   const close = () => setOpen(false);
   useDismiss(open, close, root, trigger);
   // Where the panel actually fits: flipped side, height cap and a horizontal nudge.
@@ -235,7 +244,8 @@ export function Popover({ label, title, side = 'top', align = 'start', width = '
     const need = panel.current.scrollHeight;
     const preferred = side === 'top' ? above : below;
     const flipped = need > preferred && (side === 'top' ? below : above) > preferred;
-    const finalSide = flipped ? (side === 'top' ? 'bottom' : 'top') : side;
+    const opposite = side === 'top' ? 'bottom' : 'top';
+    const finalSide = flipped ? opposite : side;
     const space = finalSide === 'top' ? above : below;
     // Keep the panel inside the window horizontally.
     const p = panel.current.getBoundingClientRect();
@@ -248,6 +258,22 @@ export function Popover({ label, title, side = 'top', align = 'start', width = '
     if (open) panel.current?.querySelector<HTMLElement>('button, input, [tabindex]')?.focus();
   }, [open]);
 
+  // Arrow-key navigation between options.
+  useEffect(() => {
+    const el = panel.current;
+    if (!open || !el) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+      const items = [...el.querySelectorAll<HTMLElement>('[role=menuitemradio], [role=menuitem]')];
+      if (!items.length) return;
+      e.preventDefault();
+      const i = items.indexOf(document.activeElement as HTMLElement);
+      items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
+    };
+    el.addEventListener('keydown', onKeyDown);
+    return () => el.removeEventListener('keydown', onKeyDown);
+  }, [open]);
+
   const shownSide = fit?.side ?? side;
 
   return (
@@ -257,29 +283,20 @@ export function Popover({ label, title, side = 'top', align = 'start', width = '
         {showChevron && <ChevronDown aria-hidden className="size-3 shrink-0 opacity-60" />}
       </button>
       {open && (
-        <div
+        <dialog
           ref={panel}
-          role="dialog"
-          onKeyDown={(e) => {
-            // Arrow-key navigation between options.
-            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
-            const items = [...(panel.current?.querySelectorAll<HTMLElement>('[role=menuitemradio], [role=menuitem]') ?? [])];
-            if (!items.length) return;
-            e.preventDefault();
-            const i = items.indexOf(document.activeElement as HTMLElement);
-            items[(i + (e.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length]?.focus();
-          }}
+          open
           style={fit ? { maxHeight: fit.maxHeight, transform: fit.shift ? `translateX(${fit.shift}px)` : undefined } : { visibility: 'hidden' }}
-          className={`absolute z-40 ${width} max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-line bg-bg p-1 shadow-pop ${shownSide === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'} ${align === 'end' ? 'right-0' : 'left-0'}`}
+          className={`absolute z-40 ${width} max-w-[calc(100vw-24px)] overflow-y-auto rounded-xl border border-line bg-bg p-1 shadow-pop ${shownSide === 'top' ? 'bottom-full mb-2' : 'top-full mt-2'} ${align === 'end' ? 'right-0 left-auto' : 'left-0 right-auto'} text-fg`}
         >
           {children(close)}
-        </div>
+        </dialog>
       )}
     </div>
   );
 }
 
-export function MenuLabel({ children }: { children: ReactNode }) {
+export function MenuLabel({ children }: Readonly<{ children: ReactNode }>) {
   return <p className="px-2.5 pt-1.5 pb-1 text-[11.5px] font-medium text-faint">{children}</p>;
 }
 
@@ -289,13 +306,13 @@ export function MenuItem({
   icon,
   label,
   hint,
-}: {
+}: Readonly<{
   selected?: boolean;
   onSelect: () => void;
   icon?: ReactNode;
   label: ReactNode;
   hint?: ReactNode;
-}) {
+}>) {
   return (
     <button
       type="button"

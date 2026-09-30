@@ -33,6 +33,8 @@ function toolResultText(content: any): string {
 
 const WINDOW_LABEL: Record<string, string> = { five_hour: '5 giờ', seven_day: '7 ngày' };
 
+const RATE_LIMIT_STATE = new Map([['rejected', 'đã chạm hạn mức'], ['allowed_warning', 'sắp chạm hạn mức']]);
+
 /** e.g. "Quota Claude sắp chạm hạn mức: đã dùng 75% hạn mức 7 ngày, reset lúc 26/9 21:00" */
 export function describeRateLimit(status: string, info: any): string {
   const window = WINDOW_LABEL[info.rateLimitType] ?? info.rateLimitType ?? '';
@@ -41,7 +43,7 @@ export function describeRateLimit(status: string, info: any): string {
     typeof info.resetsAt === 'number'
       ? `, reset lúc ${new Date(info.resetsAt * 1000).toLocaleString('vi-VN', { day: 'numeric', month: 'numeric', hour: '2-digit', minute: '2-digit' })}`
       : '';
-  const state = status === 'rejected' ? 'đã chạm hạn mức' : status === 'allowed_warning' ? 'sắp chạm hạn mức' : status;
+  const state = RATE_LIMIT_STATE.get(status) ?? status;
   return `Quota Claude ${state}: đã dùng ${pct}hạn mức ${window}${reset}`.replace(/\s+/g, ' ');
 }
 
@@ -74,53 +76,63 @@ export function initialClaudeJsonState(sessionId?: string): ClaudeJsonState {
   return { sessionId, streamed: '' };
 }
 
+function onStreamEvent(ev: any, next: ClaudeJsonState, events: AgentEvent[]) {
+  const d = ev.event?.delta;
+  if (ev.event?.type === 'content_block_delta' && d?.type === 'text_delta' && d.text) {
+    next.streamed += d.text;
+    events.push({ kind: 'text_delta', content: d.text });
+  } else if (ev.event?.type === 'content_block_start' && ev.event.content_block?.type === 'text' && next.streamed) {
+    // new text block after a tool call: keep blocks visually separated
+    next.streamed += '\n\n';
+    events.push({ kind: 'text_delta', content: '\n\n' });
+  }
+}
+
+function onToolResults(ev: any, events: AgentEvent[]) {
+  for (const block of ev.message?.content ?? []) {
+    if (block?.type !== 'tool_result') continue;
+    const text = toolResultText(block.content);
+    if (text) events.push({ kind: 'tool_result', content: text.length > 4000 ? text.slice(0, 4000) + '\n…' : text });
+  }
+}
+
+function onResult(ev: any, next: ClaudeJsonState) {
+  next.usage = claudeUsage(ev);
+  if (ev.is_error) next.errorText = typeof ev.result === 'string' ? ev.result : `Claude error (${ev.subtype})`;
+  else if (typeof ev.result === 'string') next.finalText = ev.result;
+}
+
+function onRateLimit(ev: any, next: ClaudeJsonState, events: AgentEvent[]) {
+  const info = ev.rate_limit_info ?? {};
+  const status = info.status ?? ev.status;
+  // Only a reading with a utilization feeds the usage bar; a bare status would be an empty event.
+  if (typeof info.utilization === 'number') events.push({ kind: 'raw', content: '', rateLimit: {
+    type: info.rateLimitType,
+    utilization: info.utilization,
+    ...(typeof info.resetsAt === 'number' && { resetsAt: info.resetsAt }),
+  } });
+  if (info.isUsingOverage === true) {
+    next.overage = { resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt : undefined };
+    next.errorText = claudeOverageMessage(next.overage.resetsAt);
+  } else if (status === 'rejected') next.errorText = `Claude rate limit rejected: ${JSON.stringify(info)}`;
+  // 'allowed' arrives on nearly every turn; only surface warnings.
+  else if (status !== 'allowed') events.push({ kind: 'raw', content: describeRateLimit(status, info) });
+}
+
 export function onJson(ev: any, state: ClaudeJsonState): { state: ClaudeJsonState; events: AgentEvent[] } {
   const next = { ...state };
   const events: AgentEvent[] = [];
   if (ev.session_id) next.sessionId = ev.session_id;
   const topLevel = !ev.parent_tool_use_id;
 
-  if (ev.type === 'stream_event' && topLevel) {
-    const d = ev.event?.delta;
-    if (ev.event?.type === 'content_block_delta' && d?.type === 'text_delta' && d.text) {
-      next.streamed += d.text;
-      events.push({ kind: 'text_delta', content: d.text });
-    } else if (ev.event?.type === 'content_block_start' && ev.event.content_block?.type === 'text' && next.streamed) {
-      // new text block after a tool call: keep blocks visually separated
-      next.streamed += '\n\n';
-      events.push({ kind: 'text_delta', content: '\n\n' });
-    }
-  } else if (ev.type === 'assistant') {
+  if (ev.type === 'stream_event' && topLevel) onStreamEvent(ev, next, events);
+  else if (ev.type === 'assistant') {
     for (const block of ev.message?.content ?? []) {
       if (block.type === 'tool_use') events.push({ kind: 'tool', content: `${block.name}: ${summarizeInput(block.input)}` });
     }
-  } else if (ev.type === 'user' && topLevel) {
-    for (const block of ev.message?.content ?? []) {
-      if (block?.type === 'tool_result') {
-        const text = toolResultText(block.content);
-        if (text) events.push({ kind: 'tool_result', content: text.length > 4000 ? text.slice(0, 4000) + '\n…' : text });
-      }
-    }
-  } else if (ev.type === 'result') {
-    next.usage = claudeUsage(ev);
-    if (ev.is_error) next.errorText = typeof ev.result === 'string' ? ev.result : `Claude error (${ev.subtype})`;
-    else if (typeof ev.result === 'string') next.finalText = ev.result;
-  } else if (ev.type === 'rate_limit_event') {
-    const info = ev.rate_limit_info ?? {};
-    const status = info.status ?? ev.status;
-    // Only a reading with a utilization feeds the usage bar; a bare status would be an empty event.
-    if (typeof info.utilization === 'number') events.push({ kind: 'raw', content: '', rateLimit: {
-      type: info.rateLimitType,
-      utilization: info.utilization,
-      ...(typeof info.resetsAt === 'number' && { resetsAt: info.resetsAt }),
-    } });
-    if (info.isUsingOverage === true) {
-      next.overage = { resetsAt: typeof info.resetsAt === 'number' ? info.resetsAt : undefined };
-      next.errorText = claudeOverageMessage(next.overage.resetsAt);
-    } else if (status === 'rejected') next.errorText = `Claude rate limit rejected: ${JSON.stringify(info)}`;
-    // 'allowed' arrives on nearly every turn; only surface warnings.
-    else if (status !== 'allowed') events.push({ kind: 'raw', content: describeRateLimit(status, info) });
-  }
+  } else if (ev.type === 'user' && topLevel) onToolResults(ev, events);
+  else if (ev.type === 'result') onResult(ev, next);
+  else if (ev.type === 'rate_limit_event') onRateLimit(ev, next, events);
   return { state: next, events };
 }
 

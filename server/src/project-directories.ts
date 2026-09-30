@@ -53,7 +53,8 @@ export class ProjectDirectories {
 
 let policy: ProjectDirectories | undefined;
 export function projectDirectories(defaultCwd = process.env.AI_DUO_DEFAULT_CWD || process.env.INIT_CWD || process.cwd()): ProjectDirectories {
-  return policy ??= new ProjectDirectories(process.env.AI_DUO_ALLOWED_ROOTS, defaultCwd);
+  policy ??= new ProjectDirectories(process.env.AI_DUO_ALLOWED_ROOTS, defaultCwd);
+  return policy;
 }
 
 export const authorizeDirectory = (cwd: string): string => projectDirectories().resolve(cwd);

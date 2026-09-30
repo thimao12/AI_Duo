@@ -8,7 +8,7 @@ import { gitRequiredMessage, gitToplevel, isGitRepo } from '../../server/src/git
 import { describeOwner, listLocks, lockTarget, ownerState, readLockOwner, unlockRepo } from '../../server/src/lock.ts';
 import { paths } from '../../server/src/paths.ts';
 import { authorizeDirectory, DirectoryAccessError } from '../../server/src/project-directories.ts';
-import { evaluatePreflight, RunService, ServiceError, type RunHandle, type RunRequest, type ServiceErrorCode, type StartOptions } from '../../server/src/service.ts';
+import { RunService, ServiceError, type RunHandle, type RunRequest, type ServiceErrorCode, type StartOptions } from '../../server/src/service.ts';
 import type { Mode, Run } from '../../server/src/types.ts';
 import { DecisionController } from './decisions.ts';
 import { invocationCwd, seedPrompts } from './env.ts';
@@ -88,6 +88,39 @@ const OPTIONS = {
 
 type Flags = ReturnType<typeof parseArgs<{ options: typeof OPTIONS; allowPositionals: true; strict: true }>>['values'];
 
+function readGitVersion(): string | null {
+  try {
+    return execFileSync('git', ['--version'], { encoding: 'utf8', windowsHide: true }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function doctorJson(d: {
+  cwd: string;
+  git: string | null;
+  gitVersion: string | null;
+  promptsReady: string | null;
+  owner: Awaited<ReturnType<typeof readLockOwner>> | undefined;
+  report: Awaited<ReturnType<RunService['preflight']>>;
+  locks: Awaited<ReturnType<typeof listLocks>>;
+}) {
+  const { cwd, git, gitVersion, promptsReady, owner, report, locks } = d;
+  return {
+    ok: report.ok && !!gitVersion && !promptsReady,
+    node: process.version,
+    git: gitVersion,
+    dataDir: paths.dataDir,
+    promptsDir: paths.promptsDir,
+    cwd,
+    repository: git,
+    lock: owner === undefined ? null : { owner, state: ownerState(owner) },
+    agents: report.checks,
+    problems: [...(gitVersion ? [] : ['git not found on PATH']), ...(promptsReady ? [promptsReady] : []), ...report.problems],
+    locks,
+  };
+}
+
 class UsageError extends Error {}
 
 export interface Io {
@@ -164,7 +197,33 @@ function resultJson(run: Run) {
   };
 }
 
+const normalizePath = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+
+function runsInside<T extends { cwd: string }>(runs: T[], root: string): T[] {
+  const prefix = normalizePath(root);
+  return runs.filter((r) => normalizePath(r.cwd) === prefix || normalizePath(r.cwd).startsWith(prefix + path.sep));
+}
+
+function statusColor(style: Style, status: string): (s: string) => string {
+  if (status === 'done') return style.green;
+  if (status === 'running') return style.cyan;
+  if (status === 'cancelled') return style.yellow;
+  return style.red;
+}
+
 const filesChanged = (diff?: string) => (diff?.match(/^diff --git/gm) ?? []).length;
+
+function lockStateNote(state: string) {
+  if (state === 'dead') return ' – process is gone; run `ai-duo unlock`';
+  if (state === 'unknown') return ' – owner cannot be checked';
+  return '';
+}
+
+function lockMark(state: string, marks: { ok: string; bad: string; warn: string }) {
+  if (state === 'dead') return marks.bad;
+  if (state === 'alive') return marks.ok;
+  return marks.warn;
+}
 
 class Cli {
   readonly style: Style;
@@ -273,13 +332,21 @@ class Cli {
 
   finish(run: Run): number {
     const { style, flags } = this;
-    const code = run.status === 'done' ? EXIT.ok : run.status === 'cancelled' ? EXIT.cancelled : EXIT.failed;
+    let code: number = EXIT.failed;
+    let mark = style.red('✗ error');
+    if (run.status === 'done') {
+      code = EXIT.ok;
+      mark = style.green('✓ done');
+    } else if (run.status === 'cancelled') {
+      code = EXIT.cancelled;
+      mark = style.yellow('■ cancelled');
+    }
     if (flags.json) this.json(resultJson(run));
     else if (run.final) this.out(run.final);
-    const mark = run.status === 'done' ? style.green('✓ done') : run.status === 'cancelled' ? style.yellow('■ cancelled') : style.red('✗ error');
     const changed = run.config.mode === 'code' && run.diff !== undefined ? ` · ${filesChanged(run.diff)} file(s) changed, not committed` : '';
     const usage = run.usage ? ` · ${formatUsage(run.usage)}` : '';
-    this.err(`\n${mark}${style.dim(`${changed}${usage}`)}`);
+    const detail = style.dim(`${changed}${usage}`);
+    this.err(`\n${mark}${detail}`);
     if (run.error) this.err(style.red(run.error));
     this.err(style.dim(`ai-duo show ${run.id}${changed ? ' --diff' : ''}   ·   ai-duo continue ${run.id} "…"`));
     return code;
@@ -331,9 +398,7 @@ class Cli {
       const here = path.resolve(io.cwd, flags.cwd ?? '.');
       const top = await gitToplevel(here);
       const root = top ? path.resolve(top) : here;
-      const norm = (p: string) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
-      const prefix = norm(root);
-      runs = runs.filter((r) => norm(r.cwd) === prefix || norm(r.cwd).startsWith(prefix + path.sep));
+      runs = runsInside(runs, root);
       scope = root;
     }
     runs = runs.slice(0, limit || undefined);
@@ -348,7 +413,7 @@ class Cli {
     this.err(style.dim(`Runs in ${scope}:`));
     for (const r of runs) {
       const padded = r.status.padEnd(9);
-      const status = r.status === 'done' ? style.green(padded) : r.status === 'running' ? style.cyan(padded) : r.status === 'cancelled' ? style.yellow(padded) : style.red(padded);
+      const status = statusColor(style, r.status)(padded);
       const title = (r.title || r.prompt).split('\n')[0].slice(0, 70);
       const where = flags.all ? style.dim(`  ${r.cwd}`) : '';
       this.out(`${r.id}  ${status}  ${String(r.mode).padEnd(4)}  ${title}${where}`);
@@ -369,58 +434,85 @@ class Cli {
   }
 
   async doctor(): Promise<number> {
-    const { flags, io, style } = this;
+    const { flags, io } = this;
     const cwd = authorizeDirectory(path.resolve(io.cwd, flags.cwd ?? '.'));
+    const folderExists = existsSync(cwd);
     const promptsReady = await seedPrompts().then(() => null, (err: Error) => err.message);
     const prompts = await readdir(paths.promptsDir).catch(() => [] as string[]);
     const runsCount = (await readdir(paths.dataDir).catch(() => [] as string[])).filter((n) => n.endsWith('.json')).length;
-    const top = existsSync(cwd) ? await gitToplevel(cwd) : null;
+    const top = folderExists ? await gitToplevel(cwd) : null;
     const git = top && path.resolve(top);
-    let gitVersion: string | null = null;
-    try {
-      gitVersion = execFileSync('git', ['--version'], { encoding: 'utf8', windowsHide: true }).trim();
-    } catch {}
-    const report = await service.preflight(['claude', 'codex'] as AgentName[], existsSync(cwd) ? cwd : io.cwd, flags['skip-auth-check'] === true);
-    const target = existsSync(cwd) ? await lockTarget(cwd).catch(() => undefined) : undefined;
+    const gitVersion = readGitVersion();
+    const report = await service.preflight(['claude', 'codex'] as AgentName[], folderExists ? cwd : io.cwd, flags['skip-auth-check'] === true);
+    const target = folderExists ? await lockTarget(cwd).catch(() => undefined) : undefined;
     const owner = target ? await readLockOwner(target.file) : undefined;
     const locks = await listLocks();
 
     if (flags.json) {
-      this.json({
-        ok: report.ok && !!gitVersion && !promptsReady,
-        node: process.version,
-        git: gitVersion,
-        dataDir: paths.dataDir,
-        promptsDir: paths.promptsDir,
-        cwd,
-        repository: git,
-        lock: owner === undefined ? null : { owner, state: ownerState(owner) },
-        agents: report.checks,
-        problems: [...(gitVersion ? [] : ['git not found on PATH']), ...(promptsReady ? [promptsReady] : []), ...report.problems],
-        locks,
-      });
+      this.json(doctorJson({ cwd, git, gitVersion, promptsReady, owner, report, locks }));
     } else {
-      const ok = style.green('✓');
-      const bad = style.red('✗');
-      const warn = style.yellow('!');
-      const row = (mark: string, label: string, value: string) => this.out(`${mark} ${label.padEnd(12)} ${value}`);
-      row(ok, 'Node', process.version);
-      row(gitVersion ? ok : bad, 'Git', gitVersion ?? 'not found on PATH (Code mode needs it)');
-      row(ok, 'Runs', `${paths.dataDir} ${style.dim(`(${runsCount} saved)`)}`);
-      row(promptsReady ? bad : ok, 'Prompts', promptsReady ?? `${paths.promptsDir} ${style.dim(`(${prompts.filter((p) => p.endsWith('.md')).length} templates)`)}`);
-      row(existsSync(cwd) ? ok : bad, 'Folder', existsSync(cwd) ? `${cwd}${git ? style.dim(` · git: ${git}`) : style.dim(' · not a Git repository (Plan only)')}` : `${cwd} does not exist`);
-      if (owner !== undefined) {
-        const state = ownerState(owner);
-        row(state === 'dead' ? bad : warn, 'Lock', owner ? `${describeOwner(owner)}${state === 'dead' ? ' – process is gone; run `ai-duo unlock`' : state === 'unknown' ? ' – owner cannot be checked' : ''}` : 'unreadable lock file');
-      } else if (target) row(ok, 'Lock', 'free');
-      for (const check of report.checks) this.agentRow(check, flags['skip-auth-check'] === true);
-      const others = locks.filter((lock) => lock.file !== target?.file);
-      if (others.length) {
-        this.out(style.dim('\nOther repository locks:'));
-        for (const lock of others) this.out(`  ${lock.state === 'dead' ? bad : lock.state === 'alive' ? ok : warn} ${lock.owner ? `${lock.owner.root} · ${describeOwner(lock.owner)} · ${lock.state}` : `${lock.file} (unreadable)`}`);
-      }
+      this.doctorText({ cwd, git, gitVersion, promptsReady, prompts, runsCount, owner, target, report, locks });
     }
     return report.ok && gitVersion && !promptsReady ? EXIT.ok : EXIT.preflight;
+  }
+
+  private doctorText(d: {
+    cwd: string;
+    git: string | null;
+    gitVersion: string | null;
+    promptsReady: string | null;
+    prompts: string[];
+    runsCount: number;
+    owner: Awaited<ReturnType<typeof readLockOwner>> | undefined;
+    target: Awaited<ReturnType<typeof lockTarget>> | undefined;
+    report: Awaited<ReturnType<RunService['preflight']>>;
+    locks: Awaited<ReturnType<typeof listLocks>>;
+  }) {
+    const { style } = this;
+    const { cwd, git, gitVersion, promptsReady, owner, target, report, locks } = d;
+    const ok = style.green('✓');
+    const bad = style.red('✗');
+    const warn = style.yellow('!');
+    const row = (mark: string, label: string, value: string) => this.out(`${mark} ${label.padEnd(12)} ${value}`);
+    const folderExists = existsSync(cwd);
+    const templates = style.dim(`(${d.prompts.filter((p) => p.endsWith('.md')).length} templates)`);
+    const marks = { ok, bad, warn };
+    const saved = style.dim(`(${d.runsCount} saved)`);
+    row(ok, 'Node', process.version);
+    row(gitVersion ? ok : bad, 'Git', gitVersion ?? 'not found on PATH (Code mode needs it)');
+    row(ok, 'Runs', `${paths.dataDir} ${saved}`);
+    row(promptsReady ? bad : ok, 'Prompts', promptsReady ?? `${paths.promptsDir} ${templates}`);
+    row(folderExists ? ok : bad, 'Folder', folderExists ? `${cwd}${this.gitNote(git)}` : `${cwd} does not exist`);
+    this.lockRow(row, { owner, target }, marks);
+    for (const check of report.checks) this.agentRow(check, this.flags['skip-auth-check'] === true);
+    this.otherLocks(locks.filter((lock) => lock.file !== target?.file), marks);
+  }
+
+  private lockRow(
+    row: (mark: string, label: string, value: string) => void,
+    lock: { owner: Awaited<ReturnType<typeof readLockOwner>> | undefined; target: unknown },
+    marks: { ok: string; bad: string; warn: string },
+  ) {
+    const { owner, target } = lock;
+    if (owner !== undefined) {
+      const state = ownerState(owner);
+      row(state === 'dead' ? marks.bad : marks.warn, 'Lock', owner ? `${describeOwner(owner)}${lockStateNote(state)}` : 'unreadable lock file');
+    } else if (target) row(marks.ok, 'Lock', 'free');
+  }
+
+  private otherLocks(others: Awaited<ReturnType<typeof listLocks>>, marks: { ok: string; bad: string; warn: string }) {
+    if (!others.length) return;
+    this.out(this.style.dim('\nOther repository locks:'));
+    for (const lock of others) {
+      const mark = lockMark(lock.state, marks);
+      const detail = lock.owner ? `${lock.owner.root} · ${describeOwner(lock.owner)} · ${lock.state}` : `${lock.file} (unreadable)`;
+      this.out(`  ${mark} ${detail}`);
+    }
+  }
+
+  private gitNote(git: string | null) {
+    const { style } = this;
+    return git ? style.dim(` · git: ${git}`) : style.dim(' · not a Git repository (Plan only)');
   }
 
   private agentRow(check: AgentCheck, skipAuth: boolean) {
@@ -430,14 +522,22 @@ class Cli {
       this.out(`${style.red('✗')} ${name.padEnd(12)} ${check.error}`);
       return;
     }
-    const login =
-      check.auth === 'ok' ? style.green('logged in (subscription)')
-      : check.auth === 'unknown' ? style.yellow(`login not verified${skipAuth ? ' (--skip-auth-check)' : ' – runs need --skip-auth-check'}`)
-      : style.red('login problem');
-    const mark = check.auth === 'ok' ? style.green('✓') : check.auth === 'unknown' ? style.yellow('!') : style.red('✗');
-    this.out(`${mark} ${name.padEnd(12)} ${check.version} ${style.dim(`· ${check.path}`)} · ${login}`);
+    const { mark, login } = this.authDisplay(check.auth, skipAuth);
+    const location = style.dim(`· ${check.path}`);
+    this.out(`${mark} ${name.padEnd(12)} ${check.version} ${location} · ${login}`);
     if (check.authError) this.out(style.dim(`  ${check.authError}`));
   }
+
+  private authDisplay(auth: AgentCheck['auth'], skipAuth: boolean) {
+    const { style } = this;
+    if (auth === 'ok') return { mark: style.green('✓'), login: style.green('logged in (subscription)') };
+    if (auth === 'unknown') {
+      const hint = skipAuth ? ' (--skip-auth-check)' : ' – runs need --skip-auth-check';
+      return { mark: style.yellow('!'), login: style.yellow(`login not verified${hint}`) };
+    }
+    return { mark: style.red('✗'), login: style.red('login problem') };
+  }
+
 
   async unlock(positionals: string[]): Promise<number> {
     const { flags, io, style } = this;
@@ -456,7 +556,8 @@ class Cli {
       this.err(`If you are sure no agent is still working there (for example the PID now belongs to another program), run \`ai-duo unlock "${result.target.root}" --force\`.`);
       return EXIT.locked;
     }
-    this.err(`${style.green('Unlocked')} ${result.target.root} ${style.dim(`(was held by ${who})`)}`);
+    const held = style.dim(`(was held by ${who})`);
+    this.err(`${style.green('Unlocked')} ${result.target.root} ${held}`);
     return EXIT.ok;
   }
 }

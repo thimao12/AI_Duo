@@ -7,16 +7,16 @@ export const isDataId = (value: unknown): value is string => typeof value === 's
 
 export function requireDataId(id: string): string {
   const match = typeof id === 'string' ? /^[A-Za-z0-9_-]+$/.exec(id) : null;
-  if (!match || match[0] !== id) throw new Error('Invalid run or message ID');
-  return match[0];
+  if (match?.[0] !== id) throw new Error('Invalid run or message ID');
+  return id;
 }
 
 /** Private: callers perform operations, rather than passing raw paths to filesystem APIs. */
 async function confinedPath(...segments: string[]): Promise<string> {
   const parts = segments.map((segment) => {
     const match = /^[A-Za-z0-9_.-]+$/.exec(segment);
-    if (!match || match[0] !== segment || segment === '.' || segment === '..') throw new Error('Invalid data path segment');
-    return match[0];
+    if (match?.[0] !== segment || segment === '.' || segment === '..') throw new Error('Invalid data path segment');
+    return segment;
   });
   const root = await realpath(paths.dataDir);
   const target = path.resolve(root, ...parts);

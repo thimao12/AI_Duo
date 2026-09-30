@@ -41,7 +41,7 @@ const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const IMAGE_ONLY_PROMPT = 'Hãy phân tích ảnh đính kèm.';
 
 export interface RunRequest {
-  mode?: Mode | string;
+  mode?: string;
   prompt?: string;
   /** Defaults to the service's default working directory. Ignored by follow-ups. */
   cwd?: string;
@@ -94,7 +94,10 @@ export function evaluatePreflight(checks: AgentCheck[], skipAuthCheck = false): 
     else if (check.auth === 'failed') problems.push(check.authError ?? `${check.agent}: login check failed`);
     else if (check.auth === 'unknown') {
       authUnverified = true;
-      if (!skipAuthCheck) problems.push(`${check.authError ?? `${check.agent}: login status unknown`} Dùng --skip-auth-check (API: skipAuthCheck) để vẫn chạy.`);
+      if (!skipAuthCheck) {
+        const reason = check.authError ?? check.agent + ': login status unknown';
+        problems.push(`${reason} Dùng --skip-auth-check (API: skipAuthCheck) để vẫn chạy.`);
+      }
     }
   }
   return { ok: problems.length === 0, checks, problems, authUnverified };
@@ -108,50 +111,70 @@ export function agentsFor(cfg: Pick<RunConfig, 'mode' | 'coder' | 'reviewer'>): 
 
 type ParsedImages = { images: NonNullable<RunConfig['images']>; buffers: Buffer[] };
 
+const IMAGE_SIGNATURES: Record<string, (bytes: Buffer) => boolean> = {
+  'image/png': (bytes) => bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex')),
+  'image/jpeg': (bytes) => bytes.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex')),
+  'image/gif': (bytes) => /^GIF8[79]a$/.test(bytes.subarray(0, 6).toString('ascii')),
+  'image/webp': (bytes) => bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP',
+};
+
+/** One image's metadata and bytes, or the reason it is rejected. */
+function parseImage(item: any): { image: NonNullable<RunConfig['images']>[number]; bytes: Buffer } | string {
+  if (!item || typeof item.name !== 'string' || typeof item.dataUrl !== 'string') return 'Invalid image';
+  const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(item.dataUrl);
+  if (!match) return 'Use PNG, JPEG, WebP or GIF images';
+  if (match[2].length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 4) return 'Each image must be 5 MB or smaller';
+  const bytes = Buffer.from(match[2], 'base64');
+  if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) return 'Each image must be 5 MB or smaller';
+  const mimeType = match[1];
+  if (!IMAGE_SIGNATURES[mimeType](bytes)) return 'Image contents do not match the selected format';
+  return { image: { name: item.name.slice(0, 150), mimeType }, bytes };
+}
+
 export function parseImages(value: unknown): ParsedImages | string {
   if (value === undefined) return { images: [], buffers: [] };
   if (!Array.isArray(value) || value.length > 4) return 'Choose up to 4 images';
   const images: NonNullable<RunConfig['images']> = [];
   const buffers: Buffer[] = [];
   for (const item of value) {
-    if (!item || typeof item.name !== 'string' || typeof item.dataUrl !== 'string') return 'Invalid image';
-    const match = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/]+={0,2})$/.exec(item.dataUrl);
-    if (!match) return 'Use PNG, JPEG, WebP or GIF images';
-    if (match[2].length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 4) return 'Each image must be 5 MB or smaller';
-    const bytes = Buffer.from(match[2], 'base64');
-    if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) return 'Each image must be 5 MB or smaller';
-    const mimeType = match[1];
-    const valid = mimeType === 'image/png' ? bytes.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))
-      : mimeType === 'image/jpeg' ? bytes.subarray(0, 3).equals(Buffer.from('ffd8ff', 'hex'))
-      : mimeType === 'image/gif' ? /^GIF8[79]a$/.test(bytes.subarray(0, 6).toString('ascii'))
-      : bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
-    if (!valid) return 'Image contents do not match the selected format';
-    images.push({ name: item.name.slice(0, 150), mimeType });
-    buffers.push(bytes);
+    const parsed = parseImage(item);
+    if (typeof parsed === 'string') return parsed;
+    images.push(parsed.image);
+    buffers.push(parsed.bytes);
   }
   return { images, buffers };
 }
 
 const isAgent = (x: unknown): x is AgentName => x === 'claude' || x === 'codex';
 
-/** Checks that need no routing: mode, prompt, model and effort names, working directory. */
-function validateRequest(body: any, prompt: string): { mode: Mode; cwd: string } | string {
-  if (body?.mode !== 'code' && body?.mode !== 'plan') return 'mode must be "code" or "plan"';
-  if (!prompt) return 'prompt is required';
+function modelProblem(body: any): string | undefined {
   for (const name of ['claude', 'codex'] as const) {
     const value = body.models?.[name];
     if (value === undefined || value === null) continue;
     if (typeof value !== 'string') return `models.${name} must be a valid model name`;
     const model = value.trim();
-    if (model && (!/^[\w.:\/-]{1,64}$/.test(model) || model.startsWith('-'))) {
+    if (model && (!/^[\w.:/-]{1,64}$/.test(model) || model.startsWith('-'))) {
       return `Invalid models.${name}: use 1-64 letters, numbers, or . : / _ - and do not start with -`;
     }
   }
+  return undefined;
+}
+
+function effortProblem(body: any): string | undefined {
   for (const name of ['claude', 'codex'] as const) {
     const value = body.efforts?.[name];
     if (value === undefined || value === null || value === '') continue;
     if (typeof value !== 'string' || !EFFORT.test(value)) return `Invalid efforts.${name}: use a level like low, medium or high`;
   }
+  return undefined;
+}
+
+/** Checks that need no routing: mode, prompt, model and effort names, working directory. */
+function validateRequest(body: any, prompt: string): { mode: Mode; cwd: string } | string {
+  if (body?.mode !== 'code' && body?.mode !== 'plan') return 'mode must be "code" or "plan"';
+  if (!prompt) return 'prompt is required';
+  const problem = modelProblem(body) ?? effortProblem(body);
+  if (problem) return problem;
   try {
     const cwd = authorizeDirectory(String(body.cwd ?? '').trim() || paths.defaultCwd);
     return { mode: body.mode, cwd };
@@ -170,7 +193,7 @@ function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
     maxRounds,
     judge: isAgent(body.judge) ? body.judge : 'claude',
     coder,
-    reviewer: isAgent(body.reviewer) ? body.reviewer : coder === 'claude' ? 'codex' : 'claude',
+    reviewer: isAgent(body.reviewer) ? body.reviewer : other(coder),
     testCommand: String(body.testCommand ?? '').trim() || undefined,
     turnTimeoutMin: Math.min(Math.max(Number(body.turnTimeoutMin) || 30, 1), 180),
     models: {
@@ -185,11 +208,26 @@ function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
   };
 }
 
+function requireImages(body: RunRequest): ParsedImages {
+  const images = parseImages(body?.images);
+  if (typeof images === 'string') throw new ServiceError('invalid', images);
+  return images;
+}
+
+/** The follow-up's trimmed prompt (empty when only images were sent); throws when the request is unusable. */
+function followUpPrompt(body: RunRequest, images: ParsedImages): string {
+  const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
+  if (!prompt && !images.images.length) throw new ServiceError('invalid', 'prompt is required');
+  if (body?.mode !== undefined && body.mode !== 'code' && body.mode !== 'plan') throw new ServiceError('invalid', 'Invalid mode');
+  return prompt;
+}
+
 function routeNote(ctx: RunContext, usage?: Usage) {
   const cfg = ctx.run.config;
   if (!cfg.route) return;
   const manual = Object.entries(cfg.models ?? {}).filter(([, model]) => model);
-  const override = manual.length ? `\nModel đặt tay (ưu tiên hơn router): ${manual.map(([agent, model]) => `${agent}=${model}`).join(', ')}` : '';
+  const manualList = manual.map(([agent, model]) => agent + '=' + model).join(', ');
+  const override = manual.length ? `\nModel đặt tay (ưu tiên hơn router): ${manualList}` : '';
   ctx.note('Định tuyến tự động', cfg.route.reason + override, 'info', 0, usage);
 }
 
@@ -256,7 +294,7 @@ export class RunService {
 
   /** Rules-only preview for the form: free and instant; says whether Haiku would be asked. */
   async previewRoute(prompt: unknown, mode: unknown) {
-    const text = String(prompt ?? '').trim();
+    const text = typeof prompt === 'string' ? prompt.trim() : '';
     if (!text) throw new ServiceError('invalid', 'prompt is required');
     const selected: Mode = mode === 'plan' ? 'plan' : 'code';
     const { route, coder, reviewer, maxRounds } = await autoRoute(text, { classify: false, mode: selected });
@@ -317,7 +355,7 @@ export class RunService {
 
   private async assertPreflight(names: AgentName[], cwd: string, skipAuthCheck: boolean | undefined, checks: Checks) {
     const report = await this.checked(names, cwd, skipAuthCheck, checks);
-    if (!report.ok) throw new ServiceError('preflight', `Kiểm tra agent trước khi chạy thất bại:\n${report.problems.map((p) => `- ${p}`).join('\n')}`, { preflight: report });
+    if (!report.ok) throw new ServiceError('preflight', `Kiểm tra agent trước khi chạy thất bại:\n${report.problems.map((p) => '- ' + p).join('\n')}`, { preflight: report });
   }
 
   /* ---- Starting runs ---- */
@@ -356,8 +394,7 @@ export class RunService {
 
   /** Validate, lock the repository, route, check agents, then start the run. */
   async start(body: RunRequest, { onEvent, onCreated }: StartOptions = {}): Promise<RunHandle> {
-    const images = parseImages(body?.images);
-    if (typeof images === 'string') throw new ServiceError('invalid', images);
+    const images = requireImages(body);
     const prompt = String(body?.prompt ?? '').trim() || (images.images.length ? IMAGE_ONLY_PROMPT : '');
     const valid = validateRequest(body, prompt);
     if (typeof valid === 'string') throw new ServiceError('invalid', valid);
@@ -388,11 +425,8 @@ export class RunService {
     this.pendingFollowUps.add(id);
     let lock: RepoLock | undefined;
     try {
-      const images = parseImages(body?.images);
-      if (typeof images === 'string') throw new ServiceError('invalid', images);
-      const prompt = typeof body?.prompt === 'string' ? body.prompt.trim() : '';
-      if (!prompt && !images.images.length) throw new ServiceError('invalid', 'prompt is required');
-      if (body?.mode !== undefined && body.mode !== 'code' && body.mode !== 'plan') throw new ServiceError('invalid', 'Invalid mode');
+      const images = requireImages(body);
+      const prompt = followUpPrompt(body, images);
       const previous = await loadRun(id);
       if (!previous) throw new ServiceError('not_found', 'not found');
       const owner = await this.activeElsewhere(id);
@@ -429,6 +463,25 @@ export class RunService {
     }
   }
 
+  /** Plan first; once the user approves, route and run the plan as Code. */
+  private async runPlanThenCode(ctx: RunContext, checks: Checks) {
+    const cfg = ctx.run.config;
+    const approved = await runPlan(ctx);
+    if (!approved || ctx.cancelled) return;
+    const approvedPlan = ctx.run.final ?? '';
+    const task = ctx.run.config.prompt;
+    const implementationPrompt = `Implement the approved plan for this task. Follow the plan and verify the changes.\n\nOriginal task:\n${task}\n\nUser-approved plan:\n${approvedPlan}`;
+    ctx.followUp(implementationPrompt);
+    // Same order as a new run: no model call before the agents it needs have passed preflight.
+    const { route, usage, mode, coder, reviewer, judge } = await this.routeChecked(implementationPrompt, 'code', cfg.cwd, cfg.skipAuthCheck, checks, ctx.abort.signal);
+    Object.assign(ctx.run.config, { mode, coder, reviewer, judge, maxRounds: 2, route });
+    ctx.note('Đã duyệt kế hoạch · bắt đầu Code', route.reason, 'info', 0, usage);
+    // Code may route to an agent the plan did not use.
+    const report = await this.checked(agentsFor(ctx.run.config), cfg.cwd, cfg.skipAuthCheck, checks);
+    if (!report.ok) throw new Error(`Kiểm tra agent trước khi Code thất bại:\n${report.problems.join('\n')}`);
+    await runPair(ctx);
+  }
+
   private launch(ctx: RunContext, lock: RepoLock, checks: Checks): RunHandle {
     const cfg = ctx.run.config;
     active.set(ctx.run.id, ctx);
@@ -437,31 +490,14 @@ export class RunService {
       let error: string | undefined;
       try {
         if (cfg.mode === 'debate') await runDebate(ctx); // Existing saved threads remain resumable.
-        else if (cfg.mode === 'plan') {
-          const approved = await runPlan(ctx);
-          if (approved && !ctx.cancelled) {
-            const approvedPlan = ctx.run.final ?? '';
-            const task = ctx.run.config.prompt;
-            const implementationPrompt = `Implement the approved plan for this task. Follow the plan and verify the changes.\n\nOriginal task:\n${task}\n\nUser-approved plan:\n${approvedPlan}`;
-            ctx.followUp(implementationPrompt);
-            // Same order as a new run: no model call before the agents it needs have passed preflight.
-            const { route, usage, mode, coder, reviewer, judge } = await this.routeChecked(implementationPrompt, 'code', cfg.cwd, cfg.skipAuthCheck, checks, ctx.abort.signal);
-            Object.assign(ctx.run.config, { mode, coder, reviewer, judge, maxRounds: 2, route });
-            ctx.note('Đã duyệt kế hoạch · bắt đầu Code', route.reason, 'info', 0, usage);
-            // Code may route to an agent the plan did not use.
-            const report = await this.checked(agentsFor(ctx.run.config), cfg.cwd, cfg.skipAuthCheck, checks);
-            if (!report.ok) throw new Error(`Kiểm tra agent trước khi Code thất bại:\n${report.problems.join('\n')}`);
-            await runPair(ctx);
-          }
-        } else {
-          await runPair(ctx);
-        }
+        else if (cfg.mode === 'plan') await this.runPlanThenCode(ctx, checks);
+        else await runPair(ctx);
         if (ctx.cancelled) status = 'cancelled';
       } catch (err) {
         status = ctx.cancelled ? 'cancelled' : 'error';
         error = status === 'error' ? (err as Error).message : undefined;
         ctx.abort.abort();
-        await Promise.allSettled([...ctx.inflight]);
+        await Promise.allSettled(ctx.inflight);
       }
       try {
         await ctx.finish(status, error);

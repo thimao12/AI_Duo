@@ -32,7 +32,10 @@ export const TIER_LABEL: Record<Tier, string> = { light: 'nháº¹', standard: 'vá»
 export function decide(taskType: TaskType, complexity: Tier, catalog: Catalog, mode: Mode = 'code'): Decision {
   const pick = (agent: AgentName, tier: Tier): ModelChoice => ({ ...catalog[agent][tier], tier });
   const models: RoutePlan['models'] = {};
-  const set = (agent: AgentName, role: ModelRole, tier: Tier) => ((models[agent] ??= {})[role] = pick(agent, tier));
+  const set = (agent: AgentName, role: ModelRole, tier: Tier) => {
+    models[agent] ??= {};
+    models[agent][role] = pick(agent, tier);
+  };
 
   const coder: AgentName = taskType === 'refactor' || (complexity === 'heavy' && taskType !== 'bugfix') ? 'claude' : 'codex';
   const reviewer = complexity === 'light' ? coder : other(coder);

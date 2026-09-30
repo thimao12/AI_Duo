@@ -101,3 +101,19 @@ Pair mode chụp snapshot working tree lúc bắt đầu (dùng index tạm, kh�
 Kiểm tra: `pnpm --filter server test` (gồm `test:service` – RunService với agent giả, khóa giữa hai tiến trình) và `pnpm --filter ai-duo-cli test` (build rồi chạy bản build từ thư mục ngoài repo với `claude`/`codex` giả qua pipe, cùng các quyết định có TTY, stdin đóng và Ctrl+C).
 
 Các phiên được lưu checkpoint khi tạo run và khi bắt đầu mỗi message. Nếu server khởi động lại bất ngờ, phiên và message đang chạy sẽ được hiển thị là gián đoạn trong lịch sử.
+
+## SonarQube local
+
+Cần Docker Desktop đang chạy với Linux containers và Node ≥ 22. SonarQube Community Build và PostgreSQL chạy trong stack `ai-duo-sonar`, chỉ mở dashboard trên máy này. Image được cố định bằng digest; dữ liệu nằm trong Docker volumes.
+
+```bash
+pnpm sonar:up       # khởi động, tạo project và token quét
+pnpm sonar:scan     # quét mã nguồn và smoke tests của repo, đợi Quality Gate
+pnpm sonar:status   # xem trạng thái và số issue còn mở
+pnpm sonar:logs     # 100 dòng log gần nhất của server
+pnpm sonar:down     # dừng stack, giữ nguyên dữ liệu
+```
+
+Dashboard: [AI Duo local](http://localhost:9000/dashboard?id=ai-duo-local). Đăng nhập `admin`, mật khẩu được tạo ngẫu nhiên trong `.local/sonar/credentials.json`. Thư mục này chứa mật khẩu/token và được Git bỏ qua. Kết quả tóm tắt của lần quét nằm trong `.local/sonar/analysis.json`.
+
+`sonar:scan` trả mã thoát khác 0 nếu quét lỗi hoặc Quality Gate không đạt; kết quả đã tải lên vẫn xem được trên dashboard. Cấu hình quét là `sonar.local.properties`, được chọn riêng bởi `compose.sonar.yml`. Đây là project local độc lập với SonarCloud; phiên bản Community có thể báo bộ lỗi khác với check trên GitHub.
