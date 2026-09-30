@@ -27,13 +27,15 @@ if (!app.requestSingleInstanceLock()) {
     if (win.isMinimized()) win.restore();
     win.focus();
   });
-  try {
-    await app.whenReady();
-    await start();
-  } catch (err) {
-    dialog.showErrorBox('AI Duo failed to start', String(err?.stack || err));
-    app.quit();
-  }
+  // Not a top-level await: Electron finishes its own start-up only after this module has loaded.
+  app.once('ready', async () => {
+    try {
+      await start();
+    } catch (err) {
+      dialog.showErrorBox('AI Duo failed to start', String(err?.stack || err));
+      app.quit();
+    }
+  });
 }
 
 /**
