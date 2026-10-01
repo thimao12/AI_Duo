@@ -24,6 +24,8 @@ export function slashQuery(text: string): string | undefined {
   return text.slice(1);
 }
 
+export const SHELL_HINT = 'shell mode · Enter runs · Esc or Backspace on empty exits';
+
 const BACKSLASH = String.fromCodePoint(92);
 
 /** Enter with a trailing backslash continues the line instead of sending. */
@@ -69,7 +71,16 @@ interface EditorLine {
 
 const MAX_VISIBLE_LINES = 8;
 
-function EditorView({ state, placeholder, active }: Readonly<{ state: EditorState; placeholder: string; active: boolean }>) {
+interface EditorViewProps {
+  state: EditorState;
+  placeholder: string;
+  active: boolean;
+  /** Prompt glyph on the first line: '›' for a message, '!' in shell mode. */
+  glyph: string;
+  glyphTone: 'cyan' | 'magenta';
+}
+
+function EditorView({ state, placeholder, active, glyph, glyphTone }: Readonly<EditorViewProps>) {
   const { row, col } = cursorPosition(state);
   const lines: EditorLine[] = state.text.split('\n').map((text, id) => ({ id, text }));
   const first = Math.max(0, Math.min(row - MAX_VISIBLE_LINES + 1, lines.length - MAX_VISIBLE_LINES));
@@ -84,7 +95,7 @@ function EditorView({ state, placeholder, active }: Readonly<{ state: EditorStat
         const rest = here ? line.text.slice(col + at.length) : '';
         return (
           <Box key={line.id}>
-            <Text color={tone('cyan')} bold>{line.id === 0 ? '› ' : '  '}</Text>
+            <Text color={tone(glyphTone)} bold>{line.id === 0 ? `${glyph} ` : '  '}</Text>
             {here ? (
               <Text>
                 {line.text.slice(0, col)}
@@ -127,11 +138,18 @@ export interface ComposerProps {
   onExit?(): void;
   /** Esc, when the box has nothing to close itself. */
   onEscape?(): void;
+  /** Runs a shell-mode command; returns an error to show (the text is put back), or null when it started. Omitted: no shell mode. */
+  onShell?(command: string): Promise<string | null> | string | null;
+  /** A reason shell mode cannot start right now (an agent run is active), or null. */
+  shellBlocked?(): string | null;
+  /** Tells the app whether the box is in shell mode. */
+  onShellMode?(on: boolean): void;
   /** Full screen: PageUp/PageDown and Ctrl/Alt+arrows, Home, End belong to the thread viewport, not to this box. */
   reserveScrollKeys?: boolean;
 }
 
-function useHistoryWalk(history: readonly string[], setEditor: (s: EditorState) => void) {
+/** `showText` puts a history entry into the box (an entry starting with ! re-enters shell mode). */
+function useHistoryWalk(history: readonly string[], showText: (text: string) => void) {
   const index = useRef(-1);
   const draft = useRef('');
   const reset = () => {
@@ -139,7 +157,7 @@ function useHistoryWalk(history: readonly string[], setEditor: (s: EditorState) 
   };
   const show = (at: number, text: string) => {
     index.current = at;
-    setEditor(editorOf(text));
+    showText(text);
   };
   /** Older (-1) or newer (+1); returns false when there is nowhere to go. */
   const walk = (dir: -1 | 1, current: string): boolean => {
@@ -181,15 +199,33 @@ export function Composer(props: Readonly<ComposerProps>) {
     menuAt.current = at;
     setMenuIndex(at);
   };
-  const walker = useHistoryWalk(history, putEditor);
-  const { onDraft } = props;
+  // Shell mode is mirrored in a ref for the same reason as the editor: several key events can arrive in one tick.
+  const [shell, setShell] = useState(false);
+  const shellRef = useRef(false);
+  const putShell = (on: boolean) => {
+    shellRef.current = on;
+    setShell(on);
+  };
+  const shellEnabled = !plain && props.onShell !== undefined;
+  const showEntry = (text: string) => {
+    const asShell = shellEnabled && text.startsWith('!');
+    putShell(asShell);
+    putEditor(editorOf(asShell ? text.slice(1) : text));
+  };
+  const walker = useHistoryWalk(history, showEntry);
+  const { onDraft, onShellMode } = props;
 
   useEffect(() => {
     onDraft?.(editor.text);
   }, [editor.text, onDraft]);
 
+  useEffect(() => {
+    onShellMode?.(shell);
+    return () => onShellMode?.(false);
+  }, [shell, onShellMode]);
+
   const matchesFor = (text: string): SlashCommand[] => {
-    const query = plain ? undefined : slashQuery(text);
+    const query = plain || shellRef.current ? undefined : slashQuery(text);
     return query === undefined ? [] : filterCommands(commands, query);
   };
   const matches = matchesFor(editor.text);
@@ -203,12 +239,35 @@ export function Composer(props: Readonly<ComposerProps>) {
     walker.reset();
   };
 
+  const leaveShell = () => {
+    putShell(false);
+    edit(EMPTY_EDITOR);
+  };
+
+  /** Typed or pasted text: a ! at the very start of an empty box switches to shell mode (the ! is consumed). */
+  const accept = (next: EditorState) => {
+    const startsShell = shellEnabled && !shellRef.current && latest.current.text === '' && next.text.startsWith('!');
+    if (!startsShell) {
+      edit(next);
+      return;
+    }
+    const blocked = props.shellBlocked?.() ?? null;
+    if (blocked) {
+      edit(next);
+      setError(blocked);
+      return;
+    }
+    putShell(true);
+    edit({ text: next.text.slice(1), cursor: Math.max(0, next.cursor - 1) });
+  };
+
   const submit = async () => {
     const text = latest.current.text.trim();
     if (!text) return;
+    const handler = shellRef.current && props.onShell ? props.onShell : props.onSubmit;
     putEditor(EMPTY_EDITOR);
     walker.reset();
-    const problem = await props.onSubmit(text);
+    const problem = await handler(text);
     setError(problem);
     if (problem && !latest.current.text) putEditor(editorOf(text));
   };
@@ -239,7 +298,7 @@ export function Composer(props: Readonly<ComposerProps>) {
     const cur = latest.current;
     if (isNewlineKey(input, key)) {
       edit(insertText(cur, '\n'));
-    } else if (key.return && continuesLine(cur.text, cur.cursor)) {
+    } else if (key.return && !shellRef.current && continuesLine(cur.text, cur.cursor)) {
       edit(insertText(backspace(cur), '\n'));
     } else if (key.return) {
       void submit();
@@ -264,9 +323,11 @@ export function Composer(props: Readonly<ComposerProps>) {
   const specialKey = (input: string, key: Key): boolean => {
     if (key.ctrl && input === 'd' && latest.current.text === '') {
       props.onExit?.();
+    } else if (key.escape && shellRef.current) {
+      leaveShell();
     } else if (key.escape) {
       props.onEscape?.();
-    } else if (key.tab && !plain) {
+    } else if (key.tab && !plain && !shellRef.current) {
       tabKey(key);
     } else if ((key.upArrow || key.downArrow) && !plain) {
       arrowKey(key);
@@ -280,26 +341,31 @@ export function Composer(props: Readonly<ComposerProps>) {
     (input, key) => {
       if (key.eventType === 'release' || (key.ctrl && input === 'c')) return;
       if (props.reserveScrollKeys && isScrollKey(key)) return;
+      if (shellRef.current && key.backspace && latest.current.text === '') {
+        leaveShell();
+        return;
+      }
       if (menuKey(key) || enterKey(input, key) || specialKey(input, key)) return;
       const next = applyEditKey(latest.current, input, key);
-      if (next) edit(next);
+      if (next) accept(next);
     },
     { isActive: active },
   );
 
   // Bracketed paste arrives whole: it can never submit half-way.
-  usePaste((text) => edit(insertText(latest.current, text)), { isActive: active });
+  usePaste((text) => accept(insertText(latest.current, text)), { isActive: active });
 
-  const borderColor = tone(props.borderTone ?? 'cyan');
+  const borderColor = tone(shell ? 'magenta' : (props.borderTone ?? 'cyan'));
   return (
     <Box flexDirection="column">
       {plain ? null : <RoleChips roles={roles} role={role} plainLabel="role:" />}
       <Box borderStyle="round" borderColor={borderColor} paddingX={1} flexDirection="column">
-        <EditorView state={editor} placeholder={placeholder} active={active} />
+        <EditorView state={editor} placeholder={shell ? 'command to run in the session folder' : placeholder} active={active} glyph={shell ? '!' : '›'} glyphTone={shell ? 'magenta' : 'cyan'} />
       </Box>
       {menuOpen ? <SlashMenu matches={matches} selected={selected} /> : null}
       {error ? <Text color={tone('red')}>{error}</Text> : null}
-      {lineCount(editor) > 1 ? <Text dimColor>Enter sends · Alt+Enter, Ctrl+J or trailing \ for a new line</Text> : null}
+      {shell ? <Text dimColor>{SHELL_HINT}</Text> : null}
+      {!shell && lineCount(editor) > 1 ? <Text dimColor>Enter sends · Alt+Enter, Ctrl+J or trailing \ for a new line</Text> : null}
     </Box>
   );
 }

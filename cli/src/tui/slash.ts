@@ -46,5 +46,6 @@ export const HELP_LINES: readonly string[] = [
   String.raw`  Enter send · Alt+Enter / Ctrl+J / trailing \ + Enter new line`,
   '  Up/Down history (at the first/last line) · Ctrl+A/E line start/end · Alt+B/F or Ctrl+←/→ words',
   '  Tab (empty prompt) next role · Shift+Tab Code/Plan · Esc closes a panel',
-  '  Ctrl+C stops the run (again: quit) · Ctrl+D on an empty prompt quits',
+  '  ! as the first character: shell mode · Enter runs the command here (not sent to the agents) · Esc or Backspace on empty leaves it',
+  '  Ctrl+C stops the run or shell command (again: quit) · Ctrl+D on an empty prompt quits',
 ];

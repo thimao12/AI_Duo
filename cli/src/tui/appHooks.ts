@@ -59,6 +59,9 @@ const EXIT_WINDOW_MS = 2500;
 
 interface InterruptOptions {
   phase: Phase;
+  /** A shell-mode command is running: Ctrl+C kills it and counts toward nothing else. */
+  shellRunning?: boolean;
+  killShell?(): void;
   cancel(): void;
   exit(): void;
   notice(text: string): void;
@@ -68,7 +71,7 @@ interface InterruptOptions {
  * Ctrl+C: while a run is going the first press stops it and the second quits; when idle the first
  * press only arms quitting (a second press within a few seconds quits).
  */
-export function useInterrupt({ phase, cancel, exit, notice }: Readonly<InterruptOptions>) {
+export function useInterrupt({ phase, shellRunning = false, killShell, cancel, exit, notice }: Readonly<InterruptOptions>) {
   const stopping = useRef(false);
   const armedAt = useRef(0);
   useEffect(() => {
@@ -77,6 +80,10 @@ export function useInterrupt({ phase, cancel, exit, notice }: Readonly<Interrupt
 
   useInput((input, key) => {
     if (!(key.ctrl && input === 'c')) return;
+    if (shellRunning) {
+      killShell?.();
+      return;
+    }
     if (phase === 'idle') {
       if (Date.now() - armedAt.current < EXIT_WINDOW_MS) exit();
       else notice('Press Ctrl+C again to exit (Ctrl+D also exits from an empty prompt).');

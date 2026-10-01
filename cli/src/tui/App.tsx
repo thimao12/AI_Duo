@@ -12,6 +12,7 @@ import { tone, usableWidth } from './theme.ts';
 import { FinishedThread, FullscreenHeader, LiveThread, ThreadItemView, windowLog } from './ThreadView.tsx';
 import { useSelection, type SelectionApi } from './useSelection.ts';
 import { useSession, type ChatService, type Session } from './useSession.ts';
+import { useShell } from './useShell.ts';
 import { Viewport } from './Viewport.tsx';
 import { PanelRowsContext } from './widgets/rows.ts';
 
@@ -57,6 +58,8 @@ function PanelHost({ command, props }: Readonly<{ command: SlashCommand; props: 
     </Box>
   );
 }
+
+const SHELL_BLOCKED = 'Shell mode is unavailable while an agent run is active. Wait for it, or press Ctrl+C to stop it.';
 
 function helpText(): string {
   const commands = SLASH_COMMANDS.map((c) => `  /${c.name.padEnd(10)} ${c.description}`);
@@ -117,6 +120,7 @@ export function App(props: Readonly<AppProps>) {
   const [panel, setPanel] = useState<SlashCommand | null>(null);
   const [history, setHistory] = useState(props.history);
   const [draft, setDraft] = useState('');
+  const [shellMode, setShellMode] = useState(false);
   const [followTick, setFollowTick] = useState(0);
   const { onRunChange } = props;
   const runId = session.run?.id;
@@ -126,8 +130,9 @@ export function App(props: Readonly<AppProps>) {
 
   const problems = usePreflight(service, cwd, selection.selection.skipAuthCheck === true, !props.skipPreflight);
   const autoRouted = !selection.selection.role && !selection.selection.pipelineId && !selection.selection.overrides.agent;
-  const route = useRoutePreview(service, draft, selection.selection.mode, autoRouted && session.phase === 'idle');
-  useInterrupt({ phase: session.phase, cancel: session.cancel, exit, notice: (t) => session.notice('warn', t) });
+  const shellRun = useShell(cwd, session.push, session.notice);
+  const route = useRoutePreview(service, draft, selection.selection.mode, autoRouted && session.phase === 'idle' && !shellMode);
+  useInterrupt({ phase: session.phase, shellRunning: shellRun.running, killShell: shellRun.kill, cancel: session.cancel, exit, notice: (t) => session.notice('warn', t) });
 
   const awaiting = session.phase === 'running' && !!(session.run?.planDecision || session.run?.pairDecision);
   const closePanel = () => {
@@ -142,9 +147,20 @@ export function App(props: Readonly<AppProps>) {
     if (props.historyFile) void saveHistory(next, props.historyFile);
   };
 
+  /** Shell mode: run the command here; it is kept in the history with a leading ! and never reaches the agents. */
+  const submitShell = (command: string): string | null => {
+    if (session.phase !== 'idle') return SHELL_BLOCKED;
+    const failure = shellRun.run(command);
+    if (failure) return failure;
+    setFollowTick((t) => t + 1);
+    rememberPrompt(`!${command}`);
+    return null;
+  };
+
   const submit = async (text: string): Promise<string | null> => {
     if (text.startsWith('/')) return runSlash(text, shell);
     if (session.phase !== 'idle') return 'A run is in progress. Wait for it, or press Ctrl+C to stop it.';
+    if (shellRun.running) return 'A shell command is running. Wait for it, or press Ctrl+C to stop it.';
     setFollowTick((t) => t + 1);
     const failure = await session.send(buildRequest(selection.selection, text, cwd), text);
     if (!failure) rememberPrompt(text);
@@ -184,6 +200,9 @@ export function App(props: Readonly<AppProps>) {
         commands={SLASH_COMMANDS}
         borderTone={effectiveMode(selection.selection) === 'plan' ? 'yellow' : 'cyan'}
         onSubmit={submit}
+        onShell={submitShell}
+        shellBlocked={() => (session.phase === 'idle' ? null : SHELL_BLOCKED)}
+        onShellMode={setShellMode}
         onCommand={(c) => {
           const error = runSlash(`/${c.name}`, shell);
           if (error) session.notice('error', error);
@@ -204,8 +223,11 @@ export function App(props: Readonly<AppProps>) {
       startedAt={session.startedAt}
       usage={session.run?.usage}
       route={route}
+      shellMode={shellMode}
+      shellRunning={shellRun.running}
     />
   );
+  const shellLive = shellRun.live ? <ThreadItemView item={shellRun.live} width={width} maxLines={Math.max(4, (rows ?? 24) - 14)} /> : null;
   const banner = <Banner problems={problems} />;
 
   if (!fullscreen) {
@@ -216,7 +238,7 @@ export function App(props: Readonly<AppProps>) {
         {composer}
       </>
     );
-    return <InlineLayout session={session} width={width} rows={rows ?? 24} banner={banner} bottom={bottom} status={status} />;
+    return <InlineLayout session={session} width={width} rows={rows ?? 24} banner={banner} shellLive={shellLive} bottom={bottom} status={status} />;
   }
   return (
     <FullscreenLayout
@@ -226,6 +248,7 @@ export function App(props: Readonly<AppProps>) {
       rows={rows ?? 24}
       width={width}
       banner={banner}
+      shellLive={shellLive}
       panel={panelNode}
       bottom={decision ?? composer}
       status={status}
@@ -240,18 +263,21 @@ interface LayoutProps {
   width: number;
   rows: number;
   banner: ReactNode;
+  /** The shell-mode command that is running, with its output so far. */
+  shellLive: ReactNode;
   bottom: ReactNode;
   status: ReactNode;
 }
 
 /** Inline: finished items go to the terminal's scrollback through <Static>; the rest is redrawn below. */
-function InlineLayout({ session, width, rows, banner, bottom, status }: Readonly<LayoutProps>) {
+function InlineLayout({ session, width, rows, banner, shellLive, bottom, status }: Readonly<LayoutProps>) {
   return (
     <Box flexDirection="column">
       <Static key={session.epoch} items={session.log}>
         {(item) => <ThreadItemView key={item.id} item={item} width={width} />}
       </Static>
       <LiveThread run={session.run} messages={session.live} width={width} rows={rows} />
+      {shellLive}
       {banner}
       <Box marginTop={1} flexDirection="column">
         {bottom}
@@ -279,7 +305,7 @@ const STATUS_ROWS = 2;
  * Full screen: fixed header on top, the thread in a scrollable viewport, then the panel or decision or
  * composer and the status line pinned at the bottom. A panel takes the viewport's place while it is open.
  */
-function FullscreenLayout({ session, header, columns, rows, width, banner, panel, bottom, status, followTick, edgeKeys }: Readonly<FullscreenLayoutProps>) {
+function FullscreenLayout({ session, header, columns, rows, width, banner, shellLive, panel, bottom, status, followTick, edgeKeys }: Readonly<FullscreenLayoutProps>) {
   const frame = Math.max(1, rows - FRAME_MARGIN);
   const { items, hidden } = useMemo(() => windowLog(session.log), [session.log]);
   const panelOpen = panel !== null;
@@ -291,6 +317,7 @@ function FullscreenLayout({ session, header, columns, rows, width, banner, panel
           {banner}
           <FinishedThread items={items} hidden={hidden} width={width} />
           <LiveThread run={session.run} messages={session.live} width={width} rows={rows} />
+          {shellLive}
         </Viewport>
       </Box>
       {panelOpen ? (

@@ -1,5 +1,6 @@
 import type { Usage } from '../../../server/src/agents/types.ts';
 import type { Message, Run } from '../../../server/src/types.ts';
+import type { ShellLine, ShellState } from './shell.ts';
 
 /** One entry of the finished part of the thread (printed once, never repainted). */
 export type ThreadItem =
@@ -7,7 +8,8 @@ export type ThreadItem =
   | { id: string; kind: 'user'; text: string }
   | { id: string; kind: 'message'; message: Message; effort?: string }
   | { id: string; kind: 'summary'; run: Run }
-  | { id: string; kind: 'notice'; tone: 'info' | 'warn' | 'error'; text: string };
+  | { id: string; kind: 'notice'; tone: 'info' | 'warn' | 'error'; text: string }
+  | { id: string; kind: 'shell'; command: string; state: 'running' | ShellState; code: number | null; ms: number; lines: ShellLine[]; hint?: string; error?: string };
 
 /** The previous turn's result is echoed as a system message on follow-ups; the thread already shows it. */
 const isResultEcho = (m: Message) => m.agent === 'system' && m.phase === 'result';

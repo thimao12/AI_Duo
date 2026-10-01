@@ -37,6 +37,8 @@ export interface Session {
   clear(): void;
   reset(): void;
   notice(tone: 'info' | 'warn' | 'error', text: string): void;
+  /** Adds a finished item (a shell command and its output) to the thread; it is local and never reaches the agents. */
+  push(item: ThreadItem): void;
 }
 
 const CLEAR_SCREEN = '\u001B[2J\u001B[3J\u001B[H';
@@ -169,6 +171,8 @@ export function useSession(service: ChatService, header: HeaderInfo, clearScreen
     if (mounted.current) setLog((l) => [...l, { id: `notice-${++ids.current}`, kind: 'notice', tone, text }]);
   }, []);
 
+  const push = useCallback((item: ThreadItem) => append([item]), [append]);
+
   const clear = () => resetView([headerItem()]);
 
   const reset = () => {
@@ -208,5 +212,5 @@ export function useSession(service: ChatService, header: HeaderInfo, clearScreen
     return snapshot;
   };
 
-  return { log, live, run, handle, phase, startedAt, epoch, send, cancel, resume, clear, reset, notice };
+  return { log, live, run, handle, phase, startedAt, epoch, send, cancel, resume, clear, reset, notice, push };
 }

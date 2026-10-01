@@ -53,6 +53,9 @@ export interface StatusLineProps {
   startedAt: number | null;
   usage?: Usage;
   route: RoutePreview | null;
+  /** The box is in shell mode / a shell command is running. */
+  shellMode?: boolean;
+  shellRunning?: boolean;
 }
 
 function RunState({ phase, awaiting, elapsed }: Readonly<{ phase: Phase; awaiting: boolean; elapsed: number }>) {
@@ -66,18 +69,24 @@ function RunState({ phase, awaiting, elapsed }: Readonly<{ phase: Phase; awaitin
 }
 
 const HINTS: Record<Phase | 'awaiting', string> = {
-  idle: 'Enter send · Tab role · Shift+Tab Code/Plan · / commands · Ctrl+C exit',
+  idle: 'Enter send · Tab role · Shift+Tab Code/Plan · / commands · ! shell · Ctrl+C exit',
   starting: 'Ctrl+C stop',
   running: '/ commands · Ctrl+C stop',
   awaiting: '↑↓ Enter choose · Ctrl+C stop',
 };
 
-export function StatusLine({ selection, pipeline, phase, awaiting, startedAt, usage, route }: Readonly<StatusLineProps>) {
+function hintFor({ phase, awaiting, shellMode, shellRunning }: Readonly<Pick<StatusLineProps, 'phase' | 'awaiting' | 'shellMode' | 'shellRunning'>>): string {
+  if (shellRunning) return 'shell command running · Ctrl+C kills it';
+  if (shellMode && phase === 'idle') return 'Enter run · Esc or Backspace on empty leave shell mode · Ctrl+C exit';
+  return HINTS[awaiting ? 'awaiting' : phase];
+}
+
+export function StatusLine({ selection, pipeline, phase, awaiting, startedAt, usage, route, shellMode, shellRunning }: Readonly<StatusLineProps>) {
   const elapsed = useElapsed(startedAt, phase !== 'idle' && !awaiting);
   const mode = effectiveMode(selection);
   const { role, overrides } = selection;
   const usageText = formatUsageLine(usage);
-  const hint = HINTS[awaiting ? 'awaiting' : phase];
+  const hint = hintFor({ phase, awaiting, shellMode, shellRunning });
   return (
     <Box flexDirection="column">
       <Box columnGap={1} flexWrap="wrap">

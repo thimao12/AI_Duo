@@ -2,6 +2,7 @@ import { Box, Text } from 'ink';
 import { memo } from 'react';
 import type { Message, Run } from '../../../server/src/types.ts';
 import { MessageView, UserLine } from './MessageView.tsx';
+import { ShellBlock } from './ShellView.tsx';
 import { tone } from './theme.ts';
 import { effortFor, formatUsageLine, oneLine, summarizeDiff, type ThreadItem } from './thread.ts';
 
@@ -20,7 +21,7 @@ function Header({ item }: Readonly<{ item: Extract<ThreadItem, { kind: 'header' 
         {item.cwd}
         {item.branch ? ` · ⎇ ${item.branch}` : ''}
       </Text>
-      <Text dimColor>/help for commands · Tab picks a role · Shift+Tab switches Code/Plan</Text>
+      <Text dimColor>/help for commands · Tab picks a role · Shift+Tab switches Code/Plan · ! runs a shell command</Text>
     </Box>
   );
 }
@@ -67,7 +68,14 @@ export function RunSummary({ run, width }: Readonly<{ run: Run; width: number }>
 const NOTICE_MARK = { info: 'ℹ', warn: '!', error: '✗' } as const;
 const NOTICE_TONE = { info: 'cyan', warn: 'yellow', error: 'red' } as const;
 
-export const ThreadItemView = memo(function ThreadItemView({ item, width }: Readonly<{ item: ThreadItem; width: number }>) {
+interface ItemViewProps {
+  item: ThreadItem;
+  width: number;
+  /** Shell output: show only the newest lines (the live block). */
+  maxLines?: number;
+}
+
+export const ThreadItemView = memo(function ThreadItemView({ item, width, maxLines }: Readonly<ItemViewProps>) {
   switch (item.kind) {
     case 'header':
       return <Header item={item} />;
@@ -77,6 +85,8 @@ export const ThreadItemView = memo(function ThreadItemView({ item, width }: Read
       return <MessageView message={item.message} width={width} effort={item.effort} />;
     case 'summary':
       return <RunSummary run={item.run} width={width} />;
+    case 'shell':
+      return <ShellBlock item={item} maxLines={maxLines} />;
     default:
       return (
         <Box marginTop={1}>
