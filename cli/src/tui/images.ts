@@ -22,7 +22,7 @@ export type LoadResult = { ok: true; image: ImageAttachment } | { ok: false; err
 
 const SHORT_TYPE: Record<ImageMime, string> = { 'image/png': 'PNG', 'image/jpeg': 'JPEG', 'image/webp': 'WebP', 'image/gif': 'GIF' };
 
-export const LIMIT_NOTE = `You can attach up to ${MAX_IMAGES} images. Remove one (Backspace at the start of the prompt, or /clear-images) first.`;
+export const LIMIT_NOTE = `You can attach up to ${MAX_IMAGES} images. Delete one of the [Image #N] tokens, or use /clear-images, first.`;
 
 /** The image type from the file's first bytes (never from its extension), or undefined. */
 export function sniffImage(bytes: Uint8Array): ImageMime | undefined {
@@ -39,24 +39,7 @@ export function formatBytes(bytes: number): string {
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
-const shorten = (name: string, max = 24): string => (name.length > max ? `${name.slice(0, max - 1)}…` : name);
-
-/** "[Image #1 · PNG · 184 KB]" for the clipboard, "[Image #2 · shot.png · JPEG · 1.2 MB]" for a file. */
-export function chipLabel(index: number, image: ImageAttachment): string {
-  const parts = [`Image #${index + 1}`];
-  if (image.source === 'file') parts.push(shorten(image.name));
-  parts.push(SHORT_TYPE[image.mime], formatBytes(image.bytes));
-  return `[${parts.join(' · ')}]`;
-}
-
-/** "[Image #1] [Image #2]": what the echo of the user's message shows. */
-export const imageEcho = (images: readonly ImageAttachment[]): string => images.map((_, i) => `[Image #${i + 1}]`).join(' ');
-
-/** The user's echo line: the text, then the image markers. */
-export function echoText(text: string, images: readonly ImageAttachment[]): string {
-  if (images.length === 0) return text;
-  return text ? `${text}  ${imageEcho(images)}` : imageEcho(images);
-}
+export const shortType = (mime: ImageMime): string => SHORT_TYPE[mime];
 
 /** The images as a RunRequest field. */
 export const toRequestImages = (images: readonly ImageAttachment[]): { name: string; dataUrl: string }[] => images.map(({ name, dataUrl }) => ({ name, dataUrl }));

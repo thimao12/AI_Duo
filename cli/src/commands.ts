@@ -39,7 +39,8 @@ Chat options:
                     (also AI_DUO_INLINE=1)
       --fullscreen  full-screen chat: the default, accepted for clarity
   Images: Ctrl+V or Alt+V attaches an image from the clipboard (or /paste-image); pasting or dropping
-  the path of an image file attaches it too. Backspace at the start of the prompt removes the last one.
+  the path of an image file attaches it too. It appears as [Image #1] in the prompt at the cursor;
+  Backspace or Delete next to it removes it.
   Full screen keys: PageUp/PageDown scroll, Ctrl+Up/Down or Alt+Up/Down one line, Home/Ctrl+Home top,
   End/Ctrl+End latest (also resumes following the newest output).
 

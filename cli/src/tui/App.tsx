@@ -6,7 +6,8 @@ import { PairDecisionPrompt, PlanDecisionPrompt } from './DecisionPrompt.tsx';
 import { addToHistory, saveHistory } from './history.ts';
 import type { PanelProps, SlashCommand } from './panel-types.ts';
 import type { ClipboardReader } from './clipboard.ts';
-import { echoText, type ImageAttachment } from './images.ts';
+import type { ImageAttachment } from './images.ts';
+import { historyText } from './imageTokens.ts';
 import { buildRequest, effectiveMode } from './requestBuilder.ts';
 import { findCommand, HELP_LINES, SLASH_COMMANDS } from './slash.ts';
 import { StatusLine } from './StatusLine.tsx';
@@ -166,8 +167,8 @@ export function App(props: Readonly<AppProps>) {
     if (session.phase !== 'idle') return 'A run is in progress. Wait for it, or press Ctrl+C to stop it.';
     if (shellRun.running) return 'A shell command is running. Wait for it, or press Ctrl+C to stop it.';
     setFollowTick((t) => t + 1);
-    const failure = await session.send(buildRequest(selection.selection, text, cwd, images), echoText(text, images));
-    if (!failure && text) rememberPrompt(text);
+    const failure = await session.send(buildRequest(selection.selection, text, cwd, images), text);
+    if (!failure && text) rememberPrompt(historyText(text));
     return failure;
   };
 

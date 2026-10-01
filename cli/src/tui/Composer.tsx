@@ -1,19 +1,23 @@
-import { Box, Text, useInput, usePaste, type Key } from 'ink';
-import { useEffect, useRef, useState } from 'react';
+import { Box, Text, useInput, usePaste, useWindowSize, type Key } from 'ink';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { RoleDef } from '../../../server/src/types.ts';
 import { readClipboardImage, type ClipboardReader } from './clipboard.ts';
-import { chipLabel, pastedImagePath, type ImageAttachment } from './images.ts';
-import { SHELL_IMAGE_NOTE, useImageAttachments } from './useImages.ts';
+import { LIMIT_NOTE, MAX_IMAGES, pastedImagePath, type ImageAttachment } from './images.ts';
+import { attachmentSummary, displayToken, renumberForSend, segments, type Attached, type TokenSpan } from './imageTokens.ts';
+import { loadPath, SHELL_IMAGE_NOTE, useImageLoader, type Loaded } from './useImages.ts';
 import {
   after,
   applyEditKey,
   backspace,
+  clearImages,
   cursorPosition,
   EMPTY_EDITOR,
   editorOf,
+  insertImage,
   insertText,
   lineCount,
   moveVertical,
+  spansOf,
   type EditorState,
 } from './editor.ts';
 import type { SlashCommand } from './panel-types.ts';
@@ -30,6 +34,9 @@ export function slashQuery(text: string): string | undefined {
 export const SHELL_HINT = 'shell mode · Enter runs · Esc or Backspace on empty exits';
 
 const BACKSLASH = String.fromCodePoint(92);
+
+/** Slash commands the box handles itself (it owns the attachments). */
+const LOCAL_COMMANDS: ReadonlySet<string> = new Set(['paste-image', 'clear-images']);
 
 /** Enter with a trailing backslash continues the line instead of sending. */
 export function continuesLine(text: string, cursor: number): boolean {
@@ -52,17 +59,27 @@ function RoleChips({ roles, role, plainLabel }: Readonly<{ roles: readonly RoleD
   );
 }
 
-/** "[Image #1 · PNG · 184 KB]" chips of the attached images, above the box. */
-function ImageChips({ images }: Readonly<{ images: readonly ImageAttachment[] }>) {
-  if (images.length === 0) return null;
+/** One dim line under the box listing the attachments ("Image #1 shot.png PNG 184 KB"); nothing when it does not fit. */
+function AttachmentHint({ images }: Readonly<{ images: readonly Attached[] }>) {
+  const { columns } = useWindowSize();
+  const line = attachmentSummary(images, Math.max(0, (columns ?? 80) - 2));
+  return line ? <Text dimColor>{line}</Text> : null;
+}
+
+/** Text with its `[Image #N]` tokens drawn as cyan objects; `base` is the offset of `text` in the whole prompt. */
+function Pieces({ text, base, spans }: Readonly<{ text: string; base: number; spans: readonly TokenSpan[] }>) {
   return (
-    <Box flexWrap="wrap" columnGap={1}>
-      {images.map((image, index) => (
-        <Text key={`${image.name}-${image.bytes}-${image.dataUrl.length}-${index}`} color={tone('cyan')}>
-          {chipLabel(index, image)}
-        </Text>
-      ))}
-    </Box>
+    <>
+      {segments(text, base, spans).map((seg) =>
+        seg.token ? (
+          <Text key={seg.at} color={tone('cyan')} bold>
+            {displayToken(seg.text)}
+          </Text>
+        ) : (
+          <Text key={seg.at}>{seg.text}</Text>
+        ),
+      )}
+    </>
   );
 }
 
@@ -84,6 +101,31 @@ function SlashMenu({ matches, selected }: Readonly<{ matches: readonly SlashComm
 interface EditorLine {
   id: number;
   text: string;
+  /** Offset of the line's first character in the whole text. */
+  base: number;
+}
+
+interface CursorLineProps {
+  line: EditorLine;
+  col: number;
+  spans: readonly TokenSpan[];
+  active: boolean;
+  placeholder: ReactNode;
+}
+
+/** The line with the cursor: a token at the cursor is highlighted whole, otherwise the one character under it. */
+function CursorLine({ line, col, spans, active, placeholder }: Readonly<CursorLineProps>) {
+  const onToken = spans.find((sp) => sp.start === line.base + col);
+  const under = onToken ? line.text.slice(col, onToken.end - line.base) : line.text.slice(col, after(line.text, col)) || ' ';
+  const restAt = col + under.length;
+  return (
+    <Text>
+      <Pieces text={line.text.slice(0, col)} base={line.base} spans={spans} />
+      <Text inverse={active}>{onToken ? <Pieces text={under} base={line.base + col} spans={spans} /> : under}</Text>
+      <Pieces text={line.text.slice(restAt)} base={line.base + restAt} spans={spans} />
+      {placeholder}
+    </Text>
+  );
 }
 
 const MAX_VISIBLE_LINES = 8;
@@ -99,33 +141,29 @@ interface EditorViewProps {
 
 function EditorView({ state, placeholder, active, glyph, glyphTone }: Readonly<EditorViewProps>) {
   const { row, col } = cursorPosition(state);
-  const lines: EditorLine[] = state.text.split('\n').map((text, id) => ({ id, text }));
+  const spans = spansOf(state);
+  let base = 0;
+  const lines: EditorLine[] = state.text.split('\n').map((text, id) => {
+    const line = { id, text, base };
+    base += text.length + 1;
+    return line;
+  });
   const first = Math.max(0, Math.min(row - MAX_VISIBLE_LINES + 1, lines.length - MAX_VISIBLE_LINES));
   const visible = lines.slice(first, first + MAX_VISIBLE_LINES);
-  const empty = state.text === '';
+  const hint = state.text === '' ? <Text dimColor>{` ${placeholder}`}</Text> : null;
   return (
     <Box flexDirection="column">
       {first > 0 ? <Text dimColor>{`… ${first} line(s) above`}</Text> : null}
-      {visible.map((line) => {
-        const here = line.id === row;
-        const at = line.text.slice(col, after(line.text, col)) || ' ';
-        const rest = here ? line.text.slice(col + at.length) : '';
-        return (
-          <Box key={line.id}>
-            <Text color={tone(glyphTone)} bold>{line.id === 0 ? `${glyph} ` : '  '}</Text>
-            {here ? (
-              <Text>
-                {line.text.slice(0, col)}
-                <Text inverse={active}>{at}</Text>
-                {rest}
-                {empty ? <Text dimColor>{` ${placeholder}`}</Text> : null}
-              </Text>
-            ) : (
-              <Text>{line.text || ' '}</Text>
-            )}
-          </Box>
-        );
-      })}
+      {visible.map((line) => (
+        <Box key={line.id}>
+          <Text color={tone(glyphTone)} bold>{line.id === 0 ? `${glyph} ` : '  '}</Text>
+          {line.id === row ? (
+            <CursorLine line={line} col={col} spans={spans} active={active} placeholder={hint} />
+          ) : (
+            <Text>{line.text ? <Pieces text={line.text} base={line.base} spans={spans} /> : ' '}</Text>
+          )}
+        </Box>
+      ))}
       {first + visible.length < lines.length ? <Text dimColor>{`… ${lines.length - first - visible.length} line(s) below`}</Text> : null}
     </Box>
   );
@@ -149,7 +187,7 @@ export interface ComposerProps {
   cwd?: string;
   /** Reads an image from the OS clipboard (Ctrl+V, Alt+V, /paste-image); default: the real clipboard. */
   readClipboard?: ClipboardReader;
-  /** Returns an error to show under the box (the text and the images are put back), or null when accepted. `images` are the attached chips. */
+  /** Returns an error to show under the box (the text and the images are put back), or null when accepted. `text` keeps the `[Image #N]` tokens, renumbered to match `images` (in number order). */
   onSubmit(text: string, images: readonly ImageAttachment[]): Promise<string | null> | string | null;
   onCommand?(command: SlashCommand): void;
   onCycleRole?(): void;
@@ -169,31 +207,34 @@ export interface ComposerProps {
   reserveScrollKeys?: boolean;
 }
 
-/** `showText` puts a history entry into the box (an entry starting with ! re-enters shell mode). */
-function useHistoryWalk(history: readonly string[], showText: (text: string) => void) {
+/**
+ * `showEntry` puts an entry into the box (an entry starting with ! re-enters shell mode). History entries
+ * are plain text; the unsent draft comes back with its text and its attached images together.
+ */
+function useHistoryWalk(history: readonly string[], showEntry: (entry: EditorState) => void) {
   const index = useRef(-1);
-  const draft = useRef('');
+  const draft = useRef<EditorState>(EMPTY_EDITOR);
   const reset = () => {
     index.current = -1;
   };
-  const show = (at: number, text: string) => {
+  const show = (at: number, entry: EditorState) => {
     index.current = at;
-    showText(text);
+    showEntry(entry);
   };
   /** Older (-1) or newer (+1); returns false when there is nowhere to go. */
-  const walk = (dir: -1 | 1, current: string): boolean => {
+  const walk = (dir: -1 | 1, current: EditorState): boolean => {
     if (history.length === 0) return false;
     if (dir === -1) {
       if (index.current === 0) return true;
       if (index.current === -1) draft.current = current;
       const next = index.current === -1 ? history.length - 1 : index.current - 1;
-      show(next, history[next]);
+      show(next, editorOf(history[next]));
       return true;
     }
     if (index.current === -1) return false;
     const next = index.current + 1;
-    if (next >= history.length) show(-1, draft.current);
-    else show(next, history[next]);
+    if (next >= history.length) show(-1, editorOf(draft.current.text, draft.current.images));
+    else show(next, editorOf(history[next]));
     return true;
   };
   return { walk, reset };
@@ -228,15 +269,15 @@ export function Composer(props: Readonly<ComposerProps>) {
     setShell(on);
   };
   const shellEnabled = !plain && props.onShell !== undefined;
-  const showEntry = (text: string) => {
-    const asShell = shellEnabled && text.startsWith('!');
+  const showEntry = (entry: EditorState) => {
+    const asShell = shellEnabled && entry.text.startsWith('!');
     putShell(asShell);
-    putEditor(editorOf(asShell ? text.slice(1) : text));
+    putEditor(asShell ? editorOf(entry.text.slice(1), entry.images) : entry);
   };
   const walker = useHistoryWalk(history, showEntry);
   const { onDraft, onShellMode } = props;
   const imagesOn = !plain;
-  const attached = useImageAttachments(props.readClipboard ?? readClipboardImage);
+  const loader = useImageLoader(props.readClipboard ?? readClipboardImage);
   const [note, setNote] = useState<string | null>(null);
   const pathEnv = { cwd: props.cwd ?? process.cwd() };
 
@@ -287,12 +328,25 @@ export function Composer(props: Readonly<ComposerProps>) {
     edit({ text: next.text.slice(1), cursor: Math.max(0, next.cursor - 1) });
   };
 
+  /** Puts a loaded image into the prompt as a token at the cursor (the box may have changed while it was read). */
+  const showLoaded = (loaded: Loaded) => {
+    if (loaded.kind === 'note') {
+      setNote(loaded.note);
+    } else if (loaded.kind === 'image') {
+      const next = insertImage(latest.current, loaded.image);
+      if (next) edit(next);
+      else setNote(LIMIT_NOTE);
+    }
+  };
+
   const pasteImage = async () => {
     if (shellRef.current) {
       setNote(SHELL_IMAGE_NOTE);
-      return;
+    } else if ((latest.current.images?.length ?? 0) >= MAX_IMAGES) {
+      setNote(LIMIT_NOTE);
+    } else {
+      showLoaded(await loader.readClipboard());
     }
-    setNote(await attached.pasteClipboard());
   };
 
   /** The absolute path when `text` is a lone image path and the box takes images right now. */
@@ -305,63 +359,67 @@ export function Composer(props: Readonly<ComposerProps>) {
       accept(insertText(latest.current, text));
       return;
     }
-    void attached.pastePath(file).then((outcome) => {
-      if (outcome.kind === 'text') accept(insertText(latest.current, text));
-      else setNote(outcome.kind === 'rejected' ? outcome.note : null);
+    void loadPath(file).then((loaded) => {
+      if (loaded.kind === 'text') accept(insertText(latest.current, text));
+      else showLoaded(loaded);
     });
   };
 
-  /** Enter on a lone image path typed by hand attaches it instead of sending; true when it did (or refused it). */
+  /** Enter on a lone image path typed by hand turns the path into a token instead of sending; true when it did (or refused it). */
   const attachTyped = async (file: string): Promise<boolean> => {
-    const outcome = await attached.pastePath(file);
-    if (outcome.kind === 'text') return false;
-    if (outcome.kind === 'attached') {
-      putEditor(EMPTY_EDITOR);
+    const loaded = await loadPath(file);
+    if (loaded.kind === 'text') return false;
+    if (loaded.kind === 'image') {
+      putEditor(insertImage(EMPTY_EDITOR, loaded.image) ?? EMPTY_EDITOR);
       setNote(null);
     } else {
-      setNote(outcome.note);
+      setNote(loaded.note);
     }
     return true;
   };
 
-  /** /paste-image and /clear-images belong to the box, which owns the chips; true when handled. */
-  const localCommand = (name: string): boolean => {
-    if (!imagesOn) return false;
+  /** /paste-image and /clear-images belong to the box, which owns the attachments. The line is already cleared. */
+  const runLocal = (name: string, attachedCount: number) => {
     if (name === 'paste-image') {
       void pasteImage();
-    } else if (name === 'clear-images') {
-      setNote(attached.ref.current.length > 0 ? 'Removed the attached images.' : 'No images attached.');
-      attached.clear();
     } else {
-      return false;
+      setNote(attachedCount > 0 ? 'Removed the attached images.' : 'No images attached.');
     }
-    return true;
   };
 
   const submit = async () => {
-    const text = latest.current.text.trim();
-    const sending = attached.ref.current;
-    if (!text && sending.length === 0) return;
-    if (text.startsWith('/') && localCommand(text.slice(1).trim().toLowerCase())) {
+    const cur = latest.current;
+    const text = cur.text.trim();
+    if (!text) return;
+    const bare = clearImages(cur).text.trim();
+    const name = bare.startsWith('/') ? bare.slice(1).trim().toLowerCase() : '';
+    if (imagesOn && LOCAL_COMMANDS.has(name)) {
       putEditor(EMPTY_EDITOR);
+      runLocal(name, cur.images?.length ?? 0);
       return;
     }
-    const file = imagePathOf(text);
+    const file = cur.images?.length ? undefined : imagePathOf(text);
     if (file && (await attachTyped(file))) return;
-    const inShell = shellRef.current && props.onShell !== undefined;
-    const withImages = !inShell && !text.startsWith('/');
     putEditor(EMPTY_EDITOR);
     walker.reset();
-    if (withImages) attached.clear();
-    const problem = await (inShell && props.onShell ? props.onShell(text) : props.onSubmit(text, sending));
+    const problem = await deliver(cur, text, bare);
     setError(problem);
-    if (problem && !latest.current.text) putEditor(editorOf(text));
-    if (problem && withImages && attached.ref.current.length === 0) attached.replace(sending);
+    if (problem && !latest.current.text) putEditor(editorOf(text, cur.images));
+  };
+
+  /** Sends the prompt (tokens renumbered, images in number order), a slash command (without tokens) or a shell command. */
+  const deliver = async (cur: EditorState, text: string, bare: string): Promise<string | null> => {
+    if (shellRef.current && props.onShell) return props.onShell(text);
+    if (bare.startsWith('/')) return props.onSubmit(bare, []);
+    const sent = renumberForSend(text, cur.images ?? []);
+    return props.onSubmit(sent.text, sent.images);
   };
 
   const runCommand = (command: SlashCommand) => {
+    const count = latest.current.images?.length ?? 0;
     putEditor(EMPTY_EDITOR);
-    if (!localCommand(command.name)) props.onCommand?.(command);
+    if (imagesOn && LOCAL_COMMANDS.has(command.name)) runLocal(command.name, count);
+    else props.onCommand?.(command);
   };
 
   /** Keys of the open slash menu; true when consumed. */
@@ -404,7 +462,7 @@ export function Composer(props: Readonly<ComposerProps>) {
     const step = key.upArrow ? -1 : 1;
     const moved = moveVertical(latest.current, step);
     if (moved) putEditor(moved);
-    else walker.walk(step, latest.current.text);
+    else walker.walk(step, latest.current);
   };
 
   const specialKey = (input: string, key: Key): boolean => {
@@ -424,16 +482,12 @@ export function Composer(props: Readonly<ComposerProps>) {
     return true;
   };
 
-  /** Ctrl+V / Alt+V, Backspace at the very start (removes the newest chip) and pasted-chunk image paths; true when consumed. */
+  /** Ctrl+V / Alt+V and pasted-chunk image paths; true when consumed. */
   const imageKey = (input: string, key: Key): boolean => {
     if (!imagesOn) return false;
     const modified = key.ctrl || key.meta;
     if (modified && input === 'v') {
       void pasteImage();
-      return true;
-    }
-    if (key.backspace && !modified && !shellRef.current && latest.current.cursor === 0 && attached.removeLast()) {
-      setNote(null);
       return true;
     }
     if (input.length > 1 && !modified && imagePathOf(input)) {
@@ -466,14 +520,13 @@ export function Composer(props: Readonly<ComposerProps>) {
   return (
     <Box flexDirection="column">
       {plain ? null : <RoleChips roles={roles} role={role} plainLabel="role:" />}
-      <ImageChips images={attached.images} />
       <Box borderStyle="round" borderColor={borderColor} paddingX={1} flexDirection="column">
         <EditorView state={editor} placeholder={shell ? 'command to run in the session folder' : placeholder} active={active} glyph={shell ? '!' : '›'} glyphTone={shell ? 'magenta' : 'cyan'} />
       </Box>
       {menuOpen ? <SlashMenu matches={matches} selected={selected} /> : null}
       {error ? <Text color={tone('red')}>{error}</Text> : null}
       {note ? <Text color={tone('yellow')}>{note}</Text> : null}
-      {attached.images.length > 0 && !note && !shell ? <Text dimColor>Backspace at the start of the prompt removes the last image · /clear-images removes all</Text> : null}
+      {editor.images && !note && !error && !shell ? <AttachmentHint images={editor.images} /> : null}
       {shell ? <Text dimColor>{SHELL_HINT}</Text> : null}
       {!shell && lineCount(editor) > 1 ? <Text dimColor>Enter sends · Alt+Enter, Ctrl+J or trailing \ for a new line</Text> : null}
     </Box>
