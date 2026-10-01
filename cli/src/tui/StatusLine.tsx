@@ -69,7 +69,7 @@ function RunState({ phase, awaiting, elapsed }: Readonly<{ phase: Phase; awaitin
 }
 
 const HINTS: Record<Phase | 'awaiting', string> = {
-  idle: 'Enter send · Tab role · Shift+Tab Code/Plan · / commands · ! shell · Ctrl+C exit',
+  idle: 'Enter send · Tab role · Shift+Tab Code/Plan · / commands · ! shell · Ctrl+V image · Ctrl+C exit',
   starting: 'Ctrl+C stop',
   running: '/ commands · Ctrl+C stop',
   awaiting: '↑↓ Enter choose · Ctrl+C stop',

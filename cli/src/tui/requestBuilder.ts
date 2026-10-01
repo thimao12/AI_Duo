@@ -1,6 +1,7 @@
 import type { AgentName } from '../../../server/src/agents/types.ts';
 import type { RunRequest } from '../../../server/src/service.ts';
 import type { RoleDef } from '../../../server/src/types.ts';
+import { toRequestImages, type ImageAttachment } from './images.ts';
 import type { SessionOverrides } from './panel-types.ts';
 
 export type ChatMode = 'code' | 'plan';
@@ -30,10 +31,11 @@ function modelFields(s: Selection, agent: AgentName | undefined): Pick<RunReques
 /**
  * The run request for the composer state, like the web's buildRunRequest: nothing chosen = the router
  * decides; a chosen role, agent or permission is sent explicitly (request fields beat the role, the
- * role beats the router). Plan and pipeline runs ignore the role.
+ * role beats the router). Plan and pipeline runs ignore the role. Attached images go with every kind of run
+ * and with follow-ups.
  */
-export function buildRequest(s: Selection, prompt: string, cwd: string): RunRequest {
-  const base = { prompt, cwd, ...(s.skipAuthCheck ? { skipAuthCheck: true } : {}) };
+export function buildRequest(s: Selection, prompt: string, cwd: string, images: readonly ImageAttachment[] = []): RunRequest {
+  const base = { prompt, cwd, ...(s.skipAuthCheck ? { skipAuthCheck: true } : {}), ...(images.length ? { images: toRequestImages(images) } : {}) };
   const { agent, permission } = s.overrides;
   if (s.pipelineId) return { ...base, mode: 'pipeline', pipelineId: s.pipelineId };
   if (s.mode === 'plan') return { ...base, mode: 'plan', ...(agent ? { coder: agent } : {}), ...modelFields(s, agent) };

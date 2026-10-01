@@ -5,6 +5,8 @@ import { Composer } from './Composer.tsx';
 import { PairDecisionPrompt, PlanDecisionPrompt } from './DecisionPrompt.tsx';
 import { addToHistory, saveHistory } from './history.ts';
 import type { PanelProps, SlashCommand } from './panel-types.ts';
+import type { ClipboardReader } from './clipboard.ts';
+import { echoText, type ImageAttachment } from './images.ts';
 import { buildRequest, effectiveMode } from './requestBuilder.ts';
 import { findCommand, HELP_LINES, SLASH_COMMANDS } from './slash.ts';
 import { StatusLine } from './StatusLine.tsx';
@@ -28,6 +30,8 @@ export interface AppProps {
   skipPreflight?: boolean;
   /** Full screen (fixed layout, scrollable thread) or inline (thread in the terminal's scrollback). Default inline. */
   screen?: 'fullscreen' | 'inline';
+  /** Reads an image from the OS clipboard (tests inject a fake). */
+  readClipboard?: ClipboardReader;
   /** Called with the id of the run this window is on (for the resume hint printed at exit). */
   onRunChange?: (runId: string | undefined) => void;
 }
@@ -62,7 +66,7 @@ function PanelHost({ command, props }: Readonly<{ command: SlashCommand; props: 
 const SHELL_BLOCKED = 'Shell mode is unavailable while an agent run is active. Wait for it, or press Ctrl+C to stop it.';
 
 function helpText(): string {
-  const commands = SLASH_COMMANDS.map((c) => `  /${c.name.padEnd(10)} ${c.description}`);
+  const commands = SLASH_COMMANDS.map((c) => `  /${c.name.padEnd(12)} ${c.description}`);
   return ['Commands:', ...commands, ...HELP_LINES].join('\n');
 }
 
@@ -157,13 +161,13 @@ export function App(props: Readonly<AppProps>) {
     return null;
   };
 
-  const submit = async (text: string): Promise<string | null> => {
+  const submit = async (text: string, images: readonly ImageAttachment[] = []): Promise<string | null> => {
     if (text.startsWith('/')) return runSlash(text, shell);
     if (session.phase !== 'idle') return 'A run is in progress. Wait for it, or press Ctrl+C to stop it.';
     if (shellRun.running) return 'A shell command is running. Wait for it, or press Ctrl+C to stop it.';
     setFollowTick((t) => t + 1);
-    const failure = await session.send(buildRequest(selection.selection, text, cwd), text);
-    if (!failure) rememberPrompt(text);
+    const failure = await session.send(buildRequest(selection.selection, text, cwd, images), echoText(text, images));
+    if (!failure && text) rememberPrompt(text);
     return failure;
   };
 
@@ -198,6 +202,8 @@ export function App(props: Readonly<AppProps>) {
         roles={selection.roles}
         role={selection.selection.role}
         commands={SLASH_COMMANDS}
+        cwd={cwd}
+        readClipboard={props.readClipboard}
         borderTone={effectiveMode(selection.selection) === 'plan' ? 'yellow' : 'cyan'}
         onSubmit={submit}
         onShell={submitShell}

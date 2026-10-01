@@ -236,6 +236,36 @@ try {
   const thread = JSON.parse((await cli(['show', result.id, '--json'])).stdout);
   assert.ok(thread.messages.some((m: { agent: string; parts: { content: string }[] }) => m.agent === 'user' && m.parts[0].content === 'Also add a newline.'));
 
+  // ---- --image attaches up to 4 images (checked by magic bytes) to run and continue; bad files stop before any agent runs.
+  const pngFile = path.join(temp, 'shot.png');
+  const jpgFile = path.join(temp, 'photo.jpg');
+  const fakeFile = path.join(temp, 'fake.png');
+  await writeFile(pngFile, Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.alloc(64)]));
+  await writeFile(jpgFile, Buffer.concat([Buffer.from('ffd8ffe0', 'hex'), Buffer.alloc(64)]));
+  await writeFile(fakeFile, 'not an image');
+  await resetCalls();
+  const withImages = await cli(['run', 'Implement and add a small change.', '--mode', 'plan', '--image', pngFile, '--image', jpgFile, '--json']);
+  assert.equal(withImages.code, 0, show(withImages));
+  const imageRun = JSON.parse((await cli(['show', JSON.parse(withImages.stdout).id, '--json'])).stdout);
+  assert.deepEqual(imageRun.config.images, [{ name: 'shot.png', mimeType: 'image/png' }, { name: 'photo.jpg', mimeType: 'image/jpeg' }]);
+  const imageFollow = await cli(['continue', imageRun.id, 'Look at this too.', '--image', jpgFile, '--json']);
+  assert.equal(imageFollow.code, 0, show(imageFollow));
+  const followThread = JSON.parse((await cli(['show', imageRun.id, '--json'])).stdout);
+  const lastUser = followThread.messages.filter((m: { agent: string }) => m.agent === 'user').at(-1);
+  assert.deepEqual(lastUser.images, [{ name: 'photo.jpg', mimeType: 'image/jpeg' }]);
+  await resetCalls();
+  const tooMany = await cli(['run', 'x', '--image', pngFile, '--image', pngFile, '--image', pngFile, '--image', pngFile, '--image', pngFile]);
+  assert.equal(tooMany.code, 2, show(tooMany));
+  assert.match(tooMany.stderr, /up to 4 images/);
+  const missingImage = await cli(['run', 'x', '--image', path.join(temp, 'nope.png')]);
+  assert.equal(missingImage.code, 2, show(missingImage));
+  assert.match(missingImage.stderr, /not found/);
+  const fakeImage = await cli(['run', 'x', '--image', fakeFile]);
+  assert.equal(fakeImage.code, 2, show(fakeImage));
+  assert.match(fakeImage.stderr, /not a PNG, JPEG, WebP or GIF/);
+  assert.match((await cli(['--help'], { cwd: temp })).stdout, /--image <file>/);
+  assert.equal((await calls()).length, 0, 'a refused image never starts an agent');
+
   // ---- Repository lock across processes: a second run is refused (exit 4) through another path;
   //      a killed process leaves its lock until `unlock` confirms the PID is gone.
   await mkdir(path.join(repo, 'nested'), { recursive: true });

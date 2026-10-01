@@ -24,6 +24,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'usage', description: 'Claude and Codex usage limits', panel: (p: PanelProps) => createElement(UsagePanel, p) },
   { name: 'login', description: 'Check and connect the Claude and Codex CLIs', panel: (p: PanelProps) => createElement(ConnectionPanel, p) },
   { name: 'settings', description: 'Per-CLI settings', panel: (p: PanelProps) => createElement(SettingsPanel, p) },
+  { name: 'paste-image', description: 'Attach an image from the clipboard (also Ctrl+V / Alt+V)' },
+  { name: 'clear-images', description: 'Remove the attached images' },
   { name: 'skip-auth', description: 'Toggle running although a CLI cannot report its login' },
   { name: 'exit', description: 'Leave AI Duo' },
 ];
@@ -46,6 +48,8 @@ export const HELP_LINES: readonly string[] = [
   String.raw`  Enter send · Alt+Enter / Ctrl+J / trailing \ + Enter new line`,
   '  Up/Down history (at the first/last line) · Ctrl+A/E line start/end · Alt+B/F or Ctrl+←/→ words',
   '  Tab (empty prompt) next role · Shift+Tab Code/Plan · Esc closes a panel',
+  '  Ctrl+V or Alt+V attach an image from the clipboard (or /paste-image) · paste or drop an image file path (png, jpg, webp, gif; up to 4, 5 MB each)',
+  '  Backspace at the start of the prompt removes the last image · /clear-images removes all',
   '  ! as the first character: shell mode · Enter runs the command here (not sent to the agents) · Esc or Backspace on empty leaves it',
   '  Ctrl+C stops the run or shell command (again: quit) · Ctrl+D on an empty prompt quits',
 ];

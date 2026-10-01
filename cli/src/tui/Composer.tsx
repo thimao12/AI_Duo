@@ -1,6 +1,9 @@
 import { Box, Text, useInput, usePaste, type Key } from 'ink';
 import { useEffect, useRef, useState } from 'react';
 import type { RoleDef } from '../../../server/src/types.ts';
+import { readClipboardImage, type ClipboardReader } from './clipboard.ts';
+import { chipLabel, pastedImagePath, type ImageAttachment } from './images.ts';
+import { SHELL_IMAGE_NOTE, useImageAttachments } from './useImages.ts';
 import {
   after,
   applyEditKey,
@@ -49,13 +52,27 @@ function RoleChips({ roles, role, plainLabel }: Readonly<{ roles: readonly RoleD
   );
 }
 
+/** "[Image #1 · PNG · 184 KB]" chips of the attached images, above the box. */
+function ImageChips({ images }: Readonly<{ images: readonly ImageAttachment[] }>) {
+  if (images.length === 0) return null;
+  return (
+    <Box flexWrap="wrap" columnGap={1}>
+      {images.map((image, index) => (
+        <Text key={`${image.name}-${image.bytes}-${image.dataUrl.length}-${index}`} color={tone('cyan')}>
+          {chipLabel(index, image)}
+        </Text>
+      ))}
+    </Box>
+  );
+}
+
 function SlashMenu({ matches, selected }: Readonly<{ matches: readonly SlashCommand[]; selected: number }>) {
   const shown = matches.slice(0, 8);
   return (
     <Box flexDirection="column" paddingLeft={2}>
       {shown.map((c, i) => (
         <Text key={c.name} color={i === selected ? tone('cyan') : undefined} bold={i === selected}>
-          {`${i === selected ? '›' : ' '} /${c.name.padEnd(10)}`}
+          {`${i === selected ? '›' : ' '} /${c.name.padEnd(12)}`}
           <Text dimColor>{c.description}</Text>
         </Text>
       ))}
@@ -128,8 +145,12 @@ export interface ComposerProps {
   /** Plain text entry: no slash menu, history or role/mode keys (decision feedback). */
   plain?: boolean;
   borderTone?: 'cyan' | 'yellow' | 'magenta';
-  /** Returns an error to show under the box (the text is put back), or null when accepted. */
-  onSubmit(text: string): Promise<string | null> | string | null;
+  /** Working folder: relative image paths are resolved against it. */
+  cwd?: string;
+  /** Reads an image from the OS clipboard (Ctrl+V, Alt+V, /paste-image); default: the real clipboard. */
+  readClipboard?: ClipboardReader;
+  /** Returns an error to show under the box (the text and the images are put back), or null when accepted. `images` are the attached chips. */
+  onSubmit(text: string, images: readonly ImageAttachment[]): Promise<string | null> | string | null;
   onCommand?(command: SlashCommand): void;
   onCycleRole?(): void;
   onToggleMode?(): void;
@@ -214,6 +235,10 @@ export function Composer(props: Readonly<ComposerProps>) {
   };
   const walker = useHistoryWalk(history, showEntry);
   const { onDraft, onShellMode } = props;
+  const imagesOn = !plain;
+  const attached = useImageAttachments(props.readClipboard ?? readClipboardImage);
+  const [note, setNote] = useState<string | null>(null);
+  const pathEnv = { cwd: props.cwd ?? process.cwd() };
 
   useEffect(() => {
     onDraft?.(editor.text);
@@ -235,6 +260,7 @@ export function Composer(props: Readonly<ComposerProps>) {
   const edit = (next: EditorState) => {
     putEditor(next);
     setError(null);
+    setNote(null);
     putMenu(0);
     walker.reset();
   };
@@ -261,20 +287,81 @@ export function Composer(props: Readonly<ComposerProps>) {
     edit({ text: next.text.slice(1), cursor: Math.max(0, next.cursor - 1) });
   };
 
+  const pasteImage = async () => {
+    if (shellRef.current) {
+      setNote(SHELL_IMAGE_NOTE);
+      return;
+    }
+    setNote(await attached.pasteClipboard());
+  };
+
+  /** The absolute path when `text` is a lone image path and the box takes images right now. */
+  const imagePathOf = (text: string): string | undefined => (imagesOn && !shellRef.current ? pastedImagePath(text, pathEnv) : undefined);
+
+  /** A pasted or dropped lone image path attaches the file; anything else is inserted as text. */
+  const insertOrAttach = (text: string) => {
+    const file = imagePathOf(text);
+    if (!file) {
+      accept(insertText(latest.current, text));
+      return;
+    }
+    void attached.pastePath(file).then((outcome) => {
+      if (outcome.kind === 'text') accept(insertText(latest.current, text));
+      else setNote(outcome.kind === 'rejected' ? outcome.note : null);
+    });
+  };
+
+  /** Enter on a lone image path typed by hand attaches it instead of sending; true when it did (or refused it). */
+  const attachTyped = async (file: string): Promise<boolean> => {
+    const outcome = await attached.pastePath(file);
+    if (outcome.kind === 'text') return false;
+    if (outcome.kind === 'attached') {
+      putEditor(EMPTY_EDITOR);
+      setNote(null);
+    } else {
+      setNote(outcome.note);
+    }
+    return true;
+  };
+
+  /** /paste-image and /clear-images belong to the box, which owns the chips; true when handled. */
+  const localCommand = (name: string): boolean => {
+    if (!imagesOn) return false;
+    if (name === 'paste-image') {
+      void pasteImage();
+    } else if (name === 'clear-images') {
+      setNote(attached.ref.current.length > 0 ? 'Removed the attached images.' : 'No images attached.');
+      attached.clear();
+    } else {
+      return false;
+    }
+    return true;
+  };
+
   const submit = async () => {
     const text = latest.current.text.trim();
-    if (!text) return;
-    const handler = shellRef.current && props.onShell ? props.onShell : props.onSubmit;
+    const sending = attached.ref.current;
+    if (!text && sending.length === 0) return;
+    if (text.startsWith('/') && localCommand(text.slice(1).trim().toLowerCase())) {
+      putEditor(EMPTY_EDITOR);
+      return;
+    }
+    const file = imagePathOf(text);
+    if (file && (await attachTyped(file))) return;
+    const inShell = shellRef.current && props.onShell !== undefined;
+    const withImages = !inShell && !text.startsWith('/');
     putEditor(EMPTY_EDITOR);
     walker.reset();
-    const problem = await handler(text);
+    if (withImages) attached.clear();
+    const problem = await (inShell && props.onShell ? props.onShell(text) : props.onSubmit(text, sending));
     setError(problem);
     if (problem && !latest.current.text) putEditor(editorOf(text));
+    if (problem && withImages && attached.ref.current.length === 0) attached.replace(sending);
   };
 
   const runCommand = (command: SlashCommand) => {
     putEditor(EMPTY_EDITOR);
-    props.onCommand?.(command);
+    if (!localCommand(command.name)) props.onCommand?.(command);
   };
 
   /** Keys of the open slash menu; true when consumed. */
@@ -337,10 +424,30 @@ export function Composer(props: Readonly<ComposerProps>) {
     return true;
   };
 
+  /** Ctrl+V / Alt+V, Backspace at the very start (removes the newest chip) and pasted-chunk image paths; true when consumed. */
+  const imageKey = (input: string, key: Key): boolean => {
+    if (!imagesOn) return false;
+    const modified = key.ctrl || key.meta;
+    if (modified && input === 'v') {
+      void pasteImage();
+      return true;
+    }
+    if (key.backspace && !modified && !shellRef.current && latest.current.cursor === 0 && attached.removeLast()) {
+      setNote(null);
+      return true;
+    }
+    if (input.length > 1 && !modified && imagePathOf(input)) {
+      insertOrAttach(input);
+      return true;
+    }
+    return false;
+  };
+
   useInput(
     (input, key) => {
       if (key.eventType === 'release' || (key.ctrl && input === 'c')) return;
       if (props.reserveScrollKeys && isScrollKey(key)) return;
+      if (imageKey(input, key)) return;
       if (shellRef.current && key.backspace && latest.current.text === '') {
         leaveShell();
         return;
@@ -353,17 +460,20 @@ export function Composer(props: Readonly<ComposerProps>) {
   );
 
   // Bracketed paste arrives whole: it can never submit half-way.
-  usePaste((text) => accept(insertText(latest.current, text)), { isActive: active });
+  usePaste(insertOrAttach, { isActive: active });
 
   const borderColor = tone(shell ? 'magenta' : (props.borderTone ?? 'cyan'));
   return (
     <Box flexDirection="column">
       {plain ? null : <RoleChips roles={roles} role={role} plainLabel="role:" />}
+      <ImageChips images={attached.images} />
       <Box borderStyle="round" borderColor={borderColor} paddingX={1} flexDirection="column">
         <EditorView state={editor} placeholder={shell ? 'command to run in the session folder' : placeholder} active={active} glyph={shell ? '!' : '›'} glyphTone={shell ? 'magenta' : 'cyan'} />
       </Box>
       {menuOpen ? <SlashMenu matches={matches} selected={selected} /> : null}
       {error ? <Text color={tone('red')}>{error}</Text> : null}
+      {note ? <Text color={tone('yellow')}>{note}</Text> : null}
+      {attached.images.length > 0 && !note && !shell ? <Text dimColor>Backspace at the start of the prompt removes the last image · /clear-images removes all</Text> : null}
       {shell ? <Text dimColor>{SHELL_HINT}</Text> : null}
       {!shell && lineCount(editor) > 1 ? <Text dimColor>Enter sends · Alt+Enter, Ctrl+J or trailing \ for a new line</Text> : null}
     </Box>

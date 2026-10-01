@@ -13,6 +13,7 @@ import type { Mode, Run } from '../../server/src/types.ts';
 import { DecisionController } from './decisions.ts';
 import { invocationCwd, seedPrompts } from './env.ts';
 import { formatUsage, makeStyle, ProgressRenderer, transcript, type Style } from './render.ts';
+import { loadImageArgs } from './tui/images.ts';
 
 export const VERSION = '0.1.0';
 
@@ -37,6 +38,8 @@ Chat options:
       --inline      keep the chat in the terminal's scrollback instead of taking the whole screen
                     (also AI_DUO_INLINE=1)
       --fullscreen  full-screen chat: the default, accepted for clarity
+  Images: Ctrl+V or Alt+V attaches an image from the clipboard (or /paste-image); pasting or dropping
+  the path of an image file attaches it too. Backspace at the start of the prompt removes the last one.
   Full screen keys: PageUp/PageDown scroll, Ctrl+Up/Down or Alt+Up/Down one line, Home/Ctrl+Home top,
   End/Ctrl+End latest (also resumes following the newest output).
 
@@ -48,6 +51,7 @@ Run options:
       --claude-model <name>     --codex-model <name>      override the routed model
       --claude-effort <level>   --codex-effort <level>    override the reasoning effort
       --timeout <minutes>       limit per agent turn (1-180, default 30)
+      --image <file>            attach a PNG, JPEG, WebP or GIF image (repeatable, up to 4, 5 MB each; run and continue)
       --skip-auth-check         run although a CLI cannot report its login status
                                 (a confirmed missing or metered login still stops)
 
@@ -81,6 +85,7 @@ const OPTIONS = {
   'claude-effort': { type: 'string' },
   'codex-effort': { type: 'string' },
   timeout: { type: 'string' },
+  image: { type: 'string', multiple: true },
   'skip-auth-check': { type: 'boolean' },
   'plan-decision': { type: 'string' },
   'pair-extra-rounds': { type: 'string' },
@@ -393,6 +398,15 @@ class Cli {
     return startTui({ cwd, service, version: VERSION, screen: this.chatScreen() });
   }
 
+  /** The --image files as a request field (nothing when the flag is absent); a bad file is a usage error. */
+  private async images(): Promise<Pick<RunRequest, 'images'>> {
+    const files = this.flags.image ?? [];
+    if (files.length === 0) return {};
+    const loaded = await loadImageArgs(files, this.io.cwd);
+    if (typeof loaded === 'string') throw new UsageError(loaded);
+    return { images: loaded };
+  }
+
   async run(positionals: string[]): Promise<number> {
     const { flags, io } = this;
     let prompt = positionals.join(' ').trim();
@@ -400,7 +414,7 @@ class Cli {
     if (!prompt) throw new UsageError('Missing request: ai-duo run "<request>" (or `-` to read it from stdin)');
     const mode = oneOf('mode', flags.mode, ['code', 'plan'] as const) ?? 'code';
     const cwd = authorizeDirectory(path.resolve(io.cwd, flags.cwd ?? '.'));
-    const request: RunRequest = { ...requestFrom(flags), mode, prompt, cwd };
+    const request: RunRequest = { ...requestFrom(flags), mode, prompt, cwd, ...(await this.images()) };
     await this.assertApprovable(mode, cwd);
     await seedPrompts();
     return this.follow((options) => service.start(request, options));
@@ -420,7 +434,8 @@ class Cli {
     const mode: Mode = oneOf('mode', flags.mode, ['code', 'plan'] as const) ?? (current === 'plan' ? 'plan' : 'code');
     await this.assertApprovable(mode, authorizeDirectory(previous.config.cwd));
     await seedPrompts();
-    return this.follow((options) => service.continue(id, { ...requestFrom(flags), mode, prompt }, options));
+    const images = await this.images();
+    return this.follow((options) => service.continue(id, { ...requestFrom(flags), mode, prompt, ...images }, options));
   }
 
   async runs(): Promise<number> {
