@@ -25,6 +25,7 @@
     "test:text": "tsx src/text-smoke.ts",
     "test:models": "tsx src/models-smoke.ts",
     "test:service": "tsx src/service-smoke.ts && tsx src/roles-smoke.ts && tsx src/pipeline-smoke.ts",
+    "test:checks": "tsx src/checks-smoke.ts",
     "test:usage": "tsx src/usage-smoke.ts",
     "test:usage-live": "tsx src/usage-live-smoke.ts",
     "test:files": "tsx src/files-smoke.ts"

@@ -12,6 +12,7 @@ import { IMAGE_TYPES, RunService, ServiceError, type ServiceErrorCode } from './
 import { cliSettingsRoutes } from './routes/cli-settings.ts';
 import { fileRoutes } from './routes/files.ts';
 import { rolesRoutes } from './routes/roles.ts';
+import { diagnosticsRoutes } from './routes/diagnostics.ts';
 import { usageRoutes } from './routes/usage.ts';
 import { loadRun } from './store.ts';
 import type { RunEvent } from './types.ts';
@@ -79,6 +80,7 @@ app.route('/', rolesRoutes());
 app.route('/', cliSettingsRoutes());
 app.route('/', usageRoutes(service));
 app.route('/', fileRoutes());
+app.route('/', diagnosticsRoutes());
 
 app.get('/api/agents', async (c) => {
   const { claude, codex } = await service.agentVersions();

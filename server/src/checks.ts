@@ -48,16 +48,27 @@ function clip(text: string): string {
   return text.length > MAX_OUTPUT_CHARS ? `${text.slice(0, MAX_OUTPUT_CHARS)}\n[... cắt bớt ${text.length - MAX_OUTPUT_CHARS} ký tự ...]` : text;
 }
 
+export interface CheckResult {
+  name: string;
+  ok: boolean;
+  output: string;
+}
+
+/** Runs every static check the project has configured, in parallel; each result keeps its (clipped) output. */
+export async function runCheckResults(cwd: string, signal?: AbortSignal): Promise<CheckResult[]> {
+  const dir = path.resolve(authorizeDirectory(cwd));
+  const results = await Promise.all(detectChecks(dir).map(async (c) => ({ c, ...(await run(dir, c, signal)) })));
+  return results.map((r) => ({ name: r.c.name, ok: r.ok, output: r.ok ? '' : clip(r.output) }));
+}
+
 /**
- * Runs the project's own static checks and reports only the failures, so a reviewer can skip
- * re-deriving them. Empty when nothing is configured; "pass" when every check is clean.
+ * The failures as a prompt block, so a reviewer can skip re-deriving them. Empty when nothing is
+ * configured; a one-line pass note when every check is clean.
  */
 export async function runChecks(cwd: string, signal?: AbortSignal): Promise<{ passed: boolean; report: string }> {
-  const dir = path.resolve(authorizeDirectory(cwd));
-  const checks = detectChecks(dir);
-  if (!checks.length) return { passed: true, report: '' };
-  const results = await Promise.all(checks.map(async (c) => ({ c, ...(await run(dir, c, signal)) })));
+  const results = await runCheckResults(cwd, signal);
+  if (!results.length) return { passed: true, report: '' };
   const failed = results.filter((r) => !r.ok);
-  if (!failed.length) return { passed: true, report: `Kiểm tra tĩnh (${checks.map((c) => c.name).join(', ')}): không có lỗi.` };
-  return { passed: false, report: failed.map((r) => `### ${r.c.name} — LỖI\n${clip(r.output)}`).join('\n\n') };
+  if (!failed.length) return { passed: true, report: `Kiểm tra tĩnh (${results.map((r) => r.name).join(', ')}): không có lỗi.` };
+  return { passed: false, report: failed.map((r) => `### ${r.name} — LỖI\n${r.output}`).join('\n\n') };
 }
