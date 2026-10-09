@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { parseDiagnostics, type Diagnostic } from './diagnostics.ts';
 import { authorizeDirectory } from './project-directories.ts';
 
 interface Check {
@@ -30,7 +31,7 @@ export function detectChecks(cwd: string): Check[] {
   if (has(cwd, 'tsconfig.json') && hasDependency(cwd, 'typescript')) checks.push({ name: 'tsc', command: npx, args: ['--no-install', 'tsc', '--noEmit', '--pretty', 'false'] });
   if (has(cwd, 'biome.json', 'biome.jsonc')) checks.push({ name: 'biome', command: npx, args: ['--no-install', 'biome', 'check', '--colors=off', '.'] });
   else if (has(cwd, 'eslint.config.js', 'eslint.config.mjs', 'eslint.config.ts', '.eslintrc.json', '.eslintrc.js', '.eslintrc.cjs')) checks.push({ name: 'eslint', command: npx, args: ['--no-install', 'eslint', '--no-color', '.'] });
-  if (has(cwd, 'ruff.toml', '.ruff.toml') || (has(cwd, 'pyproject.toml') && /\[tool\.ruff/.test(readFileSync(path.join(cwd, 'pyproject.toml'), 'utf8')))) checks.push({ name: 'ruff', command: 'ruff', args: ['check', '--no-cache', '.'] });
+  if (has(cwd, 'ruff.toml', '.ruff.toml') || (has(cwd, 'pyproject.toml') && /\[tool\.ruff/.test(readFileSync(path.join(cwd, 'pyproject.toml'), 'utf8')))) checks.push({ name: 'ruff', command: 'ruff', args: ['check', '--no-cache', '--output-format=concise', '.'] });
   return checks;
 }
 
@@ -52,13 +53,15 @@ export interface CheckResult {
   name: string;
   ok: boolean;
   output: string;
+  /** File and line problems parsed from the output (empty when the tool's format is not understood). */
+  diagnostics: Diagnostic[];
 }
 
 /** Runs every static check the project has configured, in parallel; each result keeps its (clipped) output. */
 export async function runCheckResults(cwd: string, signal?: AbortSignal): Promise<CheckResult[]> {
   const dir = path.resolve(authorizeDirectory(cwd));
   const results = await Promise.all(detectChecks(dir).map(async (c) => ({ c, ...(await run(dir, c, signal)) })));
-  return results.map((r) => ({ name: r.c.name, ok: r.ok, output: r.ok ? '' : clip(r.output) }));
+  return results.map((r) => ({ name: r.c.name, ok: r.ok, output: r.ok ? '' : clip(r.output), diagnostics: r.ok ? [] : parseDiagnostics(r.c.name, r.output, dir) }));
 }
 
 /**
