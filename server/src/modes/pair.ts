@@ -104,7 +104,7 @@ function buildTestHint(testCommand: string | undefined) {
     : 'Detect and run the project\'s relevant test / type-check / build commands (e.g. from package.json, Makefile, pyproject). If there are none, do a focused manual check.';
 }
 
-function formatDiff(diff: string) {
+export function formatDiff(diff: string) {
   if (!diff.trim()) return '_(no changes detected)_';
   const cut = diff.length > MAX_DIFF_CHARS;
   return '```diff\n' + (cut ? diff.slice(0, MAX_DIFF_CHARS) : diff) + '\n```' + (cut ? '\n(diff truncated – inspect the files directly for the rest)' : '');
@@ -119,6 +119,13 @@ async function reviewTurn(
   const reviewTreeBefore = await snapshotTree(cwd);
   let reviewTreeAfter = reviewTreeBefore;
   let reviewerChanges: ReviewerChanges | undefined;
+  const parseVerdict = async (text: string): Promise<Verdict> => {
+    reviewTreeAfter = await snapshotTree(cwd);
+    if (reviewTreeBefore !== reviewTreeAfter) {
+      reviewerChanges = await diffTreeSummary(cwd, reviewTreeBefore, reviewTreeAfter);
+    }
+    return resolveVerdict(text, reviewerChanges);
+  };
   const review = await ctx.turn({
     agent: reviewer,
     role: 'reviewer',
@@ -127,14 +134,24 @@ async function reviewTurn(
     round: r,
     title: `${label(reviewer)} reviews & tests – round ${r}`,
     prompt: render('review', { coder: label(coder), cwd, round: r, prompt: ctx.prompt, summary, diff: formatDiff(diff), testHint }),
-    parseVerdict: async (text): Promise<Verdict> => {
-      reviewTreeAfter = await snapshotTree(cwd);
-      if (reviewTreeBefore !== reviewTreeAfter) {
-        reviewerChanges = await diffTreeSummary(cwd, reviewTreeBefore, reviewTreeAfter);
-      }
-      return resolveVerdict(text, reviewerChanges);
-    },
+    parseVerdict,
   });
+  // No valid verdict block: ask once, in the same session, for just that block instead of burning a whole fix round.
+  if (!parseReview(review.text).verdict) {
+    const again = await ctx.turn({
+      agent: reviewer,
+      role: 'reviewer',
+      sessionKey: 'reviewer',
+      phase: 'review',
+      round: r,
+      title: `${label(reviewer)} gửi lại verdict – round ${r}`,
+      prompt: render('verdict', {}),
+      parseVerdict,
+    });
+    return { review: { ...review, text: `${review.text}
+
+${again.text}`, verdict: again.verdict }, reviewTreeBefore, reviewTreeAfter, reviewerChanges };
+  }
   return { review, reviewTreeBefore, reviewTreeAfter, reviewerChanges };
 }
 
