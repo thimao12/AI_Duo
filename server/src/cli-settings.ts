@@ -38,7 +38,7 @@ type Obj = Record<string, unknown>;
 const isObj = (value: unknown): value is Obj => typeof value === 'object' && value !== null && !Array.isArray(value);
 const hasNul = (value: string) => value.includes('\0');
 
-export const emptyCliSettings = (): CliSettings => ({ claude: {}, codex: {} });
+export const emptyCliSettings = (): CliSettings => ({ claude: {}, codex: {}, antigravity: {} });
 
 function binPathProblem(value: string, label: string): string | undefined {
   if (hasNul(value) || !path.isAbsolute(value)) return `${label} phải là đường dẫn tuyệt đối tới file chạy được.`;
@@ -130,9 +130,11 @@ export function validateCliSettings(input: unknown, checkFile = true): CliSettin
   if (typeof claude === 'string') return claude;
   const codex = cliProblem(input.codex, 'codex', checkFile);
   if (typeof codex === 'string') return codex;
+  const antigravity = cliProblem(input.antigravity, 'antigravity', checkFile);
+  if (typeof antigravity === 'string') return antigravity;
   const problem = timeoutProblem(input.turnTimeoutMin) ?? testCommandProblem(input.testCommand);
   if (problem) return problem;
-  const settings: CliSettings = { claude, codex };
+  const settings: CliSettings = { claude, codex, antigravity };
   if (typeof input.turnTimeoutMin === 'number') settings.turnTimeoutMin = input.turnTimeoutMin;
   const testCommand = typeof input.testCommand === 'string' ? input.testCommand.trim() : '';
   if (testCommand) settings.testCommand = testCommand;

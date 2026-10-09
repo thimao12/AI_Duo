@@ -209,7 +209,7 @@ export interface AgentModels {
   default: { model?: string; effort?: string };
 }
 
-export type ModelCatalog = Record<'claude' | 'codex', AgentModels>;
+export type ModelCatalog = Record<AgentName, AgentModels>;
 
 export interface UsageWindow {
   usedPercent: number;
@@ -248,7 +248,7 @@ export interface AgentUsage {
 
 /** Whether a CLI is installed and logged in, plus how to fix it. */
 export interface ConnectionStatus {
-  agent: 'claude' | 'codex';
+  agent: AgentName;
   installed: boolean;
   version: string | null;
   path: string | null;
@@ -263,6 +263,8 @@ export interface ConnectionStatus {
 export interface UsageReport {
   claude: AgentUsage;
   codex: AgentUsage;
+  /** agy reports no quota, so this only ever says so. */
+  antigravity: AgentUsage;
 }
 
 /* ---- Per-CLI manual configuration (kept in settings.json) ---- */
@@ -283,6 +285,7 @@ export interface CliConfig {
 export interface CliSettings {
   claude: CliConfig;
   codex: CliConfig;
+  antigravity: CliConfig;
   /** Default per-turn timeout in minutes when a request omits it. */
   turnTimeoutMin?: number;
   /** Default test command when a request omits it. */

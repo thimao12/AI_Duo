@@ -78,7 +78,7 @@ try {
     assert.equal(typeof result, 'string', `${JSON.stringify(input)} should be rejected`);
     assert.match(result as string, pattern);
   };
-  const base = { claude: {}, codex: {} };
+  const base = { claude: {}, codex: {}, antigravity: {} };
   assert.deepEqual(cli.validateCliSettings(base), base);
   assert.deepEqual(cli.validateCliSettings({}), base, 'missing sections default to empty');
   assert.deepEqual(cli.validateCliSettings({ claude: { binPath: '  ', extraArgs: [], env: {}, defaultModel: ' ' } }), base, 'empty values are dropped');
@@ -122,6 +122,7 @@ try {
   assert.deepEqual(good, {
     claude: { binPath: nodeBin, extraArgs: ['--verbose', '--max-turns', '5'], env: { FOO: 'bar' }, defaultModel: 'sonnet', defaultEffort: 'high' },
     codex: {},
+    antigravity: {},
     turnTimeoutMin: 240,
     testCommand: 'npm test',
   });
@@ -237,7 +238,7 @@ try {
   const saved1 = await put({ cli: { claude: { binPath: nodeBin, defaultModel: 'haiku' }, turnTimeoutMin: 45 } });
   assert.equal(saved1.status, 200);
   const body1 = await saved1.json();
-  assert.deepEqual(body1, { cli: { claude: { binPath: nodeBin, defaultModel: 'haiku' }, codex: {}, turnTimeoutMin: 45 } });
+  assert.deepEqual(body1, { cli: { claude: { binPath: nodeBin, defaultModel: 'haiku' }, codex: {}, antigravity: {}, turnTimeoutMin: 45 } });
   assert.deepEqual(await (await app.request('/api/cli-settings')).json(), body1);
   const invalid = await put({ cli: { claude: { binPath: 'relative' } } });
   assert.equal(invalid.status, 400);

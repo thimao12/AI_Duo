@@ -74,7 +74,7 @@ export const defaultRoles = (): RoleDef[] => structuredClone(DEFAULT_ROLES) as R
 
 type Obj = Record<string, unknown>;
 const isObj = (value: unknown): value is Obj => typeof value === 'object' && value !== null && !Array.isArray(value);
-const isAgent = (value: unknown): value is AgentName => value === 'claude' || value === 'codex';
+const isAgent = (value: unknown): value is AgentName => value === 'claude' || value === 'codex' || value === 'antigravity';
 
 function text(value: unknown, label: string, min: number, max: number): string | { error: string } {
   if (typeof value !== 'string') return { error: `${label} must be a string` };

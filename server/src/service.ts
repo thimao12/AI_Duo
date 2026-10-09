@@ -159,7 +159,7 @@ export function parseImages(value: unknown): ParsedImages | string {
   return { images, buffers };
 }
 
-const isAgent = (x: unknown): x is AgentName => x === 'claude' || x === 'codex';
+const isAgent = (x: unknown): x is AgentName => x === 'claude' || x === 'codex' || x === 'antigravity';
 
 function modelProblem(body: any): string | undefined {
   return modelNameProblem(body.models?.claude, 'models.claude') ?? modelNameProblem(body.models?.codex, 'models.codex');
@@ -399,8 +399,8 @@ export class RunService {
         return { version: null, path: null, error: (err as Error).message };
       }
     };
-    const [claude, codex] = await Promise.all([info('claude'), info('codex')]);
-    return { claude, codex };
+    const [claude, codex, antigravity] = await Promise.all([info('claude'), info('codex'), info('antigravity')]);
+    return { claude, codex, antigravity };
   }
 
   /* ---- Preflight ---- */

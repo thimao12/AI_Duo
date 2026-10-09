@@ -4,7 +4,7 @@ import path from 'node:path';
 import { getCliSettingsSync } from '../settings.ts';
 import type { AgentName } from './types.ts';
 
-const ENV: Record<AgentName, string> = { claude: 'CLAUDE_BIN', codex: 'CODEX_BIN' };
+const ENV: Record<AgentName, string> = { claude: 'CLAUDE_BIN', codex: 'CODEX_BIN', antigravity: 'AGY_BIN' };
 
 // Default install locations, for when the app is launched with a stale or minimal PATH
 // (e.g. double-clicked from Explorer right after installing a CLI).
@@ -16,6 +16,7 @@ const KNOWN: Record<AgentName, string[]> = {
     '/opt/homebrew/bin/codex',
     '/usr/local/bin/codex',
   ],
+  antigravity: [path.join(process.env.LOCALAPPDATA ?? '', 'agy', 'bin', 'agy.exe'), path.join(homedir(), '.local', 'bin', 'agy'), '/usr/local/bin/agy'],
 };
 
 export interface ResolvedBin {

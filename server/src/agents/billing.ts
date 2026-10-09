@@ -22,6 +22,8 @@ const METERED_ENV = [
   'OPENAI_API_KEY',
   'OPENAI_BASE_URL',
   'CODEX_API_KEY',
+  'GEMINI_API_KEY',
+  'GOOGLE_API_KEY',
 ];
 
 /** Environment for every agent CLI we start: inherited, minus anything that bills per token. */
@@ -90,12 +92,21 @@ export async function codexAuthStatus(bin: ResolvedBin, cwd: string): Promise<Au
   return { state: 'unknown', error: `Không xác minh được Codex đã đăng nhập bằng ChatGPT (codex login status: ${(out || error || '').slice(0, 200)}).` };
 }
 
+/**
+ * agy has no login-status command, so a signed-in CLI is recognised by the state folder it creates
+ * on first sign-in. A missing folder means it never ran (or the user is not signed in).
+ */
+export async function antigravityAuthStatus(home = path.join(homedir(), '.gemini', 'antigravity-cli')): Promise<AuthStatus> {
+  const signedIn = await stat(path.join(home, 'installation_id')).then(() => true, () => false);
+  return signedIn ? { state: 'ok' } : { state: 'unknown', error: 'Không xác minh được Antigravity đã đăng nhập. Chạy `agy` một lần và đăng nhập bằng tài khoản Google.' };
+}
+
 /** Login status; only a good login is cached, so a fixed login or upgraded CLI is seen at once. */
 export async function authStatus(agent: AgentName, bin: ResolvedBin, cwd: string): Promise<AuthStatus> {
   const key = `${agent}|${cwd}`;
   const cached = authCache.get(key);
   if (cached && Date.now() - cached.at <= AUTH_TTL) return { state: 'ok' };
-  const status = agent === 'claude' ? await claudeAuthStatus(bin, cwd) : await codexAuthStatus(bin, cwd);
+  const status = agent === 'claude' ? await claudeAuthStatus(bin, cwd) : agent === 'codex' ? await codexAuthStatus(bin, cwd) : await antigravityAuthStatus();
   if (status.state === 'ok') authCache.set(key, { at: Date.now() });
   else authCache.delete(key);
   return status;

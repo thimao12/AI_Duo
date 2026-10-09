@@ -22,6 +22,12 @@ export const DEFAULT_CATALOG: Catalog = {
     standard: { model: 'gpt-6-sol', effort: 'medium' },
     heavy: { model: 'gpt-6-astra', effort: 'high' },
   },
+  // Gemini slugs carry their effort in the name (see `agy models`); the router never picks Antigravity itself.
+  antigravity: {
+    light: { model: 'gemini-3.8-flash-low' },
+    standard: { model: 'gemini-3.8-flash-medium' },
+    heavy: { model: 'gemini-3.1-pro-high' },
+  },
 };
 
 const TIERS: Tier[] = ['light', 'standard', 'heavy'];

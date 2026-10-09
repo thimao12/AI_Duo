@@ -3,8 +3,8 @@ import { agentEnv, authStatus } from './billing.ts';
 import { resolveBin, type ResolvedBin } from './bins.ts';
 import type { AgentCheck, AgentName } from './types.ts';
 
-const ENV: Record<AgentName, string> = { claude: 'CLAUDE_BIN', codex: 'CODEX_BIN' };
-const label = (agent: AgentName) => (agent === 'claude' ? 'Claude' : 'Codex');
+const ENV: Record<AgentName, string> = { claude: 'CLAUDE_BIN', codex: 'CODEX_BIN', antigravity: 'AGY_BIN' };
+const label = (agent: AgentName) => (agent === 'claude' ? 'Claude' : agent === 'codex' ? 'Codex' : 'Antigravity');
 
 /** `<cli> --version`, or the reason it could not run. */
 export function binVersion(bin: ResolvedBin): Promise<{ version: string | null; error?: string }> {

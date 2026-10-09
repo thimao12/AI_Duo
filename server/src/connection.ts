@@ -3,7 +3,7 @@ import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { findExecutable } from '../../shared/exe.ts';
-import { agentEnv } from './agents/billing.ts';
+import { agentEnv, antigravityAuthStatus } from './agents/billing.ts';
 import { resolveBin, type ResolvedBin } from './agents/bins.ts';
 import { binVersion } from './agents/check.ts';
 import type { ConnectionStatus } from './types.ts';
@@ -11,8 +11,9 @@ import type { ConnectionStatus } from './types.ts';
 export type ConnectionAgent = ConnectionStatus['agent'];
 
 const STATUS_TIMEOUT_MS = 8_000;
-const STATUS_ARGS: Record<ConnectionAgent, string[]> = { claude: ['auth', 'status', '--json'], codex: ['login', 'status'] };
-const LOGIN_ARGS: Record<ConnectionAgent, string[]> = { claude: ['auth', 'login'], codex: ['login'] };
+// agy has no status command (running it bare opens its interactive UI), so its login is read from its state folder instead.
+const STATUS_ARGS: Record<ConnectionAgent, string[]> = { claude: ['auth', 'status', '--json'], codex: ['login', 'status'], antigravity: [] };
+const LOGIN_ARGS: Record<ConnectionAgent, string[]> = { claude: ['auth', 'login'], codex: ['login'], antigravity: [] };
 
 /** Runs a fixed CLI command and returns everything it printed; a non-zero exit still returns the output. */
 export type StatusRunner = (bin: ResolvedBin, args: string[]) => Promise<string>;
@@ -63,7 +64,7 @@ export function parseCodexStatus(output: string): Login {
   return { loggedIn: true, method: short(match[1], 60), account: null };
 }
 
-const PARSERS: Record<ConnectionAgent, (output: string) => Login> = { claude: parseClaudeStatus, codex: parseCodexStatus };
+const PARSERS: Record<ConnectionAgent, (output: string) => Login> = { claude: parseClaudeStatus, codex: parseCodexStatus, antigravity: () => UNKNOWN };
 
 function locate(agent: ConnectionAgent, deps: ConnectionDeps): ResolvedBin | undefined {
   try {
@@ -74,14 +75,18 @@ function locate(agent: ConnectionAgent, deps: ConnectionDeps): ResolvedBin | und
   }
 }
 
+async function antigravityLogin(): Promise<Login> {
+  const status = await antigravityAuthStatus();
+  return status.state === 'ok' ? { loggedIn: true, method: 'Google', account: null } : UNKNOWN;
+}
+
 export async function getConnection(agent: ConnectionAgent, deps: ConnectionDeps = {}): Promise<ConnectionStatus> {
   const base: ConnectionStatus = { agent, installed: false, version: null, path: null, loggedIn: null, method: null, account: null, error: null };
   const bin = locate(agent, deps);
   if (!bin) return { ...base, error: 'CLI not found' };
   const { version } = await (deps.version ?? binVersion)(bin);
   if (!version) return { ...base, path: bin.resolvedFrom, error: 'CLI could not be run' };
-  const output = await (deps.run ?? runStatus)(bin, STATUS_ARGS[agent]);
-  const login = PARSERS[agent](output);
+  const login = agent === 'antigravity' ? await antigravityLogin() : PARSERS[agent](await (deps.run ?? runStatus)(bin, STATUS_ARGS[agent]));
   return { ...base, installed: true, version: short(version, 80), path: bin.resolvedFrom, ...login, error: login.loggedIn === null ? 'Login status unknown' : null };
 }
 

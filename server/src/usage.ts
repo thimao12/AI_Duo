@@ -148,6 +148,7 @@ export async function getUsage(runs?: RunSummary[], now = Date.now(), opts: Usag
     codexUsage(now),
   ]);
   const claude = claudeUsage(runs, now);
-  if (opts.live === false) return { claude, codex };
-  return { claude: withLive(claude, claudeLive), codex: withLive(codex, codexLive) };
+  const antigravity: AgentUsage = { source: 'unavailable' };
+  if (opts.live === false) return { claude, codex, antigravity };
+  return { claude: withLive(claude, claudeLive), codex: withLive(codex, codexLive), antigravity };
 }

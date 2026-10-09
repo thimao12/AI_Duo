@@ -34,7 +34,7 @@ export async function runDebate(ctx: RunContext) {
       }),
     ),
   );
-  let latest: Record<AgentName, string> = { claude: proposals[0].text, codex: proposals[1].text };
+  let latest: Record<AgentName, string> = { claude: proposals[0].text, codex: proposals[1].text, antigravity: '' };
   transcript.push(`### Round 0 – Claude's proposal\n${latest.claude}`, `### Round 0 – Codex's proposal\n${latest.codex}`);
 
   let rounds = 0;
@@ -55,7 +55,7 @@ export async function runDebate(ctx: RunContext) {
         }),
       ),
     );
-    latest = { claude: results[0].text, codex: results[1].text };
+    latest = { claude: results[0].text, codex: results[1].text, antigravity: '' };
     transcript.push(`### Round ${r} – Claude's review & revision\n${latest.claude}`, `### Round ${r} – Codex's review & revision\n${latest.codex}`);
 
     if (results.every((x) => x.verdict === 'AGREE')) {

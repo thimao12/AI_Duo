@@ -51,7 +51,7 @@ export async function loadRun(id: string, elsewhere?: Map<string, unknown>): Pro
 /** The agent a run is mostly about; records saved before roles existed derive it from coder/judge. */
 export function runAgent(config: Run['config']): AgentName {
   const agent = config.mode === 'debate' ? config.judge : config.coder;
-  return agent === 'codex' ? 'codex' : 'claude';
+  return agent === 'codex' || agent === 'antigravity' ? agent : 'claude';
 }
 
 export function summarizeRun(run: Run): RunSummary {

@@ -4,7 +4,7 @@ import { RunService, ServiceError } from '../service.ts';
 import { getConnection, openLogin, type ConnectionDeps } from '../connection.ts';
 import { getUsage, type UsageOptions } from '../usage.ts';
 
-const AGENTS = ['claude', 'codex'] as const;
+const AGENTS = ['claude', 'codex', 'antigravity'] as const;
 type TestableAgent = (typeof AGENTS)[number];
 const isAgent = (name: string): name is TestableAgent => (AGENTS as readonly string[]).includes(name);
 
@@ -22,7 +22,7 @@ export function usageRoutes(service: RunService, hooks: { connection?: Connectio
   // Binary, version and login check of one agent; never calls a model.
   app.post('/api/agents/:name/test', async (c) => {
     const name = c.req.param('name');
-    if (!isAgent(name)) return c.json({ error: 'agent must be claude or codex' }, 400);
+    if (!isAgent(name)) return c.json({ error: 'agent must be claude, codex or antigravity' }, 400);
     try {
       const report = await service.preflight([name], paths.defaultCwd);
       const [versions, check] = [await service.agentVersions(), report.checks[0]];
@@ -36,7 +36,7 @@ export function usageRoutes(service: RunService, hooks: { connection?: Connectio
   // Installed / logged-in state of one CLI; only fixed status commands run.
   app.get('/api/agents/:name/connection', async (c) => {
     const name = c.req.param('name');
-    if (!isAgent(name)) return c.json({ error: 'agent must be claude or codex' }, 400);
+    if (!isAgent(name)) return c.json({ error: 'agent must be claude, codex or antigravity' }, 400);
     try {
       return c.json(await getConnection(name, hooks.connection));
     } catch {
@@ -47,7 +47,7 @@ export function usageRoutes(service: RunService, hooks: { connection?: Connectio
   // Opens a terminal running the fixed login command; no request data is used besides the agent name.
   app.post('/api/agents/:name/login', async (c) => {
     const name = c.req.param('name');
-    if (!isAgent(name)) return c.json({ error: 'agent must be claude or codex' }, 400);
+    if (!isAgent(name)) return c.json({ error: 'agent must be claude, codex or antigravity' }, 400);
     const outcome = await openLogin(name, hooks.connection).catch(() => 'failed' as const);
     if (outcome === 'notInstalled') return c.json({ error: 'CLI is not installed' }, 409);
     if (outcome === 'failed') return c.json({ error: 'Could not open a terminal' }, 500);

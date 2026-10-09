@@ -83,7 +83,7 @@ app.route('/', fileRoutes());
 app.route('/', diagnosticsRoutes());
 
 app.get('/api/agents', async (c) => {
-  const { claude, codex } = await service.agentVersions();
+  const { claude, codex, antigravity } = await service.agentVersions();
   return c.json({
     claude: claude.version,
     codex: codex.version,
@@ -91,6 +91,9 @@ app.get('/api/agents', async (c) => {
     codexPath: codex.path,
     claudeError: claude.error,
     codexError: codex.error,
+    antigravity: antigravity.version,
+    antigravityPath: antigravity.path,
+    antigravityError: antigravity.error,
     defaultCwd: paths.defaultCwd,
   });
 });

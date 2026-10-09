@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit",
     "test:agents": "tsx src/smoke.ts",
     "test:agent-parsers": "tsx src/agent-parser-smoke.ts",
+    "test:antigravity": "tsx src/antigravity-smoke.ts",
     "test:desktop-links": "tsx src/desktop-link-smoke.ts",
     "test:security": "tsx src/security-smoke.ts",
     "test:billing": "tsx src/billing-smoke.ts",

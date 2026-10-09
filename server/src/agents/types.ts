@@ -1,4 +1,4 @@
-export type AgentName = 'claude' | 'codex';
+export type AgentName = 'claude' | 'codex' | 'antigravity';
 
 /**
  * thinker  – read-only: analyse / propose / critique / synthesise
