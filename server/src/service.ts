@@ -62,6 +62,8 @@ export interface RunRequest {
   pipelineId?: string;
   testCommand?: string;
   turnTimeoutMin?: number;
+  /** Token budget for the whole run (uncached input + output); omit for no limit. */
+  tokenBudget?: number;
   /** Run although a CLI cannot report its login; a confirmed bad login still stops. */
   skipAuthCheck?: boolean;
 }
@@ -208,6 +210,7 @@ function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
     reviewer: isAgent(body.reviewer) ? body.reviewer : other(coder),
     testCommand: String(body.testCommand ?? '').trim() || cli.testCommand || undefined,
     turnTimeoutMin: Math.min(Math.max(Number(body.turnTimeoutMin) || cli.turnTimeoutMin || 30, 1), MAX_TURN_TIMEOUT_MIN),
+    ...(Number(body.tokenBudget) > 0 && { tokenBudget: Math.floor(Number(body.tokenBudget)) }),
     models: {
       claude: String(body.models?.claude ?? '').trim() || undefined,
       codex: String(body.models?.codex ?? '').trim() || undefined,

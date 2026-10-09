@@ -201,8 +201,24 @@ export class RunContext {
     return promise;
   }
 
+  private budgetWarned = false;
+
+  /** Throws once the run's token budget is spent; warns once at 80%. */
+  private checkBudget() {
+    const budget = this.run.config.tokenBudget;
+    const u = this.run.usage;
+    if (!budget || !u) return;
+    const used = Math.max(u.inputTokens - u.cachedInputTokens, 0) + u.outputTokens;
+    if (used >= budget) throw new Error(`Đã dùng ${used.toLocaleString('en-US')} token, vượt ngân sách ${budget.toLocaleString('en-US')}; dừng để tiết kiệm. Tăng tokenBudget nếu muốn chạy tiếp.`);
+    if (!this.budgetWarned && used >= budget * 0.8) {
+      this.budgetWarned = true;
+      this.note('Sắp hết ngân sách token', `Đã dùng ${used.toLocaleString('en-US')}/${budget.toLocaleString('en-US')} token (không tính cache).`);
+    }
+  }
+
   private async runTurn(t: TurnOptions): Promise<TurnResult> {
     if (this.abort.signal.aborted) throw new AbortedError();
+    this.checkBudget();
     const { model, effort } = t.model === undefined && t.effort === undefined ? this.modelFor(t.agent, t.modelRole ?? t.role) : { model: t.model, effort: t.effort };
     const m = this.startMessage(t.agent, t.phase, t.round, t.title, [model, effort].filter(Boolean).join(' · ') || undefined);
     const key = t.sessionKey ? `${t.agent}:${t.sessionKey}` : undefined;

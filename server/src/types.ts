@@ -44,6 +44,8 @@ export interface RunConfig {
   testCommand?: string;
   /** Max minutes a single agent turn may take before it is killed. */
   turnTimeoutMin: number;
+  /** Stop starting new turns once the run has used this many uncached input + output tokens. */
+  tokenBudget?: number;
   /** Manual per-agent model; overrides the router when set. */
   models?: Partial<Record<AgentName, string>>;
   /** Manual reasoning effort per agent (low, medium, high, …); overrides the router's. */
