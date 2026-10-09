@@ -43,7 +43,7 @@ export function roleFields(role: RoleDef, catalog: ModelCatalog): FormField[] {
     { id: 'icon', label: 'Icon', kind: 'text', value: role.icon },
     { id: 'name', label: 'Tên', kind: 'text', value: role.name },
     { id: 'description', label: 'Mô tả', kind: 'text', value: role.description },
-    { id: 'agent', label: 'Agent', kind: 'cycle', value: role.agent, options: ['claude', 'codex'], optionLabels: ['Claude', 'Codex'] },
+    { id: 'agent', label: 'Agent', kind: 'cycle', value: role.agent, options: ['claude', 'codex', 'antigravity'], optionLabels: ['Claude', 'Codex', 'Antigravity'] },
     {
       id: 'model',
       label: 'Model',

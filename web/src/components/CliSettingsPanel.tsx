@@ -14,7 +14,7 @@ const SOURCE_LABEL: Record<CliDetect['source'], string> = {
   none: 'không tìm thấy',
 };
 
-const AGENTS: AgentName[] = ['claude', 'codex'];
+const AGENTS: AgentName[] = ['claude', 'codex', 'antigravity'];
 
 /* ---- Small pieces ---------------------------------------------------------- */
 
@@ -210,7 +210,7 @@ export default function CliSettingsPanel({ draft, baseline, result, dirty, error
     <>
       <div className="space-y-4 p-4">
         <p className="text-[12px] text-faint">
-          Biến môi trường <code>CLAUDE_BIN</code> và <code>CODEX_BIN</code>, nếu được đặt, sẽ ghi đè đường dẫn CLI cấu hình ở đây.
+          Biến môi trường <code>CLAUDE_BIN</code>, <code>CODEX_BIN</code> và <code>AGY_BIN</code>, nếu được đặt, sẽ ghi đè đường dẫn CLI cấu hình ở đây.
         </p>
         {AGENTS.map((name) => (
           <CliCard

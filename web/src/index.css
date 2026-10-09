@@ -69,6 +69,8 @@
   --claude-fg: #b0502c;
   --codex: #10a37f;
   --codex-fg: #0a7a5e;
+  --agy: #4285f4;
+  --agy-fg: #1f5fd1;
   --add-bg: rgb(23 128 61 / 0.1);
   --add-fg: #125f2e;
   --del-bg: rgb(200 50 43 / 0.09);
@@ -98,6 +100,7 @@
     --info: #6a9cf5;
     --claude-fg: #e8916f;
     --codex-fg: #3fcca0;
+    --agy-fg: #8ab4f8;
     --add-bg: rgb(76 203 123 / 0.12);
     --add-fg: #8fe0ab;
     --del-bg: rgb(242 115 107 / 0.12);
@@ -127,6 +130,7 @@
   --info: #6a9cf5;
   --claude-fg: #e8916f;
   --codex-fg: #3fcca0;
+  --agy-fg: #8ab4f8;
   --add-bg: rgb(76 203 123 / 0.12);
   --add-fg: #8fe0ab;
   --del-bg: rgb(242 115 107 / 0.12);
@@ -159,6 +163,8 @@
   --color-claude-fg: var(--claude-fg);
   --color-codex: var(--codex);
   --color-codex-fg: var(--codex-fg);
+  --color-agy: var(--agy);
+  --color-agy-fg: var(--agy-fg);
   --color-add-bg: var(--add-bg);
   --color-add-fg: var(--add-fg);
   --color-del-bg: var(--del-bg);

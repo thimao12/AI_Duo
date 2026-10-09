@@ -5,10 +5,10 @@ export type Tone = 'cyan' | 'green' | 'yellow' | 'red' | 'magenta' | 'blue' | 'g
 /** A colour, or undefined when NO_COLOR asks for plain text. Read at render time. */
 export const tone = (name: Tone): Tone | undefined => (process.env.NO_COLOR ? undefined : name);
 
-const SPEAKER_TONE: Record<Speaker, Tone> = { claude: 'yellow', codex: 'green', user: 'magenta', system: 'cyan' };
+const SPEAKER_TONE: Record<Speaker, Tone> = { claude: 'yellow', codex: 'green', antigravity: 'blue', user: 'magenta', system: 'cyan' };
 export const speakerTone = (speaker: Speaker): Tone | undefined => tone(SPEAKER_TONE[speaker]);
 
-export const SPEAKER_NAME: Record<Speaker, string> = { claude: 'Claude', codex: 'Codex', system: 'AI Duo', user: 'You' };
+export const SPEAKER_NAME: Record<Speaker, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity', system: 'AI Duo', user: 'You' };
 
 export const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 

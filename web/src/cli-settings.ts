@@ -15,12 +15,13 @@ export interface CliDraft {
 export interface SettingsDraft {
   claude: CliDraft;
   codex: CliDraft;
+  antigravity: CliDraft;
   timeout: string;
   testCommand: string;
 }
 
 export const EMPTY_CLI_DRAFT: CliDraft = { binPath: '', args: '', env: '', model: '', effort: '' };
-export const EMPTY_DRAFT: SettingsDraft = { claude: EMPTY_CLI_DRAFT, codex: EMPTY_CLI_DRAFT, timeout: '', testCommand: '' };
+export const EMPTY_DRAFT: SettingsDraft = { claude: EMPTY_CLI_DRAFT, codex: EMPTY_CLI_DRAFT, antigravity: EMPTY_CLI_DRAFT, timeout: '', testCommand: '' };
 
 const ENV_KEY = /^[A-Za-z_]\w*$/;
 
@@ -80,12 +81,13 @@ export interface DraftResult {
 export function settingsFromDraft(draft: SettingsDraft): DraftResult {
   const claude = configFromDraft(draft.claude);
   const codex = configFromDraft(draft.codex);
+  const antigravity = configFromDraft(draft.antigravity);
   const timeout = parseTimeout(draft.timeout);
-  const cli: CliSettings = { claude: claude.config, codex: codex.config };
+  const cli: CliSettings = { claude: claude.config, codex: codex.config, antigravity: antigravity.config };
   if (timeout.value !== undefined) cli.turnTimeoutMin = timeout.value;
   if (draft.testCommand.trim()) cli.testCommand = draft.testCommand.trim();
-  const valid = !claude.envErrors.length && !codex.envErrors.length && !timeout.error;
-  return { cli, envErrors: { claude: claude.envErrors, codex: codex.envErrors }, timeoutError: timeout.error, valid };
+  const valid = !claude.envErrors.length && !codex.envErrors.length && !antigravity.envErrors.length && !timeout.error;
+  return { cli, envErrors: { claude: claude.envErrors, codex: codex.envErrors, antigravity: antigravity.envErrors }, timeoutError: timeout.error, valid };
 }
 
 function draftFromConfig(c: CliConfig | undefined): CliDraft {
@@ -102,6 +104,7 @@ export function draftFromSettings(cli: CliSettings): SettingsDraft {
   return {
     claude: draftFromConfig(cli.claude),
     codex: draftFromConfig(cli.codex),
+    antigravity: draftFromConfig(cli.antigravity),
     timeout: cli.turnTimeoutMin === undefined ? '' : String(cli.turnTimeoutMin),
     testCommand: cli.testCommand ?? '',
   };

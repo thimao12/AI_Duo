@@ -22,7 +22,7 @@ function phaseTitle(m: Message, run: Run): string {
 
 /** "Review & test · vòng 2/3", from the latest agent turn. */
 function progressOf(run: Run): string | null {
-  const last = [...run.messages].reverse().find((m) => m.agent === 'claude' || m.agent === 'codex');
+  const last = [...run.messages].reverse().find((m) => m.agent !== 'system' && m.agent !== 'user');
   return last ? phaseTitle(last, run) : null;
 }
 

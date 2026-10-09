@@ -5,7 +5,7 @@ import ConnectionGuide from './ConnectionGuide.tsx';
 import { AGENT_LABEL, Spinner } from './ui.tsx';
 
 const REFRESH_MS = 60_000;
-const AGENTS: AgentName[] = ['claude', 'codex'];
+const AGENTS: AgentName[] = ['claude', 'codex', 'antigravity'];
 
 /* ---- Formatting ------------------------------------------------------------ */
 

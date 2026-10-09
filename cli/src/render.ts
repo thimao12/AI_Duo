@@ -9,18 +9,19 @@ export interface Style {
   yellow(s: string): string;
   cyan(s: string): string;
   magenta(s: string): string;
+  blue(s: string): string;
 }
 
 /** Colours only when writing to a terminal and NO_COLOR is unset. */
 export function makeStyle(enabled: boolean): Style {
   const wrap = (open: number, close: number) => (s: string) => (enabled ? `\x1b[${open}m${s}\x1b[${close}m` : s);
-  return { bold: wrap(1, 22), dim: wrap(2, 22), red: wrap(31, 39), green: wrap(32, 39), yellow: wrap(33, 39), cyan: wrap(36, 39), magenta: wrap(35, 39) };
+  return { bold: wrap(1, 22), dim: wrap(2, 22), red: wrap(31, 39), green: wrap(32, 39), yellow: wrap(33, 39), cyan: wrap(36, 39), magenta: wrap(35, 39), blue: wrap(34, 39) };
 }
 
-const NAMES: Record<Speaker, string> = { claude: 'Claude', codex: 'Codex', system: 'AI Duo', user: 'Bạn' };
+const NAMES: Record<Speaker, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity', system: 'AI Duo', user: 'Bạn' };
 
 function tint(style: Style, agent: Speaker, text: string) {
-  const paint: Record<Speaker, (s: string) => string> = { claude: style.yellow, codex: style.green, user: style.magenta, system: style.cyan };
+  const paint: Record<Speaker, (s: string) => string> = { claude: style.yellow, codex: style.green, antigravity: style.blue, user: style.magenta, system: style.cyan };
   return paint[agent](text);
 }
 
@@ -166,7 +167,7 @@ function messageHeading(style: Style, m: Message) {
   let mark = '';
   if (m.status === 'error') mark = style.red(' ✗');
   else if (m.verdict) mark = ` · ${m.verdict}`;
-  const title = m.agent === 'claude' || m.agent === 'codex' ? m.title : `${NAMES[m.agent]} · ${m.title}`;
+  const title = m.agent !== 'system' && m.agent !== 'user' ? m.title : `${NAMES[m.agent]} · ${m.title}`;
   return `${style.bold('▸')} ${style.bold(tint(style, m.agent, title))}${model}${mark}`;
 }
 

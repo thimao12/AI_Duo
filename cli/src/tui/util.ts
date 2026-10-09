@@ -76,7 +76,7 @@ export function safeCatalog(): ModelCatalog {
   try {
     return listModels();
   } catch {
-    return { claude: { models: [], default: {} }, codex: { models: [], default: {} } };
+    return { claude: { models: [], default: {} }, codex: { models: [], default: {} }, antigravity: { models: [], default: {} } };
   }
 }
 

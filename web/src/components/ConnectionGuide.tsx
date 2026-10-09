@@ -7,11 +7,13 @@ const RECHECK_AFTER_LOGIN_MS = 5000;
 const INSTALL_COMMAND: Record<AgentName, string> = {
   claude: 'npm i -g @anthropic-ai/claude-code',
   codex: 'npm i -g @openai/codex',
+  antigravity: 'Cài Antigravity CLI (agy) từ antigravity.google',
 };
 
 const LOGIN_COMMAND: Record<AgentName, string> = {
   claude: 'claude auth login',
   codex: 'codex login',
+  antigravity: 'agy',
 };
 
 const SMALL_BUTTON = 'inline-flex h-6 items-center gap-1 rounded-md border border-line px-2 text-[11.5px] text-muted transition-colors hover:bg-surface hover:text-fg disabled:opacity-60';

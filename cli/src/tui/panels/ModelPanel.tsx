@@ -6,7 +6,7 @@ import { effortsFor, modelIds, safeCatalog, withCurrent } from '../util.ts';
 import Form, { type FormField } from '../widgets/Form.tsx';
 import Panel from '../widgets/Panel.tsx';
 
-const AGENT_LABEL: Record<AgentName, string> = { claude: 'Claude', codex: 'Codex' };
+const AGENT_LABEL: Record<AgentName, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
 const PERMISSION_LABEL = { read: 'Chỉ đọc', edit: 'Sửa file' } as const;
 
 /** Text values of the form: '' means "not overridden". */

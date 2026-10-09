@@ -36,10 +36,13 @@ export interface RunSummary {
 export interface AgentStatus {
   claude: string | null;
   codex: string | null;
+  antigravity: string | null;
   claudePath: string | null;
   codexPath: string | null;
+  antigravityPath: string | null;
   claudeError: string | null;
   codexError: string | null;
+  antigravityError: string | null;
   defaultCwd: string;
 }
 

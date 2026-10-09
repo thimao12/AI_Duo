@@ -8,6 +8,7 @@ import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { stripVTControlCharacters } from 'node:util';
+import type { AgentName } from '../../server/src/agents/types.ts';
 import { createElement as h, useState, type ReactElement } from 'react';
 import { render } from 'ink-testing-library';
 
@@ -308,6 +309,7 @@ try {
         weekly: { usedPercent: 2, resetsAt: soon, windowMinutes: 10_080 },
         resetCredits: { availableCount: 2, credits: [{ id: 'c1', title: 'Thẻ reset 1', status: 'available' }, { id: 'c2', title: 'Đã dùng', status: 'redeemed' }] },
       },
+      antigravity: { source: 'unavailable' },
     },
   };
   const forces: boolean[] = [];
@@ -328,17 +330,17 @@ try {
   usage.unmount();
 
   // ---- Connection: statuses, guide with exact commands, open login, recheck.
-  const status = (agent: 'claude' | 'codex', extra: Partial<ConnectionStatus>): ConnectionStatus => ({ agent, installed: true, version: '1.0.0', path: null, loggedIn: true, method: null, account: null, error: null, ...extra });
+  const status = (agent: AgentName, extra: Partial<ConnectionStatus>): ConnectionStatus => ({ agent, installed: true, version: '1.0.0', path: null, loggedIn: true, method: null, account: null, error: null, ...extra });
   let checks = 0;
   const opened: string[] = [];
   const connection = mount(h(ConnectionPanel, {
     cwd: workDir,
     onClose: () => undefined,
-    loader: (agent: 'claude' | 'codex') => {
+    loader: (agent: AgentName) => {
       checks += 1;
       return Promise.resolve(agent === 'claude' ? status('claude', { installed: false, version: null, loggedIn: null }) : status('codex', { method: 'ChatGPT', account: 'a@b.c' }));
     },
-    opener: (agent: 'claude' | 'codex') => {
+    opener: (agent: AgentName) => {
       opened.push(agent);
       return Promise.resolve('opened' as const);
     },
@@ -356,7 +358,7 @@ try {
   const loggedOut = mount(h(ConnectionPanel, {
     cwd: workDir,
     onClose: () => undefined,
-    loader: (agent: 'claude' | 'codex') => Promise.resolve(status(agent, { loggedIn: false })),
+    loader: (agent: AgentName) => Promise.resolve(status(agent, { loggedIn: false })),
     opener: () => Promise.resolve('failed' as const),
   }));
   frame = await seen(loggedOut, 'Đã cài, chưa đăng nhập');

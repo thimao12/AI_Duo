@@ -12,7 +12,7 @@ import Panel from '../widgets/Panel.tsx';
 
 const REFRESH_MS = 60_000;
 const AGENTS: readonly AgentName[] = ['claude', 'codex'];
-const LABEL: Record<AgentName, string> = { claude: 'Claude', codex: 'Codex' };
+const LABEL: Record<AgentName, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
 
 export interface UsageData {
   report: UsageReport;

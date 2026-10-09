@@ -47,10 +47,10 @@ export function normalizeForm(value: unknown): ComposerForm {
     coder: 'codex',
     testCommand: text(saved.testCommand),
     turnTimeoutMin: typeof saved.turnTimeoutMin === 'number' && Number.isFinite(saved.turnTimeoutMin) && saved.turnTimeoutMin >= 1 && saved.turnTimeoutMin <= 180 ? saved.turnTimeoutMin : 30,
-    models: { claude: model(models.claude), codex: model(models.codex) },
-    efforts: { claude: effort(efforts.claude), codex: effort(efforts.codex) },
+    models: { claude: model(models.claude), codex: model(models.codex), antigravity: model(models.antigravity) },
+    efforts: { claude: effort(efforts.claude), codex: effort(efforts.codex), antigravity: effort(efforts.antigravity) },
     roleId: id(saved.roleId),
-    agent: saved.agent === 'claude' || saved.agent === 'codex' ? saved.agent : '',
+    agent: saved.agent === 'claude' || saved.agent === 'codex' || saved.agent === 'antigravity' ? saved.agent : '',
     permission: saved.permission === 'read' || saved.permission === 'edit' ? saved.permission : '',
     pipelineId: id(saved.pipelineId),
   };

@@ -9,16 +9,18 @@ import Panel from '../widgets/Panel.tsx';
 
 const RECHECK_AFTER_LOGIN_MS = 5000;
 const AGENTS: readonly AgentName[] = ['claude', 'codex'];
-const LABEL: Record<AgentName, string> = { claude: 'Claude', codex: 'Codex' };
+const LABEL: Record<AgentName, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
 
 export const INSTALL_COMMAND: Record<AgentName, string> = {
   claude: 'npm i -g @anthropic-ai/claude-code',
   codex: 'npm i -g @openai/codex',
+  antigravity: 'cài Antigravity CLI (agy) từ antigravity.google',
 };
 
 export const LOGIN_COMMAND: Record<AgentName, string> = {
   claude: 'claude auth login',
   codex: 'codex login',
+  antigravity: 'agy',
 };
 
 const OUTCOME_TEXT: Record<LoginOutcome, string> = {

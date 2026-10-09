@@ -15,9 +15,9 @@ interface AgentToggleProps {
   label?: string;
 }
 
-/** Segmented Claude / Codex switch (optionally with Auto). */
+/** Segmented agent switch (optionally with Auto). */
 export function AgentToggle({ value, onChange, allowAuto = false, label = 'Agent' }: Readonly<AgentToggleProps>) {
-  const options: (AgentName | '')[] = allowAuto ? ['', 'claude', 'codex'] : ['claude', 'codex'];
+  const options: (AgentName | '')[] = allowAuto ? ['', 'claude', 'codex', 'antigravity'] : ['claude', 'codex', 'antigravity'];
   return (
     <fieldset className="m-0 inline-flex min-w-0 items-center gap-0.5 rounded-lg border border-line p-0.5">
       <legend className="sr-only">{label}</legend>
