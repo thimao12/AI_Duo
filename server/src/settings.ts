@@ -44,7 +44,7 @@ const DEFAULT_ROLES: readonly RoleDef[] = [
   {
     id: 'review', name: 'Review', icon: '🔍', description: 'Đọc và đánh giá thay đổi, cho PASS/FAIL.',
     agent: 'codex', model: '', effort: '', permission: 'read', gradable: true,
-    template: `Bạn là người review mã, chỉ đọc, không sửa file.\n\nNhiệm vụ gốc:\n{{task}}\n\nKết quả cần review:\n{{prev}}\n\nKiểm tra tính đúng đắn, phạm vi và rủi ro. Liệt kê vấn đề cụ thể. ${GRADE_RULE}`,
+    template: `Bạn là người review mã, chỉ đọc, không sửa file.\n\nNhiệm vụ gốc:\n{{task}}\n\nKết quả cần review:\n{{prev}}\n\nThay đổi trong repo (diff):\n{{diff}}\n\nKết quả kiểm tra tĩnh (đã chạy sẵn, không cần chạy lại):\n{{checks}}\n\nChỉ đọc thêm file khi diff không đủ. Kiểm tra tính đúng đắn, phạm vi và rủi ro. Liệt kê vấn đề cụ thể. ${GRADE_RULE}`,
   },
   {
     id: 'code', name: 'Code', icon: '💻', description: 'Viết và sửa mã trong dự án.',
@@ -54,7 +54,7 @@ const DEFAULT_ROLES: readonly RoleDef[] = [
   {
     id: 'test', name: 'Test', icon: '🧪', description: 'Đánh giá kết quả có đạt yêu cầu không, cho PASS/FAIL.',
     agent: 'codex', model: '', effort: '', permission: 'read', gradable: true,
-    template: `Bạn là kiểm thử viên, chỉ đọc, không sửa file.\n\nNhiệm vụ gốc:\n{{task}}\n\nKết quả cần kiểm thử:\n{{prev}}\n\nĐối chiếu kết quả với yêu cầu, nêu các lỗi tìm thấy. ${GRADE_RULE}`,
+    template: `Bạn là kiểm thử viên, chỉ đọc, không sửa file.\n\nNhiệm vụ gốc:\n{{task}}\n\nKết quả cần kiểm thử:\n{{prev}}\n\nThay đổi trong repo (diff):\n{{diff}}\n\nĐối chiếu kết quả với yêu cầu, nêu các lỗi tìm thấy. ${GRADE_RULE}`,
   },
   {
     id: 'debug', name: 'Debug', icon: '🐞', description: 'Tìm nguyên nhân lỗi và sửa.',

@@ -115,11 +115,19 @@ try {
 
   // ---- The loop is bounded by maxLoops.
   calls.length = 0;
-  script = (_agent, o, n) => reply(o.prompt.includes('người review') ? 'No.\nVERDICT: FAIL' : `PLAN-${n}`);
+  script = (_agent, o, n) => reply(o.prompt.includes('người review') ? `No, problem ${n}.\nVERDICT: FAIL` : `PLAN-${n}`);
   const strict = await runToEnd({ mode: 'pipeline', pipelineId: 'strict', prompt: 'x', cwd: plain });
   assert.equal(strict.status, 'error');
   assert.match(strict.error ?? '', /1 vòng lặp/);
   assert.equal(calls.length, 4, 'plan, review, plan, review, then it gives up');
+
+  // ---- The same failure twice in a row means no progress: stop before maxLoops.
+  calls.length = 0;
+  script = (_agent, o, n) => reply(o.prompt.includes('người review') ? 'No.\nVERDICT: FAIL' : `PLAN-${n}`);
+  const stuck = await runToEnd({ mode: 'pipeline', pipelineId: 'plan-review', prompt: 'x', cwd: plain });
+  assert.equal(stuck.status, 'error');
+  assert.match(stuck.error ?? '', /không có tiến triển/);
+  assert.equal(calls.length, 4, 'plan, review, plan, review (same failure) then it stops');
 
   // ---- A failing step with no onFail stops the pipeline without an error; a missing grade counts as a fail.
   calls.length = 0;

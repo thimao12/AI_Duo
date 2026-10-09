@@ -1,6 +1,8 @@
 import type { AgentName } from '../agents/types.ts';
+import { runChecks } from '../checks.ts';
 import { diffSince, isGitRepo, snapshotTree } from '../git.ts';
 import { renderTemplate } from '../prompts/index.ts';
+import { formatDiff } from './pair.ts';
 import type { RunContext, TurnResult } from '../run.ts';
 import { DEFAULT_MAX_LOOPS, getCliSettingsSync, loadSettings } from '../settings.ts';
 import type { Permission, PipelineStep, RoleDef, RunConfig, Verdict } from '../types.ts';
@@ -8,6 +10,21 @@ import { lastVerdict } from '../../../shared/text.ts';
 
 /** Upper bound on steps executed in one pipeline run, whatever the loop settings say. */
 export const MAX_EXECUTIONS = 60;
+
+/** Longest earlier output handed to the next step; longer ones keep their start and end. */
+export const MAX_HANDOFF_CHARS = 12_000;
+
+/** Shortens a step's output for the next prompt, keeping the head (context) and the tail (conclusion, verdict). */
+export function clipHandoff(text: string, max = MAX_HANDOFF_CHARS): string {
+  if (text.length <= max) return text;
+  const head = Math.floor(max * 0.4);
+  const tail = max - head;
+  return `${text.slice(0, head)}
+
+[... bỏ ${text.length - max} ký tự ...]
+
+${text.slice(text.length - tail)}`;
+}
 
 /** PASS/FAIL from a gradable role, shown like the other verdicts. A missing grade counts as a fail. */
 export function parseGrade(text: string): Verdict | undefined {
@@ -35,6 +52,8 @@ interface RoleTurn {
   vars: Record<string, string>;
   round: number;
   title: string;
+  /** Keeps one CLI session per role, so a step re-entered after a failed grade resumes instead of resending the system prompt. */
+  sessionKey?: string;
 }
 
 function roleTurn(ctx: RunContext, t: RoleTurn): Promise<TurnResult> {
@@ -49,15 +68,16 @@ function roleTurn(ctx: RunContext, t: RoleTurn): Promise<TurnResult> {
     prompt: renderTemplate(t.role.template, t.vars),
     model,
     effort,
+    sessionKey: t.sessionKey,
     parseVerdict: t.role.gradable ? (text) => parseGrade(text) : undefined,
   });
 }
 
 /** Runs `work`, then records what it changed in the repository as the run's diff (only when edits are possible). */
-async function withDiff(ctx: RunContext, edits: boolean, work: () => Promise<void>): Promise<void> {
+async function withDiff(ctx: RunContext, edits: boolean, work: (base: string | undefined) => Promise<void>): Promise<void> {
   const { cwd } = ctx.run.config;
   const base = edits && (await isGitRepo(cwd)) ? await snapshotTree(cwd) : undefined;
-  await work();
+  await work(base);
   if (base) ctx.update({ diff: await diffSince(cwd, base) });
 }
 
@@ -88,7 +108,27 @@ interface Progress {
   /** Latest output per role id, usable as {{role-id}}. */
   outputs: Record<string, string>;
   failures: Map<number, number>;
+  /** Normalized text of each gradable step's last failing grade, to spot a loop that makes no progress. */
+  lastFail: Map<number, string>;
   executed: number;
+  /** Snapshot taken when the pipeline started: {{diff}} is everything changed since. */
+  base?: string;
+}
+
+/** The repository's changes so far, only computed for roles whose template asks for {{diff}}. */
+async function diffVar(ctx: RunContext, role: RoleDef, base: string | undefined): Promise<string> {
+  if (!base || !role.template.includes('{{diff}}')) return '';
+  return formatDiff(await diffSince(ctx.run.config.cwd, base));
+}
+
+/** Static-check results (tsc/biome/eslint/ruff), only run for roles whose template asks for {{checks}}. */
+async function checksVar(ctx: RunContext, role: RoleDef): Promise<string> {
+  if (!role.template.includes('{{checks}}')) return '';
+  return (await runChecks(ctx.run.config.cwd)).report;
+}
+
+function clipOutputs(outputs: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(Object.entries(outputs).map(([id, text]) => [id, clipHandoff(text)]));
 }
 
 interface PlannedStep {
@@ -104,6 +144,11 @@ function nextStep(ctx: RunContext, steps: readonly PlannedStep[], index: number,
     ctx.note('Pipeline dừng', `${label(role)} chấm không đạt và bước này không có nhánh quay lại.`);
     return undefined;
   }
+  const signature = result.text.toLowerCase().replace(/\W+/g, ' ').trim().slice(-1500);
+  if (progress.lastFail.get(index) === signature) {
+    throw new Error(`${label(role)} báo lại đúng lỗi cũ sau khi sửa (không có tiến triển); pipeline dừng để tiết kiệm token.`);
+  }
+  progress.lastFail.set(index, signature);
   const failures = (progress.failures.get(index) ?? 0) + 1;
   progress.failures.set(index, failures);
   const limit = step.maxLoops ?? DEFAULT_MAX_LOOPS;
@@ -121,8 +166,9 @@ async function runFrom(ctx: RunContext, steps: readonly PlannedStep[], index: nu
     role,
     agent: role.agent,
     permission: role.permission,
-    vars: { ...progress.outputs, task: progress.task, prev: progress.prev },
+    vars: { ...clipOutputs(progress.outputs), task: progress.task, prev: clipHandoff(progress.prev), diff: await diffVar(ctx, role, progress.base), checks: await checksVar(ctx, role) },
     round: progress.executed,
+    sessionKey: `role:${role.id}`,
     title: `${index + 1}/${steps.length} · ${label(role)}`,
   });
   progress.prev = result.text;
@@ -149,6 +195,9 @@ export function planPipeline(pipelineId: string | undefined, settings: { roles: 
 export async function runPipeline(ctx: RunContext): Promise<void> {
   const steps = planPipeline(ctx.run.config.pipelineId, await loadSettings());
   if (typeof steps === 'string') throw new Error(steps);
-  const progress: Progress = { task: ctx.prompt, prev: '', outputs: {}, failures: new Map(), executed: 0 };
-  await withDiff(ctx, steps.some((s) => s.role.permission === 'edit'), () => runFrom(ctx, steps, 0, progress));
+  const progress: Progress = { task: ctx.prompt, prev: '', outputs: {}, failures: new Map(), lastFail: new Map(), executed: 0 };
+  await withDiff(ctx, steps.some((s) => s.role.permission === 'edit'), (base) => {
+    progress.base = base;
+    return runFrom(ctx, steps, 0, progress);
+  });
 }
