@@ -79,7 +79,7 @@ try {
   assert.equal(checked.codex.standard.model, 'gpt-6-sol');
   assert.equal(checked.codex.light.model, undefined);
   assert.equal(checked.codex.light.effort, 'low');
-  assert.equal(loadCatalog({}).codex.heavy.model, 'gpt-6-astra', 'no cache: trust the catalog');
+  assert.equal(loadCatalog({}, null).codex.heavy.model, 'gpt-6-astra', 'no cache: trust the catalog');
 
   // Haiku reply parsing.
   assert.deepEqual(parseClassification('ok\n```json\n{"taskType":"design","complexity":"heavy"}\n```'), { taskType: 'design', complexity: 'heavy' });
@@ -119,6 +119,50 @@ try {
   config.models = { claude: 'sonnet' };
   assert.deepEqual(ctx.modelFor('claude', 'coder'), { model: 'sonnet' });
   await ctx.finish('done');
+
+  // Availability: a CLI that is missing, logged out or nearly out of quota is avoided.
+  const availabilityModule = await import('./router/availability.ts');
+  const { evaluateAvailability, avoidedReasons, QUOTA_LIMIT_PERCENT } = availabilityModule;
+  const ok = { agent: 'codex' as const, path: 'x', version: '1', auth: 'ok' as const };
+  assert.deepEqual(evaluateAvailability('codex', ok, undefined), { usable: true });
+  assert.equal(evaluateAvailability('codex', { ...ok, error: 'not found' }, undefined).usable, false);
+  assert.match(evaluateAvailability('codex', { ...ok, auth: 'failed' }, undefined).reason ?? '', /chưa đăng nhập/);
+  assert.equal(evaluateAvailability('antigravity', { ...ok, agent: 'antigravity', auth: 'unknown' }, { source: 'unavailable' }).usable, true, 'an unreadable login does not block');
+  const win = (usedPercent: number, extra = {}) => ({ usedPercent, windowMinutes: 300, ...extra });
+  assert.equal(QUOTA_LIMIT_PERCENT, 90);
+  assert.equal(evaluateAvailability('codex', ok, { source: 'live', fiveHour: win(89), weekly: win(10) }).usable, true);
+  assert.match(evaluateAvailability('codex', ok, { source: 'live', fiveHour: win(40), weekly: win(93) }).reason ?? '', /93% hạn mức tuần/);
+  assert.equal(evaluateAvailability('codex', ok, { source: 'live', fiveHour: win(99, { stale: true }) }).usable, true, 'a window that already reset does not count');
+
+  const only = (...unusable: ('claude' | 'codex' | 'antigravity')[]) => Object.fromEntries(unusable.map((n) => [n, { usable: false, reason: `${n} nope` }]));
+  const coderOf = (d: ReturnType<typeof decide>) => [d.coder, d.reviewer];
+  assert.deepEqual(coderOf(decide('edit', 'standard', cat, 'code')), ['codex', 'claude'], 'nothing unusable: as before');
+  assert.deepEqual(coderOf(decide('edit', 'standard', cat, 'code', { availability: only('codex') })), ['claude', 'antigravity'], 'Codex out: Claude writes, Antigravity reviews');
+  assert.deepEqual(coderOf(decide('refactor', 'heavy', cat, 'code', { availability: only('codex') })), ['claude', 'antigravity']);
+  assert.deepEqual(coderOf(decide('edit', 'standard', cat, 'code', { availability: only('claude') })), ['codex', 'antigravity'], 'Claude out: Codex writes, Antigravity reviews');
+  assert.deepEqual(coderOf(decide('edit', 'standard', cat, 'code', { availability: only('claude', 'antigravity') })), ['codex', 'codex'], 'one usable CLI reviews itself');
+  assert.deepEqual(coderOf(decide('edit', 'standard', cat, 'code', { availability: only('claude', 'codex') })), ['antigravity', 'antigravity'], 'only Antigravity left');
+  assert.deepEqual(coderOf(decide('edit', 'standard', cat, 'code', { availability: only('claude', 'codex', 'antigravity') })), ['codex', 'claude'], 'nothing usable: plain order, preflight reports it');
+  assert.deepEqual(coderOf(decide('edit', 'standard', cat, 'code', { availability: only('codex'), images: true })), ['claude', 'claude'], 'images exclude Antigravity');
+  const agyReview = decide('edit', 'standard', cat, 'code', { availability: only('codex') });
+  assert.equal(agyReview.models.antigravity?.reviewer?.model, cat.antigravity.light.model, 'the reviewer runs one tier below');
+  const planFallback = decide('design', 'standard', cat, 'plan', { availability: only('claude') });
+  assert.deepEqual(coderOf(planFallback), ['codex', 'antigravity']);
+  assert.ok(planFallback.models.codex?.thinker && planFallback.models.antigravity?.thinker);
+
+  const fallback = await autoRoute('Sửa lỗi crash khi upload file rỗng, bị exception ở uploader.ts', { classify: false, catalog: cat, availability: only('codex') });
+  assert.equal(fallback.coder, 'claude');
+  assert.equal(fallback.reviewer, 'antigravity');
+  assert.match(fallback.route.reason, /bỏ qua: codex nope/);
+  assert.deepEqual(avoidedReasons(only('codex', 'claude')), ['codex nope', 'claude nope']);
+  assert.deepEqual(avoidedReasons(undefined), []);
+
+  // The catalog covers every agent; an Antigravity model the CLI does not list falls back to the built-in tier entry.
+  const overridePath = path.join(dataDir, 'catalog.json');
+  await (await import('node:fs/promises')).writeFile(overridePath, JSON.stringify({ antigravity: { heavy: { model: 'gemini-9-nope' }, light: { model: 'gemini-3.7-flash-low' } } }));
+  const custom = loadCatalog({ AI_DUO_ROUTER_CATALOG: overridePath }, null);
+  assert.equal(custom.antigravity.heavy.model, DEFAULT_CATALOG.antigravity.heavy.model);
+  assert.equal(custom.antigravity.light.model, 'gemini-3.7-flash-low');
 
   console.log('router smoke: ok');
 } finally {

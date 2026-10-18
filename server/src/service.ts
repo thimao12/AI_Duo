@@ -16,11 +16,16 @@ import { paths } from './paths.ts';
 import { isDataId, writeRunImages } from './data-path.ts';
 import { authorizeDirectory, projectDirectories } from './project-directories.ts';
 import { classifyWithHaiku, type Classifier } from './router/classify.ts';
+import { evaluateAvailability, type Availability } from './router/availability.ts';
 import { autoRoute } from './router/index.ts';
 import { classifyByRules, CONFIDENT } from './router/rules.ts';
+import { getUsage } from './usage.ts';
 import { active, newRunId, RunContext } from './run.ts';
 import { deleteRun, listRuns, loadRun, saveRun, summarizeRun, type RunSummary } from './store.ts';
 import type { Mode, Permission, PlanDecisionAnswer, RoleDef, Run, RunConfig, RunEvent } from './types.ts';
+
+/** How long the instant route preview trusts what the last start found about the CLIs. */
+const AVAILABILITY_MAX_AGE_MS = 5 * 60_000;
 
 /**
  * Everything a front end can do with runs. The HTTP API (web and desktop) and the CLI are thin
@@ -391,6 +396,8 @@ export interface RunServiceOptions {
 
 export class RunService {
   private readonly handles = new Map<string, RunHandle>();
+  /** What the last start found about each CLI; the instant route preview reuses it for a few minutes. */
+  private lastAvailability?: { at: number; value: Availability };
   private readonly pendingFollowUps = new Set<string>();
 
   constructor(private readonly options: RunServiceOptions) { projectDirectories(paths.defaultCwd); }
@@ -464,7 +471,9 @@ export class RunService {
     const text = typeof prompt === 'string' ? prompt.trim() : '';
     if (!text) throw new ServiceError('invalid', 'prompt is required');
     const selected: Mode = mode === 'plan' ? 'plan' : 'code';
-    const { route, coder, reviewer, maxRounds } = await autoRoute(text, { classify: false, mode: selected });
+    // Only what an earlier start measured: a preview must stay instant, so it never checks the CLIs itself.
+    const recent = this.lastAvailability && Date.now() - this.lastAvailability.at < AVAILABILITY_MAX_AGE_MS ? this.lastAvailability.value : undefined;
+    const { route, coder, reviewer, maxRounds } = await autoRoute(text, { classify: false, mode: selected, availability: recent });
     return { mode: selected, coder, reviewer, maxRounds, route, askHaiku: classifyByRules(text).confidence < CONFIDENT };
   }
 
@@ -510,14 +519,25 @@ export class RunService {
    * it is asked only when both agents – the classifier and anything the route could pick – are
    * usable. Otherwise the rules decide, and the routed agents are checked afterwards as usual.
    */
-  private async routeChecked(prompt: string, mode: RoutedMode, cwd: string, skipAuthCheck: boolean | undefined, checks: Checks, signal?: AbortSignal) {
+  private async routeChecked(prompt: string, mode: RoutedMode, cwd: string, skipAuthCheck: boolean | undefined, checks: Checks, signal?: AbortSignal, images = false) {
+    const availability = await this.availabilityFor(cwd, skipAuthCheck, checks);
     let classify: Classifier | false = false;
     if (classifyByRules(prompt).confidence < CONFIDENT) {
       const all = await this.checked(['claude', 'codex'], cwd, skipAuthCheck, checks);
       // The classifier itself never runs on an unverified login (see assertPlanOnly), so require 'ok'.
       if (all.ok && checks.get('claude')?.auth === 'ok') classify = this.options.classify ?? classifyWithHaiku;
     }
-    return autoRoute(prompt, { mode, classify, signal });
+    return autoRoute(prompt, { mode, classify, signal, availability, images });
+  }
+
+  /** Which CLIs the router may use now: installed, logged in (when that can be read) and with quota left. */
+  private async availabilityFor(cwd: string, skipAuthCheck: boolean | undefined, checks: Checks): Promise<Availability> {
+    await this.checked([...AGENT_NAMES], cwd, skipAuthCheck, checks);
+    const usage = await getUsage(await this.list().catch(() => []), Date.now(), { live: false }).catch(() => undefined);
+    const value: Availability = {};
+    for (const name of AGENT_NAMES) value[name] = evaluateAvailability(name, checks.get(name), usage?.[name]);
+    this.lastAvailability = { at: Date.now(), value };
+    return value;
   }
 
   private async assertPreflight(names: AgentName[], cwd: string, skipAuthCheck: boolean | undefined, checks: Checks) {
@@ -548,9 +568,12 @@ export class RunService {
   /** Route (see routeChecked), then preflight the agents the route picked; nothing is created yet. */
   private async routeAndCheck(body: any, mode: RoutedMode, prompt: string, cwd: string, checks: Checks) {
     const skipAuthCheck = body?.skipAuthCheck === true;
-    const { route, usage, ...decision } = await this.routeChecked(prompt, mode, cwd, skipAuthCheck, checks);
-    const cfg = manualConfig({ ...body, ...decision, mode }, prompt, cwd);
-    await this.assertPreflight(agentsFor(cfg), cwd, skipAuthCheck, checks);
+    const hasImages = Array.isArray(body?.images) && body.images.length > 0;
+    const { route, usage, ...decision } = await this.routeChecked(prompt, mode, cwd, skipAuthCheck, checks, undefined, hasImages);
+    // Antigravity's login cannot be read, so a route that picks it runs without the login check.
+    const useAgy = agentsFor({ mode, coder: decision.coder, reviewer: decision.reviewer }).includes('antigravity');
+    const cfg = manualConfig({ ...body, ...decision, mode, skipAuthCheck: skipAuthCheck || useAgy }, prompt, cwd);
+    await this.assertPreflight(agentsFor(cfg), cwd, cfg.skipAuthCheck, checks);
     return { cfg: { ...cfg, route }, routeUsage: usage };
   }
 
@@ -665,8 +688,9 @@ export class RunService {
       ctx.note('Đã duyệt kế hoạch · bắt đầu Code', `Giữ agent đã chọn: ${agentLabel(coder)} viết code, ${agentLabel(reviewer)} review.`, 'info', 0);
     } else {
       // Same order as a new run: no model call before the agents it needs have passed preflight.
-      const { route, usage, mode, coder, reviewer, judge } = await this.routeChecked(implementationPrompt, 'code', cfg.cwd, cfg.skipAuthCheck, checks, ctx.abort.signal);
+      const { route, usage, mode, coder, reviewer, judge } = await this.routeChecked(implementationPrompt, 'code', cfg.cwd, cfg.skipAuthCheck, checks, ctx.abort.signal, Boolean(cfg.images?.length));
       Object.assign(ctx.run.config, { mode, coder, reviewer, judge, maxRounds: 2, route });
+      if (agentsFor(ctx.run.config).includes('antigravity')) ctx.run.config.skipAuthCheck = true;
       ctx.note('Đã duyệt kế hoạch · bắt đầu Code', route.reason, 'info', 0, usage);
     }
     // Code may route to an agent the plan did not use.

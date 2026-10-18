@@ -1,5 +1,6 @@
 import type { Usage } from '../agents/types.ts';
 import type { Mode, RoutePlan } from '../types.ts';
+import { avoidedReasons, type Availability } from './availability.ts';
 import { loadCatalog, type Catalog } from './catalog.ts';
 import { classifyWithHaiku, type Classifier } from './classify.ts';
 import { decide, describe, type Decision } from './policy.ts';
@@ -16,10 +17,14 @@ export interface RouteOptions {
   catalog?: Catalog;
   signal?: AbortSignal;
   mode?: Mode;
+  /** Which CLIs may be used right now (installed, logged in, quota left); unlisted ones are usable. */
+  availability?: Availability;
+  /** Images are attached to the request, so Antigravity is out. */
+  images?: boolean;
 }
 
 /** Keyword rules first (free); only an unclear prompt costs one small Haiku call. */
-export async function autoRoute(prompt: string, { classify = classifyWithHaiku, catalog = loadCatalog(), signal, mode = 'code' }: RouteOptions = {}): Promise<RouteResult> {
+export async function autoRoute(prompt: string, { classify = classifyWithHaiku, catalog = loadCatalog(), signal, mode = 'code', availability, images }: RouteOptions = {}): Promise<RouteResult> {
   const rules = classifyByRules(prompt);
   let { taskType, complexity } = rules;
   let source: RoutePlan['source'] = 'rules';
@@ -31,11 +36,11 @@ export async function autoRoute(prompt: string, { classify = classifyWithHaiku, 
       source = 'haiku';
     }
   }
-  const { models, ...decision } = decide(taskType, complexity, catalog, mode);
+  const { models, ...decision } = decide(taskType, complexity, catalog, mode, { availability, images });
   const via = source === 'haiku' ? 'Haiku phân loại (luật không chắc chắn)' : `luật từ khoá, độ tin cậy ${rules.confidence}`;
   return {
     ...decision,
-    route: { taskType, complexity, source, reason: `${describe(taskType, complexity, { models, ...decision })}\nNguồn: ${via}`, models },
+    route: { taskType, complexity, source, reason: `${describe(taskType, complexity, { models, ...decision }, avoidedReasons(availability))}\nNguồn: ${via}`, models },
     usage,
   };
 }

@@ -201,13 +201,19 @@ try {
 
   // ---- Preflight: missing login stops at once; an unverifiable login needs --skip-auth-check.
   await resetCalls();
-  const noLogin = await cli(['run', 'Implement and add a small change.', '--mode', 'plan'], { env: { FAKE_CODEX_AUTH: 'none', FAKE_CLAUDE_AUTH: 'none' } });
+  const noLogin = await cli(['run', 'Implement and add a small change.', '--mode', 'plan', '--coder', 'claude', '--reviewer', 'codex'], { env: { FAKE_CODEX_AUTH: 'none', FAKE_CLAUDE_AUTH: 'none' } });
   assert.equal(noLogin.code, 3, show(noLogin));
   assert.match(noLogin.stderr, /chưa đăng nhập/);
   const unknown = await cli(['run', 'Implement and add a small change.', '--mode', 'plan'], { env: { FAKE_CODEX_AUTH: 'unknown', FAKE_CLAUDE_AUTH: 'unknown' } });
   assert.equal(unknown.code, 3, show(unknown));
   assert.match(unknown.stderr, /--skip-auth-check/);
   assert.equal((await calls()).length, 0, 'preflight failures never start an agent turn');
+  // Left to the router, logged-out CLIs are routed around: Antigravity takes the plan.
+  const around = await cli(['run', 'Implement and add a small change.', '--mode', 'plan'], { env: { FAKE_CODEX_AUTH: 'none', FAKE_CLAUDE_AUTH: 'none' } });
+  assert.equal(around.code, 0, show(around));
+  assert.match(around.stderr, /bỏ qua: Claude chưa đăng nhập; Codex chưa đăng nhập/);
+  assert.match(around.stderr, /Antigravity/);
+  await resetCalls();
   const skipped = await cli(['run', 'Implement and add a small change.', '--mode', 'plan', '--skip-auth-check'], { env: { FAKE_CODEX_AUTH: 'unknown', FAKE_CLAUDE_AUTH: 'unknown' } });
   assert.equal(skipped.code, 0, show(skipped));
   const codeInPlain = await cli(['run', 'Implement and add a small change.', '--cwd', plain]);

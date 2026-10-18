@@ -171,10 +171,21 @@ async function main() {
     calls.length = 0;
     checksRun.length = 0;
     check = (agent) => (agent === 'codex' ? { agent, path: agent, version: null, error: 'codex is not installed', auth: 'skipped' } : { agent, path: agent, version: 'fake', auth: 'ok' });
-    await expectError(service.start({ mode: 'plan', prompt: UNCLEAR, cwd: plain }), 'preflight', /codex is not installed/);
-    assert.equal(classifyCalls, 0, 'a failing agent stops the request before the classifier is called');
-    assert.deepEqual([...new Set(checksRun)].sort((a, b) => a.localeCompare(b)), ['claude', 'codex'], 'the classifier and every routable agent are checked first');
-    assert.equal(checksRun.length, 2, 'each agent is checked once per request');
+    script = hang;
+    // A CLI that is not installed is routed around: Claude writes the plan, Antigravity reviews it.
+    const around = await service.start({ mode: 'plan', prompt: UNCLEAR, cwd: plain });
+    assert.equal(classifyCalls, 0, 'a failing agent stops the classifier from being called');
+    assert.deepEqual([around.run.config.coder, around.run.config.reviewer], ['claude', 'antigravity']);
+    assert.equal(around.run.config.skipAuthCheck, true, 'a route through Antigravity skips its unreadable login check');
+    assert.match(around.run.config.route?.reason ?? '', /bỏ qua: .*chưa cài/);
+    assert.deepEqual([...new Set(checksRun)].sort((a, b) => a.localeCompare(b)), ['antigravity', 'claude', 'codex'], 'every routable agent is checked before routing');
+    assert.equal(checksRun.length, 3, 'each agent is checked once per request');
+    around.cancel();
+    await around.done;
+    // Nothing usable: the plain order applies and preflight reports the problem.
+    check = (agent) => ({ agent, path: agent, version: null, error: `${agent} is not installed`, auth: 'skipped' });
+    await expectError(service.start({ mode: 'plan', prompt: UNCLEAR, cwd: plain }), 'preflight', /is not installed/);
+    assert.equal(classifyCalls, 0);
     check = (agent) => ({ agent, path: agent, version: 'fake', auth: agent === 'claude' ? 'unknown' : 'ok', authError: 'cannot tell.' });
     script = hang;
     const rulesOnly = await service.start({ mode: 'plan', prompt: UNCLEAR, cwd: plain, skipAuthCheck: true });
