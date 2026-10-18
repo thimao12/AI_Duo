@@ -29,6 +29,8 @@ Usage:
                                           (full screen, like vim; --inline keeps it in the scrollback)
   ai-duo run "<request>" [options]        start a Code or Plan run in --cwd (default: current folder)
   ai-duo continue <run-id> "<request>"    follow up on a finished run, in the same thread
+  ai-duo continue --last "<request>"      the same for the newest run of this repository
+  ai-duo -p "<request>"                   shorthand for run; with no request it reads stdin (cat task.md | ai-duo -p)
   ai-duo runs [--all] [--limit N]         recent runs (default: runs in this repository)
   ai-duo show <run-id> [--diff]           print a saved run
   ai-duo doctor [claude|codex|antigravity]  check Node, Git, the agent CLIs and their logins
@@ -72,6 +74,9 @@ Decisions (asked on the terminal; without a TTY every decision stops unless a fl
 
 Output:
       --json        machine-readable result on stdout
+      --output-format text|json|stream-json
+                    stream-json prints every event as one JSON line on stdout, then a final
+                    {"type":"result",…} line (progress on stderr is off)
   -q, --quiet       no progress on stderr
   -v, --verbose     include tool output and raw CLI lines
       --no-color    plain text (also when NO_COLOR is set or stderr is not a terminal)
@@ -103,6 +108,9 @@ const OPTIONS = {
   'plan-decision': { type: 'string' },
   'pair-extra-rounds': { type: 'string' },
   json: { type: 'boolean' },
+  'output-format': { type: 'string' },
+  print: { type: 'boolean', short: 'p' },
+  last: { type: 'boolean' },
   quiet: { type: 'boolean', short: 'q' },
   verbose: { type: 'boolean', short: 'v' },
   'no-color': { type: 'boolean' },
@@ -332,6 +340,8 @@ class Cli {
   /** Stream a run until it ends, answering decisions; returns the exit code. */
   async follow(start: (options: StartOptions) => Promise<RunHandle>): Promise<number> {
     const { io, flags, style } = this;
+    const format = oneOf('output-format', flags['output-format'], ['text', 'json', 'stream-json'] as const) ?? (flags.json ? 'json' : 'text');
+    const stream = format === 'stream-json';
     const renderer = new ProgressRenderer((s) => io.stderr.write(s), { style, verbose: flags.verbose === true });
     const decisions = new DecisionController(
       {
@@ -365,14 +375,15 @@ class Cli {
     const removeInterrupt = io.onInterrupt(interrupt);
 
     try {
-      if (!flags.quiet) this.err(style.dim('Routing and checking agents…'));
+      if (!flags.quiet && !stream) this.err(style.dim('Routing and checking agents…'));
       try {
         handle = await start({
           onCreated: (run) => {
-            if (!flags.quiet) this.err(style.dim(`Run ${run.id} · ${run.config.mode} · ${run.config.cwd}`));
+            if (!flags.quiet && !stream) this.err(style.dim(`Run ${run.id} · ${run.config.mode} · ${run.config.cwd}`));
           },
           onEvent: (e) => {
-            if (!flags.quiet) renderer.event(e);
+            if (stream) io.stdout.write(`${JSON.stringify(e)}\n`);
+            else if (!flags.quiet) renderer.event(e);
             decisions.onEvent(e);
           },
         });
@@ -407,7 +418,8 @@ class Cli {
       code = EXIT.cancelled;
       mark = style.yellow('■ cancelled');
     }
-    if (flags.json) this.json(resultJson(run));
+    if (flags['output-format'] === 'stream-json') this.out(JSON.stringify({ type: 'result', ...resultJson(run) }));
+    else if (flags.json || flags['output-format'] === 'json') this.json(resultJson(run));
     else if (run.final) this.out(run.final);
     const changed = run.config.mode === 'code' && run.diff !== undefined ? ` · ${filesChanged(run.diff)} file(s) changed, not committed` : '';
     const usage = run.usage ? ` · ${formatUsage(run.usage)}` : '';
@@ -457,7 +469,7 @@ class Cli {
   async run(positionals: string[]): Promise<number> {
     const { flags, io } = this;
     let prompt = positionals.join(' ').trim();
-    if (prompt === '-') prompt = (await readStdin(io.stdin)).trim();
+    if (prompt === '-' || (!prompt && flags.print && !io.stdin.isTTY)) prompt = (await readStdin(io.stdin)).trim();
     if (!prompt) throw new UsageError('Missing request: ai-duo run "<request>" (or `-` to read it from stdin)');
     const mode = oneOf('mode', flags.mode, ['code', 'plan'] as const) ?? 'code';
     const cwd = authorizeDirectory(path.resolve(io.cwd, flags.cwd ?? '.'));
@@ -469,8 +481,11 @@ class Cli {
 
   async continue(positionals: string[]): Promise<number> {
     const { flags, io } = this;
-    const [id, ...rest] = positionals;
-    if (!id) throw new UsageError('Missing run id: ai-duo continue <run-id> "<request>"');
+    const lastId = flags.last ? await this.lastRunId() : undefined;
+    const [first, ...others] = positionals;
+    const id = lastId ?? first;
+    const rest = lastId ? positionals : others;
+    if (!id) throw new UsageError('Missing run id: ai-duo continue <run-id> "<request>" (or --last for the newest run here)');
     let prompt = rest.join(' ').trim();
     if (prompt === '-') prompt = (await readStdin(io.stdin)).trim();
     if (!prompt) throw new UsageError('Missing request: ai-duo continue <run-id> "<request>"');
@@ -483,6 +498,15 @@ class Cli {
     await seedPrompts();
     const images = await this.images();
     return this.follow((options) => service.continue(id, { ...requestFrom(flags), mode, prompt, ...images }, options));
+  }
+
+  /** Newest run of the repository the command runs in. */
+  private async lastRunId(): Promise<string> {
+    const here = path.resolve(this.io.cwd, this.flags.cwd ?? '.');
+    const top = await gitToplevel(here);
+    const [latest] = runsInside(await service.list(), path.resolve(top ?? here));
+    if (!latest) throw new ServiceError('not_found', 'No earlier run in this repository to continue.');
+    return latest.id;
   }
 
   async runs(): Promise<number> {
@@ -672,7 +696,7 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
   const { values: flags, positionals } = parsed;
   const [named, ...rest] = positionals;
   // Bare `ai-duo` in a terminal opens the chat; without one it still prints the help.
-  const command = named ?? (flags.help || flags.version || !isTerminal(io) ? undefined : 'chat');
+  const command = flags.print && !flags.help ? 'run' : (named ?? (flags.help || flags.version || !isTerminal(io) ? undefined : 'chat'));
   if (flags.version) {
     io.stdout.write(`${VERSION}\n`);
     return EXIT.ok;
@@ -687,7 +711,7 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
       case 'chat':
         return await cli.chat();
       case 'run':
-        return await cli.run(rest);
+        return await cli.run(flags.print ? positionals : rest);
       case 'continue':
         return await cli.continue(rest);
       case 'runs':

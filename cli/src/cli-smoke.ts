@@ -274,6 +274,29 @@ try {
   const thread = JSON.parse((await cli(['show', result.id, '--json'])).stdout);
   assert.ok(thread.messages.some((m: { agent: string; parts: { content: string }[] }) => m.agent === 'user' && m.parts[0].content === 'Also add a newline.'));
 
+  // ---- headless: --last continues the newest run here, -p is run, stream-json prints one event per line.
+  const newest = JSON.parse((await cli(['runs', '--json', '--limit', '1'])).stdout)[0].id;
+  const last = await cli(['continue', '--last', 'One more thing.', '--json']);
+  assert.equal(last.code, 0, show(last));
+  assert.equal(JSON.parse(last.stdout).id, newest, '--last picks the newest run of the repository');
+  const noRuns = await cli(['continue', '--last', 'x'], { cwd: plain });
+  assert.equal(noRuns.code, 2, show(noRuns));
+  assert.match(noRuns.stderr, /No earlier run/);
+  const printed = await cli(['-p', 'Implement and add a small change.', '--output-format', 'json']);
+  assert.equal(printed.code, 0, show(printed));
+  assert.equal(JSON.parse(printed.stdout).status, 'done', '-p runs the request and prints the result');
+  const streamed = await cli(['-p', 'Implement and add a small change.', '--output-format', 'stream-json']);
+  assert.equal(streamed.code, 0, show(streamed));
+  const lines = streamed.stdout.trim().split('\n').map((l) => JSON.parse(l));
+  assert.ok(lines.length > 2 && lines.every((l) => typeof l.type === 'string'), 'every stdout line is a JSON event');
+  assert.equal(lines.at(-1).type, 'result');
+  assert.equal(lines.at(-1).status, 'done');
+  assert.ok(lines.slice(0, -1).some((l) => l.type === 'message.event' || l.type === 'message.start'), 'events precede the result');
+  assert.doesNotMatch(streamed.stderr, /Routing/, 'progress is off in stream-json');
+  assert.equal((await cli(['run', 'x', '--output-format', 'xml'])).code, 2);
+  const piped = await cli(['-p'], { input: 'Implement and add a small change.' });
+  assert.equal(piped.code, 0, show(piped));
+
   // ---- --coder/--reviewer pick agents by hand: Antigravity plans, codes, keeps its model and conversation on continue.
   assert.equal((await cli(['run', 'x', '--coder', 'gemini'])).code, 2);
   assert.equal((await cli(['run', 'x', '--coder', 'auto', '--reviewer', 'codex'])).code, 2);
