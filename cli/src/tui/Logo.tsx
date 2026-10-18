@@ -3,45 +3,14 @@ import { activeTheme } from './theme.ts';
 import { gradientAt } from './themes.ts';
 
 /**
- * Pixel-art logo: two "A" letters (the two agents) side by side and overlapping. Each terminal row
- * carries two pixel rows through the half blocks ▀ ▄ █, so the pixels come out square.
- * The first A takes the theme's warm gradient, the second (drawn over it) the cool one; `X` marks a pixel.
+ * Line-art logo: two "A" letters (the two agents) drawn with diagonal strokes ╱ ╲ and crossbars ─.
+ * Their inner legs cross into an X, so the pair reads as one woven mark. The first A takes the theme's
+ * warm gradient, the second (drawn over it) the cool one, both top to bottom.
  */
-const FIRST_A = [
-  '.....XX.....',
-  '.....XX.....',
-  '....XXXX....',
-  '....XXXX....',
-  '...XX..XX...',
-  '...XX..XX...',
-  '..XX....XX..',
-  '..XXXXXXXX..',
-  '.XX......XX.',
-  '.XX......XX.',
-  'XX........XX',
-  'XX........XX',
-];
-const OFFSET = 9;
-const HEIGHT = FIRST_A.length;
-const GLYPH_WIDTH = FIRST_A[0].length;
-const WIDTH = GLYPH_WIDTH + OFFSET;
-
-export const LOGO_ROWS = HEIGHT / 2;
-export const LOGO_WIDTH = WIDTH;
-
-const filled = (x: number, y: number): boolean => FIRST_A[y]?.[x] === 'X';
-
-/**
- * The colour of pixel (x, y), or undefined for an empty pixel. The gradient runs mostly top to bottom
- * with a slight diagonal lean, and the second A is cut out of the first by a one-pixel gap so the two
- * letters interlock instead of melting into one blob.
- */
-export function logoPixel(x: number, y: number, warm: readonly string[], cool: readonly string[]): string | undefined {
-  const t = Math.min(1, (y / (HEIGHT - 1)) * 0.85 + (x / (WIDTH - 1)) * 0.15);
-  if (filled(x - OFFSET, y)) return gradientAt(cool, t);
-  if (filled(x, y) && !filled(x - OFFSET - 1, y) && !filled(x - OFFSET + 1, y)) return gradientAt(warm, t);
-  return undefined;
-}
+export const LOGO_ROWS = 6;
+const SHIFT = 6;
+const APEX = LOGO_ROWS;
+export const LOGO_WIDTH = APEX * 2 + SHIFT;
 
 interface Cell {
   char: string;
@@ -49,15 +18,27 @@ interface Cell {
   bg?: string;
 }
 
-/** One terminal row (two pixel rows) as cells. */
+/** The glyph one A puts on (row, col), given the column of its apex. */
+function stroke(row: number, col: number, apex: number): string | undefined {
+  const left = apex - 1 - row;
+  const right = apex + row;
+  if (col === left) return '╱';
+  if (col === right) return '╲';
+  if (row === LOGO_ROWS - 2 && col > left && col < right) return '─';
+  return undefined;
+}
+
+/** One terminal row as cells; the second A is drawn over the first. */
 export function logoRow(row: number, warm: readonly string[], cool: readonly string[]): Cell[] {
+  const t = row / (LOGO_ROWS - 1);
+  const first = gradientAt(warm, t);
+  const second = gradientAt(cool, t);
   const cells: Cell[] = [];
-  for (let x = 0; x < WIDTH; x++) {
-    const up = logoPixel(x, row * 2, warm, cool);
-    const low = logoPixel(x, row * 2 + 1, warm, cool);
-    if (up && low) cells.push(up === low ? { char: '█', color: up } : { char: '▀', color: up, bg: low });
-    else if (up) cells.push({ char: '▀', color: up });
-    else if (low) cells.push({ char: '▄', color: low });
+  for (let col = 0; col < LOGO_WIDTH; col++) {
+    const b = stroke(row, col, APEX + SHIFT);
+    const a = stroke(row, col, APEX);
+    if (b && !(b === '─' && a && a !== '─')) cells.push({ char: b, color: second });
+    else if (a) cells.push({ char: a, color: first });
     else cells.push({ char: ' ' });
   }
   return cells;
@@ -74,16 +55,16 @@ function runs(cells: readonly Cell[]): Cell[] {
   return out;
 }
 
-/** Plain text stand-in for NO_COLOR terminals: the same shape in full blocks. */
+/** Plain text stand-in for NO_COLOR terminals: the same strokes without colour. */
 export function plainLogoRow(row: number): string {
-  return logoRow(row, ['#'], ['#']).map((c) => (c.char === ' ' ? ' ' : c.char === '▄' ? '▄' : c.char === '▀' ? '▀' : '█')).join('');
+  return logoRow(row, ['#'], ['#']).map((c) => c.char).join('');
 }
 
 export function Logo() {
   const { logo } = activeTheme();
   const plain = !!process.env.NO_COLOR;
   return (
-    <Box flexDirection="column" flexShrink={0} width={WIDTH}>
+    <Box flexDirection="column" flexShrink={0} width={LOGO_WIDTH}>
       {Array.from({ length: LOGO_ROWS }, (_, row) => (
         <Text key={row}>
           {plain

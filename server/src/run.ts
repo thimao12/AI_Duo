@@ -3,6 +3,7 @@ import path from 'node:path';
 import { agentLabel, agents, type AgentName, type Role, type Usage } from './agents/index.ts';
 import { AbortedError } from './agents/process.ts';
 import { runHook } from './hooks.ts';
+import { expandMentions, projectContext } from './mentions.ts';
 import { saveRun } from './store.ts';
 import { paths } from './paths.ts';
 import { authorizeDirectory } from './project-directories.ts';
@@ -81,7 +82,9 @@ export class RunContext {
   }
 
   get prompt() {
-    return [...this.run.messages].reverse().find((m) => m.agent === 'user')?.parts[0]?.content ?? this.run.config.prompt;
+    const typed = [...this.run.messages].reverse().find((m) => m.agent === 'user')?.parts[0]?.content ?? this.run.config.prompt;
+    // @file mentions travel to the agents with the file's text; the thread keeps what the user typed.
+    return expandMentions(typed, authorizeDirectory(this.run.config.cwd));
   }
 
   followUp(prompt: string, images: NonNullable<Message['images']> = [], messageId = randomUUID()) {
@@ -226,7 +229,7 @@ export class RunContext {
     try {
       await this.hook('beforeTurn', t);
       const res = await agents[t.agent].run({
-        prompt: t.prompt,
+        prompt: this.withContext(t.agent, t.prompt, key ? this.sessions.get(key) : undefined),
         images: this.currentImages ?? this.imagePaths(),
         cwd: authorizeDirectory(this.run.config.cwd),
         role: t.role,
@@ -253,6 +256,13 @@ export class RunContext {
     } catch (err) {
       this.failTurn(m, err);
     }
+  }
+
+  /** The other agent's project instructions, once per conversation (a resumed session already has them). */
+  private withContext(agent: AgentName, prompt: string, sessionId: string | undefined): string {
+    if (sessionId) return prompt;
+    const context = projectContext(agent, authorizeDirectory(this.run.config.cwd));
+    return context ? [context, '---', prompt].join('\n\n') : prompt;
   }
 
   /** A failing hook is reported in the thread and never stops the turn. */

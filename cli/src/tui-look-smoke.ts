@@ -71,14 +71,14 @@ await step('theme setting is validated and saved with the CLI settings', () => {
   assert.match(String(validateCliSettings({ theme: 3 })), /theme/);
 });
 
-await step('logo: two interlocking A letters, square pixels, theme gradient', () => {
+await step('logo: two interlocking A letters drawn with strokes, theme gradient', () => {
   assert.equal(LOGO_ROWS, 6);
   const rows = Array.from({ length: LOGO_ROWS }, (_, row) => plainLogoRow(row));
   for (const row of rows) assert.equal(row.length, LOGO_WIDTH);
   assert.ok(rows[0].trim().length > 0 && rows[5].trim().length > 0);
   const { logo } = findTheme('tokyo-night')!;
   const top = logoRow(0, logo.warm, logo.cool).filter((c) => c.color);
-  assert.ok(top.every((c) => c.char === '▀' || c.char === '█'), 'the apex rows are drawn from the upper half block');
+  assert.ok(top.every((c) => c.char === '╱' || c.char === '╲'), 'the apexes are drawn from diagonal strokes');
   const colours = new Set(Array.from({ length: LOGO_ROWS }, (_, r) => logoRow(r, logo.warm, logo.cool).map((c) => c.color).join()).values());
   assert.ok(colours.size > 3, 'the gradient changes from row to row');
 });
