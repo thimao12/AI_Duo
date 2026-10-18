@@ -28,7 +28,12 @@ export interface PanelProps {
 }
 
 export interface SessionOverrides {
+  /** Coder (Code) or planner (Plan), picked by hand. */
   agent?: AgentName;
+  /** Reviewer of a Code or Plan run, picked by hand; otherwise the default partner of the agent. */
+  reviewer?: AgentName;
+  /** "Tự động" was chosen on purpose: a follow-up is routed again instead of keeping the run's agents. */
+  auto?: true;
   model?: string;
   effort?: string;
   permission?: 'read' | 'edit';

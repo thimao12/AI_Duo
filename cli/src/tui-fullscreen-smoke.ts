@@ -189,7 +189,9 @@ await step('scroll maths: anchor, pages, following resumes at the bottom', async
   assert.deepEqual(scrollAction(key({ pageUp: true }), m, false), { kind: 'by', lines: -9 });
   assert.deepEqual(scrollAction(key({ upArrow: true, ctrl: true }), m, false), { kind: 'by', lines: -1 });
   assert.deepEqual(scrollAction(key({ downArrow: true, meta: true }), m, false), { kind: 'by', lines: 1 });
-  assert.equal(scrollAction(key({ upArrow: true }), m, true), null, 'plain Up belongs to the composer');
+  assert.deepEqual(scrollAction(key({ upArrow: true }), m, true), { kind: 'by', lines: -1 });
+  assert.deepEqual(scrollAction(key({ downArrow: true }), m, true), { kind: 'by', lines: 1 });
+  assert.equal(scrollAction(key({ upArrow: true }), m, false), null, 'plain Up stays in a nonempty editor');
   assert.equal(scrollAction(key({ home: true }), m, false), null, 'plain Home belongs to the composer while it has text');
   assert.deepEqual(scrollAction(key({ home: true }), m, true), { kind: 'top' });
   assert.deepEqual(scrollAction(key({ end: true, ctrl: true }), m, false), { kind: 'bottom' });
@@ -213,7 +215,7 @@ function capture() {
 }
 
 await step('HELP documents --inline, --fullscreen and the scroll keys', async () => {
-  for (const needle of ['--inline', '--fullscreen', 'AI_DUO_INLINE', 'PageUp/PageDown']) assert.ok(HELP.includes(needle), needle);
+  for (const needle of ['--inline', '--fullscreen', 'AI_DUO_INLINE', 'PageUp/PageDown', 'Antigravity needs agy']) assert.ok(HELP.includes(needle), needle);
 });
 
 await step('flags: bare ai-duo without a terminal prints HELP and exits 2; chat needs a TTY; both flags conflict', async () => {
@@ -281,6 +283,27 @@ await step('guardProcess: an uncaught error or a signal leaves the alternate scr
   guardProcess({ screen: alt, unmount: () => {}, exit: () => {}, proc: proc as never });
   proc.emit('exit', 0);
   assert.ok(stdout.output.endsWith(LEAVE_ALT_SCREEN + SHOW_CURSOR), 'process exit is the last safety net');
+});
+
+await step('AltScreen modes: switched on after entering, restored once before leaving on every exit path', async () => {
+  for (const trigger of ['SIGINT', 'uncaughtException', 'exit'] as const) {
+    const stdout = new FakeStdout();
+    const proc = new EventEmitter();
+    let leaves = 0;
+    const alt = new AltScreen(stdout as never, undefined, { enter: '<on>', leave: () => `<off${++leaves}>` });
+    alt.enter();
+    assert.equal(stdout.output, ENTER_ALT_SCREEN + '<on>');
+    guardProcess({ screen: alt, unmount: () => {}, stderr: new FakeStdout() as never, exit: () => {}, proc: proc as never });
+    proc.emit(trigger, new Error('boom'));
+    alt.leave();
+    assert.equal(leaves, 1, `${trigger}: restored once`);
+    assert.ok(stdout.output.endsWith('<off1>' + LEAVE_ALT_SCREEN + SHOW_CURSOR), `${trigger}: modes restored before the primary screen`);
+  }
+  const stdout = new FakeStdout();
+  const alt = new AltScreen(stdout as never, undefined, { enter: '', leave: () => { throw new Error('gone'); } });
+  alt.enter();
+  alt.leave();
+  assert.ok(stdout.output.endsWith(LEAVE_ALT_SCREEN + SHOW_CURSOR), 'a failing restore still leaves the alternate screen');
 });
 
 const enters = (out: string) => count(out, '\u001B[?1049h');
@@ -399,7 +422,7 @@ await step('fullscreen: scroll up pauses following and shows the hint; End and s
   await s.done;
 });
 
-await step('fullscreen: Home shows the top of the thread; plain Up/Down stay with the composer history', async () => {
+await step('fullscreen: Home shows the top; plain Up scrolls without recalling history', async () => {
   const s = open(100, 24);
   await s.seeing('Ask anything');
   await fill(s, 12);
@@ -409,7 +432,8 @@ await step('fullscreen: Home shows the top of the thread; plain Up/Down stay wit
   assert.ok(top.includes('Commands:'), 'first /help output at the top');
   assert.ok(!top.includes('READY') || top.includes('End to jump'));
   await s.type(KEY.up);
-  assert.equal(s.stdout.frameText().includes('End to jump'), true, 'plain Up did not scroll');
+  assert.equal(s.stdout.frameText().includes('End to jump'), true, 'plain Up stays at the top');
+  assert.ok(s.stdout.frameText().includes('Ask anything'), 'plain Up leaves the composer empty');
   await s.type(KEY.ctrlEnd);
   await s.type(KEY.ctrlD);
   await s.done;

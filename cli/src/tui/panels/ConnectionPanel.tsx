@@ -8,7 +8,7 @@ import { errText, paint, useLoader } from '../util.ts';
 import Panel from '../widgets/Panel.tsx';
 
 const RECHECK_AFTER_LOGIN_MS = 5000;
-const AGENTS: readonly AgentName[] = ['claude', 'codex'];
+const AGENTS: readonly AgentName[] = ['claude', 'codex', 'antigravity'];
 const LABEL: Record<AgentName, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
 
 export const INSTALL_COMMAND: Record<AgentName, string> = {
@@ -37,6 +37,10 @@ export function connectionLabel(status: ConnectionStatus): string {
   const detail = [status.method, status.account].filter(Boolean).join(' · ');
   return detail ? `Đã đăng nhập (${detail})` : 'Đã đăng nhập';
 }
+
+/** agy cannot report its login: shown as not verified, with what to do when a run fails on it. */
+export const AGY_UNVERIFIED = 'agy không có lệnh kiểm tra đăng nhập: chưa xác minh. Chạy cần --skip-auth-check (/skip-auth); nếu lượt chạy báo lỗi đăng nhập, chạy `agy` và đăng nhập bằng tài khoản Google.';
+const unverifiedAgy = (name: AgentName, status: ConnectionStatus | undefined): boolean => name === 'antigravity' && !!status?.installed && status.loggedIn === null;
 
 /** True when the user still has something to do (install or log in). */
 export const needsSetup = (status: ConnectionStatus): boolean => !status.installed || status.loggedIn === false;
@@ -68,7 +72,8 @@ function AgentBlock({ name, status, selected }: Readonly<{ name: AgentName; stat
         <Text>{`  ${status ? connectionLabel(status) : 'Đang kiểm tra…'}`}</Text>
         {status?.version ? <Text dimColor>{`  ${status.version}`}</Text> : null}
       </Box>
-      {status?.error && status.installed ? <Text color={paint('red')}>{`    ${status.error}`}</Text> : null}
+      {unverifiedAgy(name, status) ? <Text dimColor>{`    ${AGY_UNVERIFIED}`}</Text> : null}
+      {status?.error && status.installed && !unverifiedAgy(name, status) ? <Text color={paint('red')}>{`    ${status.error}`}</Text> : null}
       {status && needsSetup(status) ? <Guide name={name} status={status} /> : null}
     </Box>
   );
@@ -81,7 +86,7 @@ export interface ConnectionPanelProps extends PanelProps {
   opener?: (agent: AgentName) => Promise<LoginOutcome>;
 }
 
-/** /login: install and login state of both CLIs, the exact commands to fix them, `o` opens the login terminal, `r` rechecks. */
+/** /login: install and login state of the three CLIs, the exact commands to fix them, `o` opens the login terminal, `r` rechecks. */
 export default function ConnectionPanel({ onClose, loader = (agent) => getConnection(agent), opener = (agent) => openLogin(agent) }: Readonly<ConnectionPanelProps>) {
   const { data, error, reload } = useLoader(() => Promise.all(AGENTS.map((agent) => loader(agent))));
   const [selected, setSelected] = useState(0);

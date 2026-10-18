@@ -1,6 +1,10 @@
 import { Box, measureElement, Text, useInput, type DOMElement } from 'ink';
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { applyScroll, linesBelow, scrollAction, topLine, type Anchor, type Metrics, type ScrollAction } from './scroll.ts';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { applyScroll, linesBelow, scrollAction, topLine, WHEEL_LINES, type Anchor, type Metrics, type ScrollAction } from './scroll.ts';
+import type { WheelSource } from './terminalInput.ts';
+
+/** Mouse wheel of the full-screen chat; absent inline (the terminal scrolls its own scrollback there). */
+export const WheelContext = createContext<WheelSource | undefined>(undefined);
 
 export interface ViewportProps {
   children: ReactNode;
@@ -71,6 +75,16 @@ export function Viewport({ children, resetKey, followTick, active, edgeKeys }: R
     },
     { isActive: active },
   );
+
+  // The wheel only scrolls; while a panel is open its turns are dropped, never turned into keys.
+  const wheel = useContext(WheelContext);
+  useEffect(() => {
+    if (!wheel || !active) return;
+    return wheel.onWheel((direction) => {
+      const lines = direction === 'up' ? -WHEEL_LINES : WHEEL_LINES;
+      put(applyScroll(anchorRef.current, metricsRef.current, { kind: 'by', lines }));
+    });
+  }, [wheel, active, anchorRef, put]);
 
   const top = topLine(anchor, metrics);
   return (

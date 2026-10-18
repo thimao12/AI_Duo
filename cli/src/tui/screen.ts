@@ -14,12 +14,20 @@ export const SHOW_CURSOR = '\u001B[?25h';
 type Writable = Pick<NodeJS.WriteStream, 'write'>;
 type RawCapable = { isTTY?: boolean; setRawMode?: (mode: boolean) => unknown };
 
+/** Terminal modes switched on with the alternate screen (mouse reporting, alternate scroll) and back off before leaving it. */
+export interface ScreenModes {
+  enter: string;
+  /** Called when leaving, so it can use what the terminal reported meanwhile. */
+  leave: () => string;
+}
+
 export class AltScreen {
   private active = false;
 
   constructor(
     private readonly stdout: Writable,
     private readonly stdin?: RawCapable,
+    private readonly modes?: ScreenModes,
   ) {}
 
   get entered(): boolean {
@@ -29,14 +37,20 @@ export class AltScreen {
   enter(): void {
     if (this.active) return;
     this.active = true;
-    this.put(ENTER_ALT_SCREEN);
+    this.put(ENTER_ALT_SCREEN + (this.modes?.enter ?? ''));
   }
 
   /** Safe to call any number of times, from any exit path. */
   leave(): void {
     if (!this.active) return;
     this.active = false;
-    this.put(LEAVE_ALT_SCREEN + SHOW_CURSOR);
+    let modes = '';
+    try {
+      modes = this.modes?.leave() ?? '';
+    } catch {
+      // still leave the alternate screen
+    }
+    this.put(modes + LEAVE_ALT_SCREEN + SHOW_CURSOR);
     try {
       if (this.stdin?.isTTY) this.stdin.setRawMode?.(false);
     } catch {

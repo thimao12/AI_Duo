@@ -10,6 +10,8 @@ import Panel from '../widgets/Panel.tsx';
 import SelectList from '../widgets/SelectList.tsx';
 import { effortsFor, errText, modelIds, newId, paint, safeCatalog, useLoader, withCurrent } from '../util.ts';
 
+const AGENT_LABEL: Record<AgentName, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
+
 const NONE_LABEL = 'Không dùng vai trò (tự động)';
 const PERMISSION_LABEL = { read: 'Chỉ đọc', edit: 'Sửa file' } as const;
 
@@ -95,7 +97,7 @@ export function changeRole(role: RoleDef, id: string, value: string, catalog: Mo
 }
 
 const summary = (role: RoleDef): string =>
-  [role.agent === 'claude' ? 'Claude' : 'Codex', role.model || 'mặc định', role.effort || 'mặc định', PERMISSION_LABEL[role.permission]].join(' · ');
+  [AGENT_LABEL[role.agent] ?? role.agent, role.model || 'mặc định', role.effort || 'mặc định', PERMISSION_LABEL[role.permission]].join(' · ');
 
 interface ListProps {
   roles: readonly RoleDef[];

@@ -29,6 +29,16 @@ function modelFields(s: Selection, agent: AgentName | undefined): Pick<RunReques
 }
 
 /**
+ * coder / reviewer: what was picked by hand; 'auto' when "Tự động" was chosen on purpose (a follow-up is
+ * routed again); nothing otherwise (a follow-up keeps the run's hand-picked agents).
+ */
+function agentFields(s: Selection): Pick<RunRequest, 'coder' | 'reviewer'> {
+  const { agent, reviewer, auto } = s.overrides;
+  if (agent || reviewer) return { ...(agent ? { coder: agent } : {}), ...(reviewer ? { reviewer } : {}) };
+  return auto && !s.role ? { coder: 'auto' } : {};
+}
+
+/**
  * The run request for the composer state, like the web's buildRunRequest: nothing chosen = the router
  * decides; a chosen role, agent or permission is sent explicitly (request fields beat the role, the
  * role beats the router). Plan and pipeline runs ignore the role. Attached images go with every kind of run
@@ -38,12 +48,12 @@ export function buildRequest(s: Selection, prompt: string, cwd: string, images: 
   const base = { prompt, cwd, ...(s.skipAuthCheck ? { skipAuthCheck: true } : {}), ...(images.length ? { images: toRequestImages(images) } : {}) };
   const { agent, permission } = s.overrides;
   if (s.pipelineId) return { ...base, mode: 'pipeline', pipelineId: s.pipelineId };
-  if (s.mode === 'plan') return { ...base, mode: 'plan', ...(agent ? { coder: agent } : {}), ...modelFields(s, agent) };
+  if (s.mode === 'plan') return { ...base, mode: 'plan', ...agentFields(s), ...modelFields(s, agent) };
   return {
     ...base,
     mode: 'code',
     ...(s.role ? { roleId: s.role.id } : {}),
-    ...(agent ? { coder: agent } : {}),
+    ...agentFields(s),
     ...(permission ? { permission } : {}),
     ...modelFields(s, agent ?? s.role?.agent),
   };

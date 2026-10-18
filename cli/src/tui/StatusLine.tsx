@@ -35,10 +35,11 @@ function routeLabel(route: RoutePreview | null): string {
 /** "agent/model/effort" for what the next message would use. */
 export function describeTarget(role: RoleDef | null, overrides: SessionOverrides, route: RoutePreview | null): string {
   const agent = overrides.agent ?? role?.agent;
-  if (!agent) return routeLabel(route);
+  const reviewer = !role && overrides.reviewer ? ` + ${overrides.reviewer} reviews` : '';
+  if (!agent) return reviewer ? `default coder${reviewer}` : routeLabel(route);
   const model = overrides.model ?? (overrides.agent ? undefined : role?.model);
   const effort = overrides.effort ?? (overrides.agent ? undefined : role?.effort);
-  return [agent, model, effort].filter(Boolean).join('/');
+  return [agent, model, effort].filter(Boolean).join('/') + reviewer;
 }
 
 function permissionOf(role: RoleDef | null, overrides: SessionOverrides): string {

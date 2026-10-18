@@ -9,9 +9,10 @@ import Confirm from '../widgets/Confirm.tsx';
 import Form, { type FormField } from '../widgets/Form.tsx';
 import Panel from '../widgets/Panel.tsx';
 
-type Agent = 'claude' | 'codex';
-const AGENTS: readonly Agent[] = ['claude', 'codex'];
-const LABEL: Record<Agent, string> = { claude: 'Claude', codex: 'Codex' };
+type Agent = 'claude' | 'codex' | 'antigravity';
+// Every agent is listed: saving replaces the whole CLI configuration, so one left out would be wiped.
+const AGENTS: readonly Agent[] = ['claude', 'codex', 'antigravity'];
+const LABEL: Record<Agent, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
 
 export type SettingsValues = Record<string, string>;
 export type Detector = (agent: Agent) => Promise<CliDetection>;
@@ -82,6 +83,7 @@ export function settingsFields(values: SettingsValues): FormField[] {
   return [
     ...agentFields('claude', values, modelIds(catalog, 'claude').join(', ')),
     ...agentFields('codex', values, modelIds(catalog, 'codex').join(', ')),
+    ...agentFields('antigravity', values, modelIds(catalog, 'antigravity').join(', ')),
     { id: 'turnTimeoutMin', label: 'Timeout mỗi lượt', kind: 'text', value: values.turnTimeoutMin, placeholder: 'mặc định (phút)', section: 'Chung', hint: 'Số phút, từ 1 đến 240.' },
     { id: 'testCommand', label: 'Lệnh test', kind: 'text', value: values.testCommand, placeholder: 'không có', hint: 'Lệnh mà reviewer chạy để kiểm tra.' },
   ];
@@ -111,7 +113,7 @@ function useDetections(detector: Detector, refreshKey: number) {
   useEffect(() => {
     let live = true;
     Promise.all(AGENTS.map((agent) => detector(agent).catch((): undefined => undefined))).then((found) => {
-      if (live) setDetections({ claude: found[0], codex: found[1] });
+      if (live) setDetections(Object.fromEntries(AGENTS.map((agent, i) => [agent, found[i]])));
     });
     return () => {
       live = false;

@@ -238,6 +238,11 @@ await step('markdown-lite and request builder', async () => {
   assert.equal(buildRequest({ ...none, role, mode: 'plan' }, 'x', '/w').roleId, undefined, 'plan ignores the role');
   assert.deepEqual(buildRequest({ ...none, overrides: { agent: 'claude', model: 'opus', effort: 'high', permission: 'read' } }, 'x', '/w'), { prompt: 'x', cwd: '/w', mode: 'code', coder: 'claude', permission: 'read', models: { claude: 'opus' }, efforts: { claude: 'high' } });
   assert.deepEqual(buildRequest({ ...none, pipelineId: 'p1' }, 'x', '/w'), { prompt: 'x', cwd: '/w', mode: 'pipeline', pipelineId: 'p1' });
+  assert.deepEqual(buildRequest({ ...none, overrides: { agent: 'antigravity', reviewer: 'codex', model: 'gemini-x' } }, 'x', '/w'), { prompt: 'x', cwd: '/w', mode: 'code', coder: 'antigravity', reviewer: 'codex', models: { antigravity: 'gemini-x' } });
+  assert.deepEqual(buildRequest({ ...none, mode: 'plan', overrides: { reviewer: 'antigravity' } }, 'x', '/w'), { prompt: 'x', cwd: '/w', mode: 'plan', reviewer: 'antigravity' });
+  assert.equal(buildRequest({ ...none, overrides: { auto: true } }, 'x', '/w').coder, 'auto', 'Tự động chosen on purpose routes a follow-up again');
+  assert.equal(buildRequest({ ...none, role, overrides: { auto: true } }, 'x', '/w').coder, undefined, 'a role picks its own agent');
+  assert.equal(buildRequest(none, 'x', '/w').coder, undefined, "nothing chosen: a follow-up keeps the run's agents");
 });
 
 /* ---- Composer ---- */
@@ -330,7 +335,19 @@ await step('slash menu: filter, choose, run /help, unknown command', async () =>
   await t.seeing('Ask anything');
   await t.type('/');
   await t.seeing('/help');
-  assert.ok(t.frame().includes('/clear') && t.frame().includes('more'), 'the first commands are listed');
+  assert.ok(t.frame().includes('/clear') && t.frame().includes('1/15 ↓'), 'the first commands are listed');
+  for (let i = 0; i < 8; i++) await t.type(KEY.down);
+  await t.seeing('› /usage');
+  assert.ok(t.frame().includes('9/15 ↑ ↓'), 'the menu follows the selection past the first eight commands');
+  for (let i = 0; i < 6; i++) await t.type(KEY.down);
+  await t.seeing('› /exit');
+  assert.ok(t.frame().includes('15/15 ↑') && !t.frame().includes('15/15 ↑ ↓'), 'the last command has no items below');
+  await t.type(KEY.down);
+  await t.seeing('› /help');
+  await t.type(KEY.up);
+  await t.seeing('› /exit');
+  await t.type(KEY.up);
+  await t.seeing('› /skip-auth');
   await t.type('mo');
   await t.seeing('/model');
   assert.ok(!t.frame().includes('/exit  '), 'the menu is filtered');

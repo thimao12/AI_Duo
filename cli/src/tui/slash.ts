@@ -22,7 +22,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'pipelines', description: 'Pick or edit pipelines', panel: (p: PanelProps) => createElement(PipelinesPanel, p) },
   { name: 'model', description: 'Choose agent, model, effort and permission', panel: (p: PanelProps) => createElement(ModelPanel, p) },
   { name: 'usage', description: 'Claude and Codex usage limits', panel: (p: PanelProps) => createElement(UsagePanel, p) },
-  { name: 'login', description: 'Check and connect the Claude and Codex CLIs', panel: (p: PanelProps) => createElement(ConnectionPanel, p) },
+  { name: 'login', description: 'Check and connect the Claude, Codex and Antigravity CLIs', panel: (p: PanelProps) => createElement(ConnectionPanel, p) },
   { name: 'settings', description: 'Per-CLI settings', panel: (p: PanelProps) => createElement(SettingsPanel, p) },
   { name: 'paste-image', description: 'Attach an image from the clipboard (also Ctrl+V / Alt+V)' },
   { name: 'clear-images', description: 'Remove the attached images and their [Image #N] tokens' },
@@ -46,7 +46,7 @@ export function findCommand(commands: readonly SlashCommand[], name: string): Sl
 export const HELP_LINES: readonly string[] = [
   'Keys:',
   String.raw`  Enter send · Alt+Enter / Ctrl+J / trailing \ + Enter new line`,
-  '  Up/Down history (at the first/last line) · Ctrl+A/E line start/end · Alt+B/F or Ctrl+←/→ words',
+  '  Ctrl+P/N history (inline: Up/Down too) · Ctrl+A/E line start/end · Alt+B/F or Ctrl+←/→ words',
   '  Tab (empty prompt) next role · Shift+Tab Code/Plan · Esc closes a panel',
   '  Ctrl+V or Alt+V attach an image from the clipboard (or /paste-image) · paste or drop an image file path (png, jpg, webp, gif; up to 4, 5 MB each)',
   '  The image shows as [Image #1] in the prompt, where the cursor was: arrows jump over it, Backspace/Delete removes it · /clear-images removes all',

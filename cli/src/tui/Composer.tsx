@@ -24,6 +24,7 @@ import type { SlashCommand } from './panel-types.ts';
 import { filterCommands } from './slash.ts';
 import { isScrollKey } from './scroll.ts';
 import { tone } from './theme.ts';
+import { windowStart } from './util.ts';
 
 /** Slash menu text: "/" plus letters, on one line. */
 export function slashQuery(text: string): string | undefined {
@@ -84,16 +85,17 @@ function Pieces({ text, base, spans }: Readonly<{ text: string; base: number; sp
 }
 
 function SlashMenu({ matches, selected }: Readonly<{ matches: readonly SlashCommand[]; selected: number }>) {
-  const shown = matches.slice(0, 8);
+  const top = windowStart(matches.length, selected, 8);
+  const shown = matches.slice(top, top + 8);
   return (
     <Box flexDirection="column" paddingLeft={2}>
       {shown.map((c, i) => (
-        <Text key={c.name} color={i === selected ? tone('cyan') : undefined} bold={i === selected}>
-          {`${i === selected ? '›' : ' '} /${c.name.padEnd(12)}`}
+        <Text key={c.name} color={top + i === selected ? tone('cyan') : undefined} bold={top + i === selected}>
+          {`${top + i === selected ? '›' : ' '} /${c.name.padEnd(12)}`}
           <Text dimColor>{c.description}</Text>
         </Text>
       ))}
-      {matches.length > shown.length ? <Text dimColor>{`  … ${matches.length - shown.length} more`}</Text> : null}
+      {matches.length > shown.length ? <Text dimColor>{`  ${selected + 1}/${matches.length}${top > 0 ? ' ↑' : ''}${top + shown.length < matches.length ? ' ↓' : ''}`}</Text> : null}
     </Box>
   );
 }
@@ -203,7 +205,7 @@ export interface ComposerProps {
   shellBlocked?(): string | null;
   /** Tells the app whether the box is in shell mode. */
   onShellMode?(on: boolean): void;
-  /** Full screen: PageUp/PageDown and Ctrl/Alt+arrows, Home, End belong to the thread viewport, not to this box. */
+  /** Full screen: reserve viewport keys and use Ctrl+P/N for history (wheel events can arrive as arrows). */
   reserveScrollKeys?: boolean;
 }
 
@@ -462,12 +464,15 @@ export function Composer(props: Readonly<ComposerProps>) {
     const step = key.upArrow ? -1 : 1;
     const moved = moveVertical(latest.current, step);
     if (moved) putEditor(moved);
-    else walker.walk(step, latest.current);
+    // Some terminals still translate the wheel to arrows despite mouse reporting and DECSET 1007.
+    else if (!props.reserveScrollKeys) walker.walk(step, latest.current);
   };
 
   const specialKey = (input: string, key: Key): boolean => {
     if (key.ctrl && input === 'd' && latest.current.text === '') {
       props.onExit?.();
+    } else if (key.ctrl && (input === 'p' || input === 'n') && !plain) {
+      walker.walk(input === 'p' ? -1 : 1, latest.current);
     } else if (key.escape && shellRef.current) {
       leaveShell();
     } else if (key.escape) {

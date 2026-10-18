@@ -23,6 +23,9 @@ export const linesBelow = (anchor: Anchor, m: Metrics): number => (anchor === nu
 
 export const pageSize = (m: Metrics): number => Math.max(1, m.view - 1);
 
+/** Lines one wheel notch scrolls the thread. */
+export const WHEEL_LINES = 3;
+
 /** New anchor after `action`; reaching the bottom resumes following. */
 export function applyScroll(anchor: Anchor, m: Metrics, action: ScrollAction): Anchor {
   if (action.kind === 'bottom') return null;
@@ -32,15 +35,15 @@ export function applyScroll(anchor: Anchor, m: Metrics, action: ScrollAction): A
 }
 
 /**
- * The scroll action a key stands for, or null. Plain Up/Down stay with the composer (history);
+ * The scroll action a key stands for, or null. Plain Up/Down scroll when the composer is empty;
  * plain Home/End only scroll when `edgeKeys` says the composer has nothing to move in.
  */
 export function scrollAction(key: Key, m: Metrics, edgeKeys: boolean): ScrollAction | null {
   const modified = key.ctrl || key.meta;
   if (key.pageUp) return { kind: 'by', lines: -pageSize(m) };
   if (key.pageDown) return { kind: 'by', lines: pageSize(m) };
-  if (modified && key.upArrow) return { kind: 'by', lines: -1 };
-  if (modified && key.downArrow) return { kind: 'by', lines: 1 };
+  if ((modified || edgeKeys) && key.upArrow) return { kind: 'by', lines: -1 };
+  if ((modified || edgeKeys) && key.downArrow) return { kind: 'by', lines: 1 };
   if (key.home && (modified || edgeKeys)) return { kind: 'top' };
   if (key.end && (modified || edgeKeys)) return { kind: 'bottom' };
   return null;

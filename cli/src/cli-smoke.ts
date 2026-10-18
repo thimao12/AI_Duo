@@ -87,10 +87,38 @@ process.stdin.on('end', () => {
 });
 `;
 
-const binFor: Record<'claude' | 'codex', string> = { claude: '', codex: '' };
-await Promise.all((['claude', 'codex'] as const).map(async (agent) => {
+/** A fake `agy`: stream-json in and out; --mode accept-edits is the only mode that writes. */
+const fakeAgy = `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+const args = process.argv.slice(2);
+const env = process.env;
+if (args.includes('--version')) { console.log('agy 9.9.9-fake'); process.exit(0); }
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (c) => (input += c));
+process.stdin.on('end', () => {
+  const prompt = JSON.parse(input.trim()).message.content;
+  const mode = args[args.indexOf('--mode') + 1];
+  const role = prompt.includes('You are the REVIEWER') ? 'reviewer' : mode === 'accept-edits' ? 'coder' : 'thinker';
+  const model = args.includes('--model') ? ' ' + args[args.indexOf('--model') + 1] : '';
+  fs.appendFileSync(env.FAKE_LOG, 'antigravity ' + role + model + (args.includes('--conversation') ? ' resumed' : '') + '\\n');
+  let reply;
+  if (prompt.includes('Review this proposed implementation plan')) reply = 'Looks complete. PLAN_VERDICT: APPROVE';
+  else if (role === 'thinker') reply = 'PLAN: create output.txt, then check it exists.';
+  else if (role === 'reviewer') reply = '\`\`\`json\\n' + JSON.stringify({ verdict: 'APPROVE', tests: 'pass', issues: [] }) + '\\n\`\`\`';
+  else { fs.writeFileSync(path.join(process.cwd(), 'output.txt'), 'written by antigravity\\n'); reply = 'Implemented: wrote output.txt'; }
+  const out = (ev) => console.log(JSON.stringify(ev));
+  out({ event: 'init', conversation_id: 'agy-fake' });
+  out({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: reply } });
+  out({ event: 'result', result: { status: 'SUCCESS', response: reply, usage: { input_tokens: 10, output_tokens: 5 } } });
+});
+`;
+
+const binFor: Record<'claude' | 'codex' | 'antigravity', string> = { claude: '', codex: '', antigravity: '' };
+await Promise.all((['claude', 'codex', 'antigravity'] as const).map(async (agent) => {
   const script = path.join(bins, `fake-${agent}.js`);
-  await writeFile(script, fakeAgent(agent));
+  await writeFile(script, agent === 'antigravity' ? fakeAgy : fakeAgent(agent));
   if (process.platform === 'win32') {
     // npm-style shim: AI Duo runs the .js entry with Node, never through cmd.exe.
     binFor[agent] = path.join(bins, `${agent}.cmd`);
@@ -101,7 +129,7 @@ await Promise.all((['claude', 'codex'] as const).map(async (agent) => {
   }
 }));
 
-const baseEnv: NodeJS.ProcessEnv = { ...process.env, AI_DUO_ALLOWED_ROOTS: JSON.stringify([temp]), AI_DUO_DATA_DIR: dataDir, AI_DUO_PROMPTS_DIR: promptsDir, CLAUDE_BIN: binFor.claude, CODEX_BIN: binFor.codex, CODEX_HOME: path.join(temp, 'codex-home'), FAKE_LOG: log, NO_COLOR: '1' };
+const baseEnv: NodeJS.ProcessEnv = { ...process.env, AI_DUO_ALLOWED_ROOTS: JSON.stringify([temp]), AI_DUO_DATA_DIR: dataDir, AI_DUO_PROMPTS_DIR: promptsDir, CLAUDE_BIN: binFor.claude, CODEX_BIN: binFor.codex, AGY_BIN: binFor.antigravity, CODEX_HOME: path.join(temp, 'codex-home'), FAKE_LOG: log, NO_COLOR: '1' };
 delete baseEnv.INIT_CWD;
 delete baseEnv.npm_package_name;
 delete baseEnv.FORCE_COLOR;
@@ -138,8 +166,18 @@ try {
   assert.equal(doctor.code, 0, show(doctor));
   assert.match(doctor.stdout, /Fake Claude/);
   assert.match(doctor.stdout, /codex-cli 9\.9\.9-fake/);
+  assert.match(doctor.stdout, /Antigravity\s+agy 9\.9\.9-fake .*login not verified: agy has no login check/, "all three agents are listed; agy's login is never assumed");
+  const doctorJson = JSON.parse((await cli(['doctor', '--json'])).stdout);
+  assert.deepEqual(doctorJson.agents.map((a: { agent: string }) => a.agent), ['claude', 'codex', 'antigravity']);
+  assert.equal(doctorJson.ok, true, 'by default an unverified Antigravity is advisory');
+  assert.match(doctorJson.advisory.join('\n'), /Antigravity: chưa xác minh/);
+  const doctorAgy = await cli(['doctor', 'antigravity']);
+  assert.equal(doctorAgy.code, 3, `a named agent decides the exit code: ${show(doctorAgy)}`);
+  assert.doesNotMatch(doctorAgy.stdout, /Fake Claude/, 'only the agents named are checked');
+  assert.equal((await cli(['doctor', 'antigravity', '--skip-auth-check'])).code, 0);
+  assert.equal((await cli(['doctor', 'gemini'])).code, 2);
   const seeded = (await readdir(promptsDir)).filter((name) => name.endsWith('.md')).sort();
-  assert.deepEqual(seeded, ['code.md', 'critique.md', 'fix.md', 'propose.md', 'review.md', 'route.md', 'synthesize.md']);
+  assert.deepEqual(seeded, ['code.md', 'critique.md', 'fix.md', 'propose.md', 'review.md', 'route.md', 'synthesize.md', 'verdict.md']);
   assert.equal(await readFile(path.join(promptsDir, 'fix.md'), 'utf8'), 'CUSTOM FIX PROMPT {{review}}\n', 'seeding never overwrites an edited prompt');
   assert.equal((await cli(['bogus'])).code, 2);
   assert.equal((await cli(['run'])).code, 2, 'a request is required');
@@ -236,6 +274,27 @@ try {
   const thread = JSON.parse((await cli(['show', result.id, '--json'])).stdout);
   assert.ok(thread.messages.some((m: { agent: string; parts: { content: string }[] }) => m.agent === 'user' && m.parts[0].content === 'Also add a newline.'));
 
+  // ---- --coder/--reviewer pick agents by hand: Antigravity plans, codes, keeps its model and conversation on continue.
+  assert.equal((await cli(['run', 'x', '--coder', 'gemini'])).code, 2);
+  assert.equal((await cli(['run', 'x', '--coder', 'auto', '--reviewer', 'codex'])).code, 2);
+  assert.match((await cli(['--help'], { cwd: temp })).stdout, /--coder <agent>.*--reviewer <agent>/);
+  await resetCalls();
+  const agyRun = await cli(['run', 'Implement and add a small change.', '--mode', 'plan', '--plan-decision=approve', '--coder', 'antigravity', '--reviewer', 'codex', '--antigravity-model', 'gemini-x', '--skip-auth-check', '--json']);
+  assert.equal(agyRun.code, 0, show(agyRun));
+  const agyResult = JSON.parse(agyRun.stdout);
+  assert.equal(agyResult.status, 'done');
+  assert.equal(await readFile(path.join(repo, 'output.txt'), 'utf8'), 'written by antigravity\n', 'Plan → Code kept the hand-picked coder');
+  assert.deepEqual(await calls(), ['antigravity thinker gemini-x', 'codex thinker', 'antigravity coder gemini-x', 'codex reviewer']);
+  await rm(path.join(repo, 'output.txt'));
+  await resetCalls();
+  const agyFollow = await cli(['continue', agyResult.id, 'Also add a newline.', '--skip-auth-check', '--json']);
+  assert.equal(agyFollow.code, 0, show(agyFollow));
+  assert.deepEqual(await calls(), ['antigravity coder gemini-x resumed', 'codex reviewer'], 'continue keeps the agents, the model and the conversation');
+  await rm(path.join(repo, 'output.txt'), { force: true });
+  const agyNoSkip = await cli(['run', 'Implement and add a small change.', '--coder', 'antigravity']);
+  assert.equal(agyNoSkip.code, 3, `an unverified agy login needs --skip-auth-check: ${show(agyNoSkip)}`);
+  assert.match(agyNoSkip.stderr, /Antigravity: chưa xác minh/);
+
   // ---- --image attaches up to 4 images (checked by magic bytes) to run and continue; bad files stop before any agent runs.
   const pngFile = path.join(temp, 'shot.png');
   const jpgFile = path.join(temp, 'photo.jpg');
@@ -264,6 +323,9 @@ try {
   assert.equal(fakeImage.code, 2, show(fakeImage));
   assert.match(fakeImage.stderr, /not a PNG, JPEG, WebP or GIF/);
   assert.match((await cli(['--help'], { cwd: temp })).stdout, /--image <file>/);
+  const agyImage = await cli(['run', 'x', '--coder', 'antigravity', '--skip-auth-check', '--image', pngFile]);
+  assert.equal(agyImage.code, 2, show(agyImage));
+  assert.match(agyImage.stderr, /chỉ nhận văn bản/);
   assert.equal((await calls()).length, 0, 'a refused image never starts an agent');
 
   // ---- Repository lock across processes: a second run is refused (exit 4) through another path;

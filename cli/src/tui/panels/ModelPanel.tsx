@@ -8,10 +8,12 @@ import Panel from '../widgets/Panel.tsx';
 
 const AGENT_LABEL: Record<AgentName, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
 const PERMISSION_LABEL = { read: 'Chỉ đọc', edit: 'Sửa file' } as const;
+const AGENT_OPTIONS = ['', 'claude', 'codex', 'antigravity'];
 
 /** Text values of the form: '' means "not overridden". */
 export interface ModelDraft {
   agent: AgentName | '';
+  reviewer: AgentName | '';
   model: string;
   effort: string;
   permission: 'read' | 'edit' | '';
@@ -19,12 +21,13 @@ export interface ModelDraft {
 
 export const toDraft = (overrides: SessionOverrides | undefined): ModelDraft => ({
   agent: overrides?.agent ?? '',
+  reviewer: overrides?.reviewer ?? '',
   model: overrides?.model ?? '',
   effort: overrides?.effort ?? '',
   permission: overrides?.permission ?? '',
 });
 
-/** Only the fields the user actually set. */
+/** Only the fields the user actually set; no agent at all means "Tự động" was picked (follow-ups are routed again). */
 export function toOverrides(draft: ModelDraft): SessionOverrides {
   const next: SessionOverrides = {};
   if (draft.agent) {
@@ -32,6 +35,8 @@ export function toOverrides(draft: ModelDraft): SessionOverrides {
     if (draft.model) next.model = draft.model;
     if (draft.effort) next.effort = draft.effort;
   }
+  if (draft.reviewer) next.reviewer = draft.reviewer;
+  if (!draft.agent && !draft.reviewer) next.auto = true;
   if (draft.permission) next.permission = draft.permission;
   return next;
 }
@@ -39,14 +44,20 @@ export function toOverrides(draft: ModelDraft): SessionOverrides {
 /** "Claude · opus · high · Chỉ đọc", or a note that nothing is overridden. */
 export function describeOverrides(overrides: SessionOverrides | undefined): string {
   if (!overrides) return 'tự động (không ghi đè)';
-  const parts = [overrides.agent ? AGENT_LABEL[overrides.agent] : undefined, overrides.model, overrides.effort, overrides.permission ? PERMISSION_LABEL[overrides.permission] : undefined];
+  const parts = [
+    overrides.agent ? AGENT_LABEL[overrides.agent] : undefined,
+    overrides.model,
+    overrides.effort,
+    overrides.reviewer ? `review: ${AGENT_LABEL[overrides.reviewer]}` : undefined,
+    overrides.permission ? PERMISSION_LABEL[overrides.permission] : undefined,
+  ];
   const shown = parts.filter(Boolean);
   return shown.length > 0 ? shown.join(' · ') : 'tự động (không ghi đè)';
 }
 
 export function modelFields(draft: ModelDraft, catalog: ModelCatalog): FormField[] {
   const fields: FormField[] = [
-    { id: 'agent', label: 'Agent', kind: 'cycle', value: draft.agent, options: ['', 'claude', 'codex'], optionLabels: ['Tự động', 'Claude', 'Codex'] },
+    { id: 'agent', label: 'Agent', kind: 'cycle', value: draft.agent, options: AGENT_OPTIONS, optionLabels: ['Tự động', 'Claude', 'Codex', 'Antigravity'], hint: 'Code: agent viết code · Plan: agent lập kế hoạch. Router không bao giờ tự chọn Antigravity.' },
   ];
   if (draft.agent) {
     const models = modelIds(catalog, draft.agent);
@@ -56,7 +67,10 @@ export function modelFields(draft: ModelDraft, catalog: ModelCatalog): FormField
       { id: 'effort', label: 'Effort', kind: 'cycle', editable: true, value: draft.effort, options: withCurrent(efforts, draft.effort), placeholder: 'mặc định', hint: `←/→ đổi · Enter gõ giá trị khác. Gợi ý: ${efforts.join(', ') || 'không có'}` },
     );
   }
-  fields.push({ id: 'permission', label: 'Quyền', kind: 'cycle', value: draft.permission, options: ['', 'read', 'edit'], optionLabels: ['Theo vai trò / mặc định', PERMISSION_LABEL.read, PERMISSION_LABEL.edit] });
+  fields.push(
+    { id: 'permission', label: 'Quyền', kind: 'cycle', value: draft.permission, options: ['', 'read', 'edit'], optionLabels: ['Theo vai trò / mặc định', PERMISSION_LABEL.read, PERMISSION_LABEL.edit] },
+    { id: 'reviewer', label: 'Reviewer', kind: 'cycle', value: draft.reviewer, options: AGENT_OPTIONS, optionLabels: ['Mặc định', 'Claude', 'Codex', 'Antigravity'], hint: 'Agent review của Code/Plan. Mặc định: Plan tự review, Code dùng cặp Claude ↔ Codex (Antigravity ↔ Claude).' },
+  );
   return fields;
 }
 
@@ -72,6 +86,8 @@ export function changeDraft(draft: ModelDraft, id: string, value: string, catalo
       return { ...draft, effort: value };
     case 'permission':
       return { ...draft, permission: value as ModelDraft['permission'] };
+    case 'reviewer':
+      return { ...draft, reviewer: value as ModelDraft['reviewer'] };
     default:
       return draft;
   }
@@ -94,7 +110,7 @@ export default function ModelPanel({ onClose, onPickOverrides, overrides }: Read
         onSave={() => apply(toOverrides(draft))}
         onCancel={onClose}
         onKey={(input) => {
-          if (input === 'x') apply({});
+          if (input === 'x') apply({ auto: true });
         }}
       />
     </Panel>

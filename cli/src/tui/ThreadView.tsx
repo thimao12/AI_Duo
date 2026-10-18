@@ -15,7 +15,7 @@ function Header({ item }: Readonly<{ item: Extract<ThreadItem, { kind: 'header' 
         <Text bold color={tone('cyan')}>
           AI Duo
         </Text>
-        <Text dimColor>{` v${item.version} · Claude × Codex`}</Text>
+        <Text dimColor>{` v${item.version}`}</Text>
       </Text>
       <Text dimColor>
         {item.cwd}
@@ -126,7 +126,7 @@ export function FullscreenHeader({ version, cwd, branch, compact }: Readonly<Ful
         <Text bold color={tone('cyan')}>
           AI Duo
         </Text>
-        <Text dimColor>{` v${version} · Claude × Codex`}</Text>
+        <Text dimColor>{` v${version}`}</Text>
         {compact ? <Text dimColor>{` · ${where}`}</Text> : null}
       </Text>
       {compact ? null : (

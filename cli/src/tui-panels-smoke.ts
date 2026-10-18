@@ -242,7 +242,7 @@ try {
 
   // ---- Settings: edit + save, validation error, unsaved-changes guard.
   let settingsClosed = 0;
-  const detector = (agent: 'claude' | 'codex') => Promise.resolve({ name: agent, resolvedPath: `/bin/${agent}`, source: 'path' as const, version: '9.9.9', error: null });
+  const detector = (agent: 'claude' | 'codex' | 'antigravity') => Promise.resolve({ name: agent, resolvedPath: `/bin/${agent}`, source: 'path' as const, version: '9.9.9', error: null });
   const panel = mount(h(SettingsPanel, { cwd: workDir, onClose: () => { settingsClosed += 1; }, detector }));
   frame = await seen(panel, 'Đường dẫn CLI');
   await seen(panel, '9.9.9');
@@ -251,7 +251,7 @@ try {
   await press(panel, KEY.enter, 's');
   await seen(panel, 'Đã lưu.');
   assert.equal((await settings.getCliSettings()).claude.defaultModel, 'opus');
-  await press(panel, ...Array.from({ length: 7 }, () => KEY.down), KEY.enter); // Timeout mỗi lượt
+  await press(panel, ...Array.from({ length: 12 }, () => KEY.down), KEY.enter); // Timeout mỗi lượt (after Codex and Antigravity)
   await typeText(panel, '999');
   await press(panel, KEY.enter, 's');
   frame = await seen(panel, 'turnTimeoutMin');
@@ -351,6 +351,7 @@ try {
   await press(connection, 'o');
   await seen(connection, 'Đã mở cửa sổ terminal');
   assert.deepEqual(opened, ['claude']);
+  assert.ok(frame.includes('Antigravity'), 'all three agents are listed');
   const checksBefore = checks;
   await press(connection, 'r');
   await until(connection, () => checks > checksBefore, 'recheck');
@@ -362,8 +363,17 @@ try {
     opener: () => Promise.resolve('failed' as const),
   }));
   frame = await seen(loggedOut, 'Đã cài, chưa đăng nhập');
+  assert.ok(frame.includes('Đăng nhập: agy'), frame);
   assert.ok(frame.includes('1. Đăng nhập: claude auth login') && frame.includes('1. Đăng nhập: codex login'), frame);
   loggedOut.unmount();
+  const agyUnknown = mount(h(ConnectionPanel, {
+    cwd: workDir,
+    onClose: () => undefined,
+    loader: (agent: AgentName) => Promise.resolve(status(agent, agent === 'antigravity' ? { loggedIn: null, error: 'Login status unknown' } : {})),
+  }));
+  frame = await seen(agyUnknown, 'chưa xác minh');
+  assert.ok(frame.includes('Không xác định') && !frame.includes('Login status unknown'), `an unverifiable agy login is a hint, not an error: ${frame}`);
+  agyUnknown.unmount();
 
   // ---- Model overrides.
   const catalog = models.listModels();
@@ -374,7 +384,7 @@ try {
   await press(modelPanel, 's');
   assert.deepEqual(overridesPicked.at(-1), { agent: 'codex', permission: 'edit' });
   await press(modelPanel, 'x');
-  assert.deepEqual(overridesPicked.at(-1), {});
+  assert.deepEqual(overridesPicked.at(-1), { auto: true }, 'clearing goes back to the router, also for follow-ups');
   modelPanel.unmount();
   const fresh = mount(h(ModelPanel, { cwd: workDir, onClose: () => undefined, onPickOverrides: (o: object) => overridesPicked.push(o) }));
   await seen(fresh, 'Tự động');
@@ -385,6 +395,16 @@ try {
   await press(fresh, KEY.left, 's');
   assert.deepEqual(overridesPicked.at(-1), { agent: 'claude', model: model0.id, effort: model0.efforts[0], permission: 'read' });
   fresh.unmount();
+  const agyPick = mount(h(ModelPanel, { cwd: workDir, onClose: () => undefined, onPickOverrides: (o: object) => overridesPicked.push(o) }));
+  await seen(agyPick, 'Tự động');
+  await press(agyPick, KEY.left); // agent: Antigravity (cycles back from Tự động)
+  await seen(agyPick, 'Antigravity');
+  await press(agyPick, KEY.down, KEY.down, KEY.down, KEY.down, KEY.right, KEY.right); // reviewer: Codex
+  await press(agyPick, 's');
+  assert.deepEqual(overridesPicked.at(-1), { agent: 'antigravity', reviewer: 'codex' });
+  agyPick.unmount();
+  const describe = (await import('./tui/panels/ModelPanel.tsx')).describeOverrides;
+  assert.equal(describe({ agent: 'antigravity', reviewer: 'codex' }), 'Antigravity · review: Codex');
 
   console.log('tui panels smoke passed');
 } finally {

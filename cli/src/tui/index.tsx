@@ -5,6 +5,8 @@ import { RunService } from '../../../server/src/service.ts';
 import { App } from './App.tsx';
 import { historyFile, loadHistory } from './history.ts';
 import { AltScreen, guardProcess } from './screen.ts';
+import { enterModes, leaveModes, mouseEnabled, TerminalInput, type WheelSource } from './terminalInput.ts';
+import { WheelContext } from './Viewport.tsx';
 import type { ChatService } from './useSession.ts';
 
 export interface TuiOptions {
@@ -46,28 +48,34 @@ interface RenderSetup {
   branch: string | undefined;
   history: string[];
   screen: 'fullscreen' | 'inline';
+  /** Full screen: the filtered stdin that Ink reads (mouse reports taken out). */
+  input?: TerminalInput;
   onRunChange: (id: string | undefined) => void;
 }
 
-function mount({ options, service, file, branch, history, screen, onRunChange }: Readonly<RenderSetup>) {
+function mount({ options, service, file, branch, history, screen, input, onRunChange }: Readonly<RenderSetup>) {
+  const stdin = input ?? options.stdin;
+  const wheel: WheelSource | undefined = input;
   return render(
-    <App
-      service={service}
-      cwd={options.cwd}
-      branch={branch}
-      version={options.version ?? '0.1.0'}
-      history={history}
-      historyFile={file}
-      skipPreflight={options.skipPreflight}
-      screen={screen}
-      onRunChange={onRunChange}
-    />,
+    <WheelContext.Provider value={wheel}>
+      <App
+        service={service}
+        cwd={options.cwd}
+        branch={branch}
+        version={options.version ?? '0.1.0'}
+        history={history}
+        historyFile={file}
+        skipPreflight={options.skipPreflight}
+        screen={screen}
+        onRunChange={onRunChange}
+      />
+    </WheelContext.Provider>,
     // Kitty keyboard reports stay off: Windows Terminal / VS Code would send text as CSI-u, which breaks IME
     // composition (Vietnamese Telex/Unikey). New line is Alt+Enter (ESC CR), Ctrl+J or a trailing backslash.
     // Ink merges these over its defaults, so an undefined stdin/stdout would replace process.stdin/stdout.
     // Full screen: the caller checked for a terminal, so Ink must not fall back to its CI (last-frame-only) mode.
     {
-      ...(options.stdin && { stdin: options.stdin }),
+      ...(stdin && { stdin: stdin as unknown as NodeJS.ReadStream }),
       ...(options.stdout && { stdout: options.stdout }),
       ...(screen === 'fullscreen' && { interactive: true }),
       exitOnCtrlC: false,
@@ -88,12 +96,16 @@ export async function startTui(options: TuiOptions): Promise<number> {
   const screen = options.screen ?? 'fullscreen';
   const stdout = options.stdout ?? process.stdout;
   const [branch, history] = await Promise.all([gitBranch(options.cwd), loadHistory(file)]);
-  const alt = screen === 'fullscreen' ? new AltScreen(stdout, options.stdin ?? process.stdin) : undefined;
+  // Full screen: one reader over the real stdin, ready before mouse reporting is switched on; Ink and the
+  // alternate screen both use it. The wheel scrolls the thread instead of reaching the composer as Up/Down.
+  const input = screen === 'fullscreen' ? new TerminalInput(options.stdin ?? process.stdin) : undefined;
+  const mouse = mouseEnabled();
+  const alt = input ? new AltScreen(stdout, input, { enter: enterModes(mouse), leave: () => leaveModes(mouse, input.altScroll) }) : undefined;
   let runId: string | undefined;
   let disposeGuard: (() => void) | undefined;
   try {
     alt?.enter();
-    const instance = mount({ options, service, file, branch, history, screen, onRunChange: (id) => {
+    const instance = mount({ options, service, file, branch, history, screen, input, onRunChange: (id) => {
         runId = id;
       },
     });
@@ -102,6 +114,7 @@ export async function startTui(options: TuiOptions): Promise<number> {
   } finally {
     disposeGuard?.();
     alt?.leave();
+    input?.dispose();
   }
   if (alt && runId) stdout.write(`Resume this session with /sessions in ai-duo (run ${runId}).
 `);

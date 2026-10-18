@@ -47,7 +47,7 @@ function Banner({ problems }: Readonly<{ problems: readonly string[] }>) {
       {problems.slice(0, 4).map((p) => (
         <Text key={p} dimColor>{`• ${p.split('\n')[0]}`}</Text>
       ))}
-      <Text>Type /login to see how to install or log in to Claude and Codex.</Text>
+      <Text>Type /login to see how to install or log in to Claude, Codex and Antigravity.</Text>
     </Box>
   );
 }
@@ -134,7 +134,7 @@ export function App(props: Readonly<AppProps>) {
   }, [onRunChange, runId]);
 
   const problems = usePreflight(service, cwd, selection.selection.skipAuthCheck === true, !props.skipPreflight);
-  const autoRouted = !selection.selection.role && !selection.selection.pipelineId && !selection.selection.overrides.agent;
+  const autoRouted = !selection.selection.role && !selection.selection.pipelineId && !selection.selection.overrides.agent && !selection.selection.overrides.reviewer;
   const shellRun = useShell(cwd, session.push, session.notice);
   const route = useRoutePreview(service, draft, selection.selection.mode, autoRouted && session.phase === 'idle' && !shellMode);
   useInterrupt({ phase: session.phase, shellRunning: shellRun.running, killShell: shellRun.kill, cancel: session.cancel, exit, notice: (t) => session.notice('warn', t) });

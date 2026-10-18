@@ -8,7 +8,7 @@ import { gitExecutable, gitRequiredMessage, gitToplevel, isGitRepo } from '../..
 import { describeOwner, listLocks, lockTarget, ownerState, readLockOwner, unlockRepo } from '../../server/src/lock.ts';
 import { paths } from '../../server/src/paths.ts';
 import { authorizeDirectory, DirectoryAccessError } from '../../server/src/project-directories.ts';
-import { RunService, ServiceError, type RunHandle, type RunRequest, type ServiceErrorCode, type StartOptions } from '../../server/src/service.ts';
+import { evaluatePreflight, RunService, ServiceError, type PreflightReport, type RunHandle, type RunRequest, type ServiceErrorCode, type StartOptions } from '../../server/src/service.ts';
 import type { Mode, Run } from '../../server/src/types.ts';
 import { DecisionController } from './decisions.ts';
 import { invocationCwd, seedPrompts } from './env.ts';
@@ -21,7 +21,7 @@ export const VERSION = '0.1.0';
 export const EXIT = { ok: 0, failed: 1, usage: 2, preflight: 3, locked: 4, cancelled: 130 } as const;
 const EXIT_FOR: Record<ServiceErrorCode, number> = { invalid: EXIT.usage, not_found: EXIT.usage, conflict: EXIT.locked, preflight: EXIT.preflight, internal: EXIT.failed };
 
-export const HELP = `ai-duo ${VERSION} – Claude × Codex pair programming in the terminal
+export const HELP = `ai-duo ${VERSION} – pair programming with Claude, Codex or Antigravity in the terminal
 
 Usage:
   ai-duo                                  interactive chat in the current folder (needs a terminal)
@@ -31,7 +31,8 @@ Usage:
   ai-duo continue <run-id> "<request>"    follow up on a finished run, in the same thread
   ai-duo runs [--all] [--limit N]         recent runs (default: runs in this repository)
   ai-duo show <run-id> [--diff]           print a saved run
-  ai-duo doctor                           check Node, Git, both agent CLIs and their logins
+  ai-duo doctor [claude|codex|antigravity]  check Node, Git, the agent CLIs and their logins
+                                          (all three by default, or only the ones named)
   ai-duo unlock [folder] [--force]        remove a repository lock left by a process that died
 
 Chat options:
@@ -41,15 +42,23 @@ Chat options:
   Images: Ctrl+V or Alt+V attaches an image from the clipboard (or /paste-image); pasting or dropping
   the path of an image file attaches it too. It appears as [Image #1] in the prompt at the cursor;
   Backspace or Delete next to it removes it.
-  Full screen keys: PageUp/PageDown scroll, Ctrl+Up/Down or Alt+Up/Down one line, Home/Ctrl+Home top,
-  End/Ctrl+End latest (also resumes following the newest output).
+  Full screen keys: PageUp/PageDown scroll, Up/Down on an empty prompt or Ctrl/Alt+Up/Down one line,
+  Ctrl+P/N prompt history, Home/Ctrl+Home top,
+  End/Ctrl+End latest (also resumes following the newest output). The mouse wheel scrolls the thread;
+  hold Shift to select text with the mouse. AI_DUO_MOUSE=0 turns mouse reporting off (plain selection;
+  wheel support then depends on whether the terminal sends arrow keys).
 
 Run options:
   -m, --mode code|plan          code edits files (needs Git); plan is read-only first (default: code;
                                 continue defaults to the run's current mode)
   -C, --cwd <folder>            working folder (run only)
       --test "<command>"        test command the reviewer runs
+      --coder <agent>           --reviewer <agent>        claude, codex, antigravity or auto: pick the agents
+                                by hand (skips the router; one side alone pairs with its default partner).
+                                continue keeps the run's hand-picked agents unless you pass auto
       --claude-model <name>     --codex-model <name>      override the routed model
+      --antigravity-model <name>                          model for Antigravity (never picked by the router)
+                                Antigravity needs agy and --skip-auth-check (login cannot be verified)
       --claude-effort <level>   --codex-effort <level>    override the reasoning effort
       --timeout <minutes>       limit per agent turn (1-180, default 30)
       --image <file>            attach a PNG, JPEG, WebP or GIF image (repeatable, up to 4, 5 MB each; run and continue)
@@ -83,6 +92,9 @@ const OPTIONS = {
   test: { type: 'string' },
   'claude-model': { type: 'string' },
   'codex-model': { type: 'string' },
+  'antigravity-model': { type: 'string' },
+  coder: { type: 'string' },
+  reviewer: { type: 'string' },
   'claude-effort': { type: 'string' },
   'codex-effort': { type: 'string' },
   timeout: { type: 'string' },
@@ -120,7 +132,7 @@ function doctorJson(d: {
   gitVersion: string | null;
   promptsReady: string | null;
   owner: Awaited<ReturnType<typeof readLockOwner>> | undefined;
-  report: Awaited<ReturnType<RunService['preflight']>>;
+  report: DoctorReport;
   locks: Awaited<ReturnType<typeof listLocks>>;
 }) {
   const { cwd, git, gitVersion, promptsReady, owner, report, locks } = d;
@@ -135,6 +147,7 @@ function doctorJson(d: {
     lock: owner === undefined ? null : { owner, state: ownerState(owner) },
     agents: report.checks,
     problems: [...(gitVersion ? [] : ['git not found on PATH']), ...(promptsReady ? [promptsReady] : []), ...report.problems],
+    ...(report.advisory?.length && { advisory: report.advisory }),
     locks,
   };
 }
@@ -195,10 +208,43 @@ function requestFrom(flags: Flags): Omit<RunRequest, 'prompt' | 'mode' | 'cwd'> 
   return {
     testCommand: flags.test,
     turnTimeoutMin: timeout,
-    models: { claude: flags['claude-model'], codex: flags['codex-model'] },
+    models: { claude: flags['claude-model'], codex: flags['codex-model'], antigravity: flags['antigravity-model'] },
     efforts: { claude: flags['claude-effort'], codex: flags['codex-effort'] },
     skipAuthCheck: flags['skip-auth-check'] === true,
+    ...agentFlags(flags),
   };
+}
+
+const AGENT_CHOICES = ['claude', 'codex', 'antigravity', 'auto'] as const;
+export const AGENTS: readonly AgentName[] = ['claude', 'codex', 'antigravity'];
+const AGENT_NAME: Record<AgentName, string> = { claude: 'Claude CLI', codex: 'Codex CLI', antigravity: 'Antigravity' };
+
+/** --coder / --reviewer: an agent or auto; nothing when absent. */
+function agentFlags(flags: Flags): Pick<RunRequest, 'coder' | 'reviewer'> {
+  const coder = oneOf('coder', flags.coder, AGENT_CHOICES);
+  const reviewer = oneOf('reviewer', flags.reviewer, AGENT_CHOICES);
+  if ((coder === 'auto') !== (reviewer === 'auto') && coder !== undefined && reviewer !== undefined) throw new UsageError('auto picks both agents: use it for --coder and --reviewer alike, or name both agents');
+  return { ...(coder && { coder }), ...(reviewer && { reviewer }) };
+}
+
+/** `doctor` positionals: agents to check (all by default). */
+function doctorAgents(names: string[]): AgentName[] {
+  if (!names.length) return [...AGENTS];
+  for (const name of names) if (!(AGENTS as readonly string[]).includes(name)) throw new UsageError(`Unknown agent: ${name} (use ${AGENTS.join(', ')})`);
+  return [...new Set(names)] as AgentName[];
+}
+
+type DoctorReport = PreflightReport & { advisory?: string[] };
+
+/**
+ * What decides doctor's exit code: the agents named, or by default Claude and Codex (what the router uses).
+ * Antigravity is still checked and shown; its problems are advisory unless it was named.
+ */
+export function doctorReport(report: PreflightReport, named: string[], skipAuthCheck: boolean): DoctorReport {
+  const required: readonly string[] = named.length ? named : ['claude', 'codex'];
+  const gate = evaluatePreflight(report.checks.filter((c) => required.includes(c.agent)), skipAuthCheck);
+  const advisory = evaluatePreflight(report.checks.filter((c) => !required.includes(c.agent)), skipAuthCheck).problems;
+  return { ...gate, checks: report.checks, advisory };
 }
 
 function resultJson(run: Run) {
@@ -483,7 +529,7 @@ class Cli {
     return EXIT.ok;
   }
 
-  async doctor(): Promise<number> {
+  async doctor(positionals: string[] = []): Promise<number> {
     const { flags, io } = this;
     const cwd = authorizeDirectory(path.resolve(io.cwd, flags.cwd ?? '.'));
     const folderExists = existsSync(cwd);
@@ -493,7 +539,8 @@ class Cli {
     const top = folderExists ? await gitToplevel(cwd) : null;
     const git = top && path.resolve(top);
     const gitVersion = readGitVersion();
-    const report = await service.preflight(['claude', 'codex'] as AgentName[], folderExists ? cwd : io.cwd, flags['skip-auth-check'] === true);
+    const skipAuth = flags['skip-auth-check'] === true;
+    const report = doctorReport(await service.preflight(doctorAgents(positionals), folderExists ? cwd : io.cwd, skipAuth), positionals, skipAuth);
     const target = folderExists ? await lockTarget(cwd).catch(() => undefined) : undefined;
     const owner = target ? await readLockOwner(target.file) : undefined;
     const locks = await listLocks();
@@ -515,7 +562,7 @@ class Cli {
     runsCount: number;
     owner: Awaited<ReturnType<typeof readLockOwner>> | undefined;
     target: Awaited<ReturnType<typeof lockTarget>> | undefined;
-    report: Awaited<ReturnType<RunService['preflight']>>;
+    report: DoctorReport;
     locks: Awaited<ReturnType<typeof listLocks>>;
   }) {
     const { style } = this;
@@ -567,22 +614,23 @@ class Cli {
 
   private agentRow(check: AgentCheck, skipAuth: boolean) {
     const { style } = this;
-    const name = check.agent === 'claude' ? 'Claude CLI' : 'Codex CLI';
+    const name = AGENT_NAME[check.agent] ?? check.agent;
     if (check.error) {
       this.out(`${style.red('✗')} ${name.padEnd(12)} ${check.error}`);
       return;
     }
-    const { mark, login } = this.authDisplay(check.auth, skipAuth);
+    const { mark, login } = this.authDisplay(check.auth, skipAuth, check.agent);
     const location = style.dim(`· ${check.path}`);
     this.out(`${mark} ${name.padEnd(12)} ${check.version} ${location} · ${login}`);
     if (check.authError) this.out(style.dim(`  ${check.authError}`));
   }
 
-  private authDisplay(auth: AgentCheck['auth'], skipAuth: boolean) {
+  private authDisplay(auth: AgentCheck['auth'], skipAuth: boolean, agent?: AgentName) {
     const { style } = this;
     if (auth === 'ok') return { mark: style.green('✓'), login: style.green('logged in (subscription)') };
     if (auth === 'unknown') {
       const hint = skipAuth ? ' (--skip-auth-check)' : ' – runs need --skip-auth-check';
+      if (agent === 'antigravity') return { mark: style.yellow('!'), login: style.yellow(`login not verified: agy has no login check${hint}`) };
       return { mark: style.yellow('!'), login: style.yellow(`login not verified${hint}`) };
     }
     return { mark: style.red('✗'), login: style.red('login problem') };
@@ -647,7 +695,7 @@ export async function main(argv: string[], io: Io = defaultIo()): Promise<number
       case 'show':
         return await cli.show(rest);
       case 'doctor':
-        return await cli.doctor();
+        return await cli.doctor(rest);
       case 'unlock':
         return await cli.unlock(rest);
       default:
