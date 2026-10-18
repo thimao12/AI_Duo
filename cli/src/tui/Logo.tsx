@@ -3,9 +3,9 @@ import { activeTheme } from './theme.ts';
 import { gradientAt } from './themes.ts';
 
 /**
- * Duo mark: two overlapping discs, one flowing gradient left to right through the theme's accent
- * and info colours. Light falls from above (the top is lifted, the bottom deepened) and the
- * lens the discs share is lit up, so the two circles still read as a pair. Each terminal row carries
+ * Duo mark: two overlapping discs, one gradient running from the left edge to the right edge
+ * through all the theme's colours, unbroken where the discs overlap. Light falls from above (the top is
+ * lifted, the bottom deepened). Each terminal row carries
  * two pixel rows through the half blocks ▀ ▄ █, so the pixels come out square and the discs round.
  */
 const HEIGHT = 12;
@@ -30,9 +30,7 @@ export function logoPixel(x: number, y: number, stops: readonly string[]): strin
   if (!inside[0] && !inside[1]) return undefined;
   const base = gradientAt(stops, (x + 0.5) / WIDTH);
   const down = y / (HEIGHT - 1);
-  const lit = toward(toward(base, '#ffffff', 0.28 * (1 - down)), '#000000', 0.22 * down);
-  if (inside[0] && inside[1]) return HEX.test(base) ? toward(base, '#ffffff', 0.4 - 0.15 * down) : 'white';
-  return lit;
+  return toward(toward(base, '#ffffff', 0.28 * (1 - down)), '#000000', 0.22 * down);
 }
 
 interface Cell {

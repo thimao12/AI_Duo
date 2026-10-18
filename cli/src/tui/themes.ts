@@ -13,7 +13,7 @@ export interface Theme {
   logo: string[];
 }
 
-const theme = (id: string, label: string, dark: boolean, colors: Theme['colors'], diff: Theme['diff']): Theme => ({ id, label, dark, colors, diff, logo: [colors.cyan, colors.blue] });
+const theme = (id: string, label: string, dark: boolean, colors: Theme['colors'], diff: Theme['diff']): Theme => ({ id, label, dark, colors, diff, logo: [colors.green, colors.cyan, colors.blue, colors.magenta, colors.red, colors.yellow] });
 
 const diff = (addBg: string, delBg: string, addFg: string, delFg: string, gutter: string): Theme['diff'] => ({ addBg, delBg, addFg, delFg, gutter });
 
@@ -51,7 +51,7 @@ export const ANSI_THEME: Theme = {
   dark: true,
   colors: { cyan: 'cyan', green: 'green', yellow: 'yellow', red: 'red', magenta: 'magenta', blue: 'blue', gray: 'gray' },
   diff: { addBg: 'green', delBg: 'red', addFg: 'green', delFg: 'red', gutter: 'gray' },
-  logo: ['cyan', 'blue'],
+  logo: ['green', 'cyan', 'blue', 'magenta', 'red', 'yellow'],
 };
 
 export const DEFAULT_THEME_ID = 'tokyo-night';
