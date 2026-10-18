@@ -1,12 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 import { ArrowUp, CircleAlert, Folder, FolderOpen, GitMerge, ImagePlus, ListTodo, SlidersHorizontal, Sparkles, Waypoints, Workflow, X } from 'lucide-react';
 import { api, type AgentStatus, type ModelCatalog, type NewRunRequest, type RoutePreview, type RunConfig } from '../api.ts';
 import ModelPicker from './ModelPicker.tsx';
 import { AGENT_LABEL, basename, MenuItem, MenuLabel, MODE_LABEL, Popover, Spinner, useInputFocus } from './ui.tsx';
 import { loadDraftImages, saveDraftImages, type DraftImage } from '../draft-images.ts';
-import { buildRunRequest, normalizeForm, parseStoredForm, toggleRole, type ComposerForm as Form } from '../composer-form.ts';
+import { applyMode, buildRunRequest, currentModeId, modeChoices, normalizeForm, parseStoredForm, stepModeChoice, type ComposerForm as Form } from '../composer-form.ts';
 import { useSettingsData } from '../roles-data.ts';
-import { PipelinePicker, RoleChips } from './ComposerRoles.tsx';
+import { ModeChips, PipelinePicker } from './ComposerRoles.tsx';
 import { PipelinesModal } from './PipelinesModal.tsx';
 import { RolesModal } from './RolesModal.tsx';
 import { AgentToggle, PermissionSelect } from './role-controls.tsx';
@@ -340,6 +340,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
   const side = hero ? 'bottom' : 'top';
   const { roles, pipelines } = useSettingsData();
   const [rolesOpen, setRolesOpen] = useState(false);
+  const modeChoice = useMemo(() => modeChoices(roles), [roles]);
   const [pipelinesOpen, setPipelinesOpen] = useState(false);
 
   // A role or pipeline deleted in the editor must not stay selected.
@@ -380,10 +381,13 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
       e.preventDefault();
       void submit();
     }
-    // Shift+Tab toggles Code ↔ Plan; plain Tab still moves focus.
+    // Shift+Tab steps to the next mode (Code, Plan, the roles); plain Tab still moves focus.
     if (e.key === 'Tab' && e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey && !e.repeat && !composing) {
       e.preventDefault();
-      setForm((f) => ({ ...f, mode: f.mode === 'plan' ? 'code' : 'plan', maxRounds: 2 }));
+      setForm((f) => {
+        const next = stepModeChoice(modeChoice, f, 1);
+        return next ? applyMode(f, next) : f;
+      });
     }
   };
 
@@ -397,7 +401,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
         }}
         className="rounded-[20px] border border-line bg-bg shadow-card"
       >
-        <RoleChips roles={roles} roleId={form.roleId} onPick={(role) => setForm((f) => toggleRole(f, role))} onEdit={() => setRolesOpen(true)} />
+        <ModeChips modes={modeChoice} activeId={currentModeId(form)} onPick={(mode) => setForm((f) => applyMode(f, mode))} onEdit={() => setRolesOpen(true)} />
         <label htmlFor="composer-input" className="sr-only">
           Task cho Claude và Codex
         </label>
@@ -445,7 +449,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
             )}
 
             {form.mode === 'plan' && (
-              <output title="Shift + Tab để quay lại Code" className="inline-flex h-8 items-center gap-1.5 px-2 text-[12.5px] font-medium text-fg">
+              <output title="Shift + Tab để đổi chế độ" className="inline-flex h-8 items-center gap-1.5 px-2 text-[12.5px] font-medium text-fg">
                 <PlanIcon aria-hidden className="size-3.5 shrink-0" />
                 {MODE_LABEL.plan}
               </output>

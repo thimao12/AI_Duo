@@ -1,22 +1,24 @@
 import { Workflow } from 'lucide-react';
-import type { PipelineDef, RoleDef } from '../api.ts';
+import type { PipelineDef } from '../api.ts';
+import type { ModeChoice } from '../composer-form.ts';
 import { chipCls, MenuItem, MenuLabel, Popover } from './ui.tsx';
 
-interface RoleChipsProps {
-  roles: RoleDef[];
-  roleId: string;
-  onPick: (role: RoleDef) => void;
+interface ModeChipsProps {
+  modes: ModeChoice[];
+  /** The mode in effect; '' while a pipeline is selected. */
+  activeId: string;
+  onPick: (mode: ModeChoice) => void;
   onEdit: () => void;
 }
 
-/** Row above the input: one chip per role, plus a link to the role editor. */
-export function RoleChips({ roles, roleId, onPick, onEdit }: Readonly<RoleChipsProps>) {
-  if (roles.length === 0) return null;
+/** Row above the input: one chip per mode (Code, Plan, the single-turn roles), plus a link to the editor. */
+export function ModeChips({ modes, activeId, onPick, onEdit }: Readonly<ModeChipsProps>) {
+  if (modes.length === 0) return null;
   return (
     <fieldset className="m-0 flex min-w-0 flex-wrap items-center gap-1 border-0 px-3 pt-2.5 pb-0">
-      <legend className="sr-only">Vai trò</legend>
-      {roles.map((r) => {
-        const on = r.id === roleId;
+      <legend className="sr-only">Chế độ</legend>
+      {modes.map((r) => {
+        const on = r.id === activeId;
         return (
           <button
             key={r.id}
@@ -28,13 +30,13 @@ export function RoleChips({ roles, roleId, onPick, onEdit }: Readonly<RoleChipsP
               on ? 'border-fg bg-fg text-bg' : 'border-line text-muted hover:border-line-strong hover:text-fg'
             }`}
           >
-            <span aria-hidden>{r.icon}</span>
+            {r.icon ? <span aria-hidden>{r.icon}</span> : null}
             {r.name}
           </button>
         );
       })}
       <button type="button" onClick={onEdit} className="h-7 rounded-lg px-2 text-[12.5px] text-faint underline-offset-2 hover:text-fg hover:underline">
-        Sửa vai trò…
+        Sửa chế độ…
       </button>
     </fieldset>
   );

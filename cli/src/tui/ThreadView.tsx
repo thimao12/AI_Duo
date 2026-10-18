@@ -28,7 +28,7 @@ export function BrandHeader({ version, cwd, branch }: Readonly<{ version: string
           {cwd}
           {branch ? ` · ⎇ ${branch}` : ''}
         </Text>
-        <Text wrap="truncate-end" dimColor>/help commands · Tab role · Shift+Tab Code/Plan · ! shell</Text>
+        <Text wrap="truncate-end" dimColor>/help commands · Tab mode · Shift+Tab back · ! shell</Text>
       </Box>
     </Box>
   );

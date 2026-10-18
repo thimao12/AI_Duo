@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { PipelineDef, RoleDef } from '../../../server/src/types.ts';
 import { getPipelines, getRoles } from '../../../server/src/settings.ts';
+import { currentModeId, modeList, stepMode, type ModeEntry } from './modes.ts';
 import type { SessionOverrides } from './panel-types.ts';
 import type { ChatMode, Selection } from './requestBuilder.ts';
 
@@ -9,8 +10,11 @@ export interface SelectionApi {
   roles: RoleDef[];
   pipelines: PipelineDef[];
   pipeline: PipelineDef | null;
-  cycleRole(): void;
-  toggleMode(): void;
+  /** Every mode (Code, Plan, single-turn roles, pipelines) in Tab order, and the one in effect. */
+  modes: ModeEntry[];
+  modeId: string;
+  /** Tab (1) and Shift+Tab (-1): the next or previous mode. */
+  cycleMode(step: 1 | -1): void;
   pickRole(role: RoleDef | null): void;
   pickPipeline(id: string | null): void;
   pickOverrides(overrides: SessionOverrides): void;
@@ -19,14 +23,6 @@ export interface SelectionApi {
   resetTo(mode: ChatMode): void;
   /** Re-read roles and pipelines (after a panel may have edited them). */
   reload(): void;
-}
-
-/** Next role in Tab order: none -> first role -> … -> last role -> none. */
-export function nextRole(roles: readonly RoleDef[], current: RoleDef | null): RoleDef | null {
-  if (roles.length === 0) return null;
-  if (!current) return roles[0];
-  const index = roles.findIndex((r) => r.id === current.id);
-  return index < 0 || index === roles.length - 1 ? null : roles[index + 1];
 }
 
 /** Mode, role, pipeline and per-message overrides the composer sends with the next message. */
@@ -66,13 +62,15 @@ export function useSelection(): SelectionApi {
     }
   }, []);
 
-  const cycleRole = () => pickRole(nextRole(roles, role));
+  const modes = modeList(roles, pipelines);
+  const modeId = currentModeId({ mode, role, pipelineId });
 
-  const toggleMode = () => {
-    const next: ChatMode = mode === 'plan' && !pipelineId ? 'code' : 'plan';
-    setMode(next);
-    setPipelineId(null);
-    if (next === 'plan') setRole(null);
+  const cycleMode = (step: 1 | -1) => {
+    const next = stepMode(modes, modeId, step);
+    if (!next) return;
+    setPipelineId(next.pipeline?.id ?? null);
+    setRole(next.role ?? null);
+    setMode(next.id === 'plan' ? 'plan' : 'code');
   };
 
   const pickPipeline = (id: string | null) => {
@@ -90,8 +88,9 @@ export function useSelection(): SelectionApi {
     roles,
     pipelines,
     pipeline: pipelines.find((p) => p.id === pipelineId) ?? null,
-    cycleRole,
-    toggleMode,
+    modes,
+    modeId,
+    cycleMode,
     pickRole,
     pickPipeline,
     pickOverrides: setOverrides,

@@ -38,7 +38,7 @@ await step('themes: every theme fills every role with a hex colour and a logo gr
     assert.ok(!ids.has(theme.id), `duplicate id ${theme.id}`);
     ids.add(theme.id);
     for (const [role, color] of Object.entries(theme.colors)) assert.match(color, hex, `${theme.id}.${role}`);
-    for (const color of [...Object.values(theme.diff), ...theme.logo.warm, ...theme.logo.cool]) assert.match(color, hex, theme.id);
+    for (const color of [...Object.values(theme.diff), ...theme.logo]) assert.match(color, hex, theme.id);
   }
   assert.equal(findTheme('dracula')?.label, 'Dracula');
   assert.equal(findTheme('nope'), undefined);
@@ -71,15 +71,15 @@ await step('theme setting is validated and saved with the CLI settings', () => {
   assert.match(String(validateCliSettings({ theme: 3 })), /theme/);
 });
 
-await step('logo: two interlocking A letters drawn with strokes, theme gradient', () => {
+await step('logo: two overlapping discs, square pixels, theme gradient', () => {
   assert.equal(LOGO_ROWS, 6);
   const rows = Array.from({ length: LOGO_ROWS }, (_, row) => plainLogoRow(row));
   for (const row of rows) assert.equal(row.length, LOGO_WIDTH);
   assert.ok(rows[0].trim().length > 0 && rows[5].trim().length > 0);
   const { logo } = findTheme('tokyo-night')!;
-  const top = logoRow(0, logo.warm, logo.cool).filter((c) => c.color);
-  assert.ok(top.every((c) => c.char === '╱' || c.char === '╲'), 'the apexes are drawn from diagonal strokes');
-  const colours = new Set(Array.from({ length: LOGO_ROWS }, (_, r) => logoRow(r, logo.warm, logo.cool).map((c) => c.color).join()).values());
+  const top = logoRow(0, logo).filter((c) => c.color);
+  assert.ok(top.every((c) => '▀▄█'.includes(c.char)), 'the discs are drawn from half blocks');
+  const colours = new Set(Array.from({ length: LOGO_ROWS }, (_, r) => logoRow(r, logo).map((c) => c.color).join()).values());
   assert.ok(colours.size > 3, 'the gradient changes from row to row');
 });
 
@@ -187,6 +187,28 @@ await step('tool output is shown under shell calls only, with the exit code', ()
   assert.match(out, /a\.ts \+1 −1/);
   assert.match(out, /-\s+old line/);
   assert.match(out, /\+\s+new line/);
+});
+
+await step('modeList: Code, Plan, role modes (not code/plan), pipelines; stepping wraps', async () => {
+  const { modeList, currentModeId, stepMode } = await import('./tui/modes.ts');
+  const role = (id: string, name: string) => ({ id, name, icon: '·', description: '', agent: 'claude' as const, model: '', effort: '', permission: 'read' as const, template: '{{task}}', gradable: false });
+  const roles = [role('plan', 'Plan'), role('review', 'Review'), role('code', 'Code'), role('mine', 'Mine')];
+  const list = modeList(roles, [{ id: 'p1', name: 'Ship', steps: [] }]);
+  assert.deepEqual(list.map((m) => m.id), ['code', 'plan', 'role:review', 'role:mine', 'pipeline:p1']);
+  assert.equal(modeList([], []).length, 2, 'Code and Plan are always there');
+
+  const base = { mode: 'code' as const, role: null, pipelineId: null };
+  assert.equal(currentModeId(base), 'code');
+  assert.equal(currentModeId({ ...base, mode: 'plan' }), 'plan');
+  assert.equal(currentModeId({ ...base, role: roles[1] }), 'role:review');
+  assert.equal(currentModeId({ ...base, role: roles[2] }), 'code', 'the hidden code role counts as Code');
+  assert.equal(currentModeId({ ...base, pipelineId: 'p1' }), 'pipeline:p1');
+
+  assert.equal(stepMode(list, 'code', 1)?.id, 'plan');
+  assert.equal(stepMode(list, 'pipeline:p1', 1)?.id, 'code', 'wraps forward');
+  assert.equal(stepMode(list, 'code', -1)?.id, 'pipeline:p1', 'wraps backward');
+  assert.equal(stepMode(list, 'role:gone', 1)?.id, 'code', 'a deleted role falls back to the first mode');
+  assert.equal(stepMode([], 'code', 1), undefined);
 });
 
 if (failed) process.exit(1);

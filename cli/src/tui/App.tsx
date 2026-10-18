@@ -255,8 +255,8 @@ export function App(props: Readonly<AppProps>) {
     !awaiting && !panel ? (
       <Composer
         history={history}
-        roles={selection.roles}
-        role={selection.selection.role}
+        modes={selection.modes}
+        modeId={selection.modeId}
         commands={menuCommands}
         cwd={cwd}
         readClipboard={props.readClipboard}
@@ -270,8 +270,7 @@ export function App(props: Readonly<AppProps>) {
             if (error) session.notice('error', error);
           });
         }}
-        onCycleRole={selection.cycleRole}
-        onToggleMode={selection.toggleMode}
+        onCycleMode={selection.cycleMode}
         onDraft={setDraft}
         onExit={exit}
         reserveScrollKeys={fullscreen}

@@ -78,6 +78,45 @@ export function toggleRole(form: ComposerForm, role: { id: string; agent: AgentN
   };
 }
 
+/** One entry of the mode list: Code, Plan, then the single-turn roles. The roles named like a mode are covered by it. */
+export interface ModeChoice {
+  id: string;
+  name: string;
+  icon?: string;
+  description?: string;
+  role?: { id: string; agent: AgentName; model: string; effort: string; permission: Permission };
+}
+
+type ChoiceRole = NonNullable<ModeChoice['role']> & { name: string; icon: string; description: string };
+
+export function modeChoices(roles: readonly ChoiceRole[]): ModeChoice[] {
+  return [
+    { id: 'code', name: 'Code', description: 'Router tự chọn agent code và review; hỏi bạn sau 2 vòng nếu chưa approve.' },
+    { id: 'plan', name: 'Plan', description: 'Lập và review kế hoạch; chỉ bắt đầu code sau khi bạn duyệt.' },
+    ...roles.filter((r) => r.id !== 'code' && r.id !== 'plan').map((role): ModeChoice => ({ id: 'role:' + role.id, name: role.name, icon: role.icon, description: role.description, role })),
+  ];
+}
+
+/** The mode a form is in (a pipeline run counts as none of the chips). */
+export function currentModeId(form: Pick<ComposerForm, 'mode' | 'roleId'>): string {
+  if (form.mode === 'plan') return 'plan';
+  if (form.mode === 'pipeline') return '';
+  return form.roleId && form.roleId !== 'code' ? 'role:' + form.roleId : 'code';
+}
+
+/** Switch the form to a mode: Code and Plan clear the role and the hand-picked agent; a role fills its own. */
+export function applyMode(form: ComposerForm, choice: ModeChoice): ComposerForm {
+  if (choice.role) return toggleRole({ ...form, roleId: form.roleId === choice.role.id ? '' : form.roleId }, choice.role);
+  return { ...form, mode: choice.id === 'plan' ? 'plan' : 'code', pipelineId: '', roleId: '', agent: '', permission: '', maxRounds: 2 };
+}
+
+/** The mode a step away (wrapping), for Shift+Tab. */
+export function stepModeChoice(choices: readonly ModeChoice[], form: ComposerForm, step: 1 | -1): ModeChoice | undefined {
+  if (choices.length === 0) return undefined;
+  const index = choices.findIndex((c) => c.id === currentModeId(form));
+  return choices[index < 0 ? 0 : (index + step + choices.length) % choices.length];
+}
+
 /**
  * The run request for a form. Nothing chosen = the router decides, as before; a chosen role, agent or
  * permission is sent explicitly (request fields beat the role, the role beats the router).

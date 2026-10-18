@@ -1,6 +1,6 @@
 import { Box, Text, useInput, usePaste, useWindowSize, type Key } from 'ink';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import type { RoleDef } from '../../../server/src/types.ts';
+import type { ModeEntry } from './modes.ts';
 import { readClipboardImage, type ClipboardReader } from './clipboard.ts';
 import { LIMIT_NOTE, MAX_IMAGES, pastedImagePath, type ImageAttachment } from './images.ts';
 import { attachmentSummary, displayToken, renumberForSend, segments, type Attached, type TokenSpan } from './imageTokens.ts';
@@ -46,14 +46,15 @@ export function continuesLine(text: string, cursor: number): boolean {
 
 /* ---- Views ---- */
 
-function RoleChips({ roles, role, plainLabel }: Readonly<{ roles: readonly RoleDef[]; role: RoleDef | null; plainLabel: string }>) {
-  if (roles.length === 0) return null;
+/** The modes Tab cycles through, the one in effect highlighted. */
+function ModeChips({ modes, modeId }: Readonly<{ modes: readonly ModeEntry[]; modeId: string }>) {
+  if (modes.length === 0) return null;
   return (
     <Box flexWrap="wrap" columnGap={1}>
-      <Text dimColor>{plainLabel}</Text>
-      {roles.map((r) => (
-        <Text key={r.id} inverse={r.id === role?.id} dimColor={r.id !== role?.id}>
-          {` ${r.name} `}
+      <Text dimColor>mode:</Text>
+      {modes.map((m) => (
+        <Text key={m.id} inverse={m.id === modeId} dimColor={m.id !== modeId}>
+          {` ${m.label} `}
         </Text>
       ))}
     </Box>
@@ -176,8 +177,9 @@ function EditorView({ state, placeholder, active, glyph, glyphTone }: Readonly<E
 export interface ComposerProps {
   /** Older prompts, newest last (Up/Down walk through them). */
   history?: readonly string[];
-  roles?: readonly RoleDef[];
-  role?: RoleDef | null;
+  /** Modes to cycle (Tab / Shift+Tab) and the one in effect. */
+  modes?: readonly ModeEntry[];
+  modeId?: string;
   commands?: readonly SlashCommand[];
   /** Keyboard capture on/off (off while a panel or a decision owns the keys). */
   active?: boolean;
@@ -192,8 +194,7 @@ export interface ComposerProps {
   /** Returns an error to show under the box (the text and the images are put back), or null when accepted. `text` keeps the `[Image #N]` tokens, renumbered to match `images` (in number order). */
   onSubmit(text: string, images: readonly ImageAttachment[]): Promise<string | null> | string | null;
   onCommand?(command: SlashCommand): void;
-  onCycleRole?(): void;
-  onToggleMode?(): void;
+  onCycleMode?(step: 1 | -1): void;
   onDraft?(text: string): void;
   /** Ctrl+D on an empty box. */
   onExit?(): void;
@@ -247,7 +248,7 @@ function isNewlineKey(input: string, key: Key): boolean {
 }
 
 export function Composer(props: Readonly<ComposerProps>) {
-  const { history = [], roles = [], role = null, commands = [], active = true, plain = false, placeholder = 'Ask anything, or type / for commands' } = props;
+  const { history = [], modes = [], modeId = 'code', commands = [], active = true, plain = false, placeholder = 'Ask anything, or type / for commands' } = props;
   const [editor, setEditor] = useState<EditorState>(EMPTY_EDITOR);
   const [error, setError] = useState<string | null>(null);
   const [menuIndex, setMenuIndex] = useState(0);
@@ -456,8 +457,8 @@ export function Composer(props: Readonly<ComposerProps>) {
   };
 
   const tabKey = (key: Key) => {
-    if (key.shift) props.onToggleMode?.();
-    else if (latest.current.text === '') props.onCycleRole?.();
+    if (key.shift) props.onCycleMode?.(-1);
+    else if (latest.current.text === '') props.onCycleMode?.(1);
   };
 
   const arrowKey = (key: Key) => {
@@ -524,7 +525,7 @@ export function Composer(props: Readonly<ComposerProps>) {
   const borderColor = tone(shell ? 'magenta' : (props.borderTone ?? 'cyan'));
   return (
     <Box flexDirection="column">
-      {plain ? null : <RoleChips roles={roles} role={role} plainLabel="role:" />}
+      {plain ? null : <ModeChips modes={modes} modeId={modeId} />}
       <Box borderStyle="round" borderColor={borderColor} paddingX={1} flexDirection="column">
         <EditorView state={editor} placeholder={shell ? 'command to run in the session folder' : placeholder} active={active} glyph={shell ? '!' : '›'} glyphTone={shell ? 'magenta' : 'cyan'} />
       </Box>

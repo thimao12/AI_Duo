@@ -362,11 +362,11 @@ await step('slash menu: filter, choose, run /help, unknown command', async () =>
   assert.equal(t.service.seen.length, 0);
 });
 
-await step('roles: Tab cycles, Shift+Tab toggles Plan, request follows', async () => {
+await step('modes: Tab walks Code, Plan, the role modes; the request follows', async () => {
   const t = open();
-  await t.seeing(/Plan\s+Review\s+Code/);
+  await t.seeing(/Code\s+Plan\s+Review\s+Test\s+Debug\s+Ask/);
   await t.type(KEY.tab);
-  await t.seeing('🧭 Plan');
+  await t.seeing('PLAN');
   await t.type(KEY.tab);
   await t.seeing('🔍 Review');
   await t.type('check it');
@@ -379,12 +379,16 @@ await step('roles: Tab cycles, Shift+Tab toggles Plan, request follows', async (
   await t.seeing('✓ done');
 });
 
-await step('mode: Shift+Tab switches to Plan and back', async () => {
+await step('modes: Shift+Tab goes back and wraps around', async () => {
   const t = open();
   await t.seeing('CODE');
-  await t.type(KEY.shiftTab);
+  await t.type(KEY.tab);
   await t.seeing('PLAN');
   await t.type(KEY.shiftTab);
+  await t.seeing('CODE');
+  await t.type(KEY.shiftTab);
+  await t.seeing('💬 Ask');
+  await t.type(KEY.tab);
   await t.seeing('CODE');
 });
 
@@ -393,7 +397,7 @@ await step('mode: Shift+Tab switches to Plan and back', async () => {
 await step('plan decision: approve runs Code', async () => {
   const t = open();
   await t.seeing('Ask anything');
-  await t.type(KEY.shiftTab);
+  await t.type(KEY.tab);
   await t.type('design the feature');
   await t.type(KEY.enter);
   await t.seeing('Plan ready');
@@ -411,7 +415,7 @@ await step('plan decision: refusal outside Git keeps the plan waiting, refine an
   service.approveRefusal = 'Code mode needs a Git repository. Run git init.';
   const t = open(service);
   await t.seeing('Ask anything');
-  await t.type(KEY.shiftTab);
+  await t.type(KEY.tab);
   await t.type('plan it');
   await t.type(KEY.enter);
   await t.seeing('Plan ready');
