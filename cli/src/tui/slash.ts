@@ -1,10 +1,12 @@
 import { createElement } from 'react';
 import type { PanelProps, SlashCommand } from './panel-types.ts';
 import ConnectionPanel from './panels/ConnectionPanel.tsx';
+import McpPanel from './panels/McpPanel.tsx';
 import ModelPanel from './panels/ModelPanel.tsx';
 import PipelinesPanel from './panels/PipelinesPanel.tsx';
 import RolesPanel from './panels/RolesPanel.tsx';
 import SessionsPanel from './panels/SessionsPanel.tsx';
+import SkillsPanel from './panels/SkillsPanel.tsx';
 import SettingsPanel from './panels/SettingsPanel.tsx';
 import ThemePanel from './panels/ThemePanel.tsx';
 import UsagePanel from './panels/UsagePanel.tsx';
@@ -27,6 +29,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'usage', description: 'Claude and Codex usage limits', panel: (p: PanelProps) => createElement(UsagePanel, p) },
   { name: 'login', description: 'Check and connect the Claude, Codex and Antigravity CLIs', panel: (p: PanelProps) => createElement(ConnectionPanel, p) },
   { name: 'settings', description: 'Per-CLI settings', panel: (p: PanelProps) => createElement(SettingsPanel, p) },
+  { name: 'mcp', description: 'MCP servers for Claude and Codex turns', panel: (p: PanelProps) => createElement(McpPanel, p) },
+  { name: 'skills', description: 'Skills and custom slash commands of this project', panel: (p: PanelProps) => createElement(SkillsPanel, p) },
   { name: 'theme', description: 'Choose a colour theme', panel: (p: PanelProps) => createElement(ThemePanel, p) },
   { name: 'paste-image', description: 'Attach an image from the clipboard (also Ctrl+V / Alt+V)' },
   { name: 'clear-images', description: 'Remove the attached images and their [Image #N] tokens' },

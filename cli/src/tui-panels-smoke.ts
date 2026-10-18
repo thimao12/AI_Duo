@@ -407,6 +407,51 @@ try {
   const describe = (await import('./tui/panels/ModelPanel.tsx')).describeOverrides;
   assert.equal(describe({ agent: 'antigravity', reviewer: 'codex' }), 'Antigravity · review: Codex');
 
+  // ---- MCP panel: form helpers, the saved list, delete.
+  const mcp = await import('./tui/panels/McpPanel.tsx');
+  assert.deepEqual(mcp.parseArgs('-y @scope/srv "two words" x'), ['-y', '@scope/srv', 'two words', 'x']);
+  assert.deepEqual(mcp.parseEnv('A=1 B="x y" bad C='), { A: '1', B: 'x y', C: '' });
+  const typed = { name: ' files ', command: ' npx ', args: '-y srv "a b"', env: 'T=1', roles: 'coder + reviewer' };
+  assert.deepEqual(mcp.serverOf(typed), { name: 'files', command: 'npx', args: ['-y', 'srv', 'a b'], env: { T: '1' }, roles: ['coder', 'reviewer'] });
+  assert.deepEqual(mcp.serverOf({ name: 'p', command: 'node', args: '', env: '', roles: 'coder' }), { name: 'p', command: 'node' }, 'the default roles are not written');
+  assert.deepEqual(mcp.draftOf(mcp.serverOf(typed)), { ...typed, name: 'files', command: 'npx' }, 'a server round-trips through the form');
+  assert.equal(mcp.mcpFields(typed).find((f) => f.id === 'roles')?.options?.length, Object.keys(mcp.ROLE_CHOICES).length);
+  const { default: McpPanel } = mcp;
+  const emptyMcp = mount(h(McpPanel, { cwd: workDir, onClose: () => undefined }));
+  await seen(emptyMcp, 'Chưa có MCP server nào');
+  emptyMcp.unmount();
+  const settingsModule = await import('../../server/src/settings.ts');
+  const saved = await settingsModule.setCliSettings({ mcp: [{ name: 'files', command: 'npx', args: ['-y', 'srv'] }, { name: 'ro', command: 'node', roles: ['reviewer'] }] });
+  assert.equal(typeof saved, 'object');
+  const mcpPanel = mount(h(McpPanel, { cwd: workDir, onClose: () => undefined }));
+  const mcpFrame = await seen(mcpPanel, 'files');
+  assert.ok(mcpFrame.includes('npx -y srv · coder') && mcpFrame.includes('ro') && mcpFrame.includes('node · reviewer') && mcpFrame.includes('2 server'), mcpFrame);
+  await press(mcpPanel, 'd');
+  await seen(mcpPanel, 'Xoá MCP server "files"?');
+  await press(mcpPanel, 'y');
+  await until(mcpPanel, (f) => !f.includes('npx -y srv') && f.includes('1 server'), 'files removed');
+  assert.deepEqual((await settingsModule.getCliSettings()).mcp?.map((m) => m.name), ['ro'], 'the deletion is saved');
+  await press(mcpPanel, 'n');
+  await seen(mcpPanel, 'Cho phép');
+  await press(mcpPanel, 's');
+  await until(mcpPanel, (f) => /name|command/i.test(f), 'an invalid draft is refused with the server message');
+  mcpPanel.unmount();
+
+  // ---- Skills panel: skills and custom commands of the project.
+  const { default: SkillsPanel } = await import('./tui/panels/SkillsPanel.tsx');
+  const { writeFile } = await import('node:fs/promises');
+  await mkdir(path.join(workDir, '.claude', 'skills', 'deploy'), { recursive: true });
+  await writeFile(path.join(workDir, '.claude', 'skills', 'deploy', 'SKILL.md'), ['---', 'name: deploy', 'description: Ship it', '---', 'Steps'].join('\n'));
+  await mkdir(path.join(workDir, '.ai-duo', 'commands'), { recursive: true });
+  await writeFile(path.join(workDir, '.ai-duo', 'commands', 'greet.md'), ['---', 'description: Say hello', '---', 'Hello $ARGUMENTS'].join('\n'));
+  const skills = mount(h(SkillsPanel, { cwd: workDir, onClose: () => undefined }));
+  const skillsFrame = await seen(skills, 'deploy');
+  assert.ok(skillsFrame.includes('skill · dự án · Ship it') && skillsFrame.includes('/greet') && skillsFrame.includes('lệnh · dự án · Say hello'), skillsFrame);
+  skills.unmount();
+  const noSkills = mount(h(SkillsPanel, { cwd: otherDir, onClose: () => undefined }));
+  await seen(noSkills, 'Chưa có skill hay lệnh nào');
+  noSkills.unmount();
+
   console.log('tui panels smoke passed');
 } finally {
   for (const app of apps) app.unmount();

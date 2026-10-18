@@ -335,13 +335,13 @@ await step('slash menu: filter, choose, run /help, unknown command', async () =>
   await t.seeing('Ask anything');
   await t.type('/');
   await t.seeing('/help');
-  assert.ok(t.frame().includes('/clear') && t.frame().includes('1/18 ↓'), 'the first commands are listed');
+  assert.ok(t.frame().includes('/clear') && t.frame().includes('1/20 ↓'), 'the first commands are listed');
   for (let i = 0; i < 10; i++) await t.type(KEY.down);
   await t.seeing('› /usage');
-  assert.ok(t.frame().includes('11/18 ↑ ↓'), 'the menu follows the selection past the first eight commands');
+  assert.ok(t.frame().includes('11/20 ↑ ↓'), 'the menu follows the selection past the first eight commands');
   for (let i = 0; i < 7; i++) await t.type(KEY.down);
   await t.seeing('› /exit');
-  assert.ok(t.frame().includes('18/18 ↑') && !t.frame().includes('18/18 ↑ ↓'), 'the last command has no items below');
+  assert.ok(t.frame().includes('20/20 ↑') && !t.frame().includes('20/20 ↑ ↓'), 'the last command has no items below');
   await t.type(KEY.down);
   await t.seeing('› /help');
   await t.type(KEY.up);
