@@ -1,12 +1,12 @@
 import { agentLabel, defaultPartner, type AgentName } from '../agents/index.ts';
 import { diffSince, diffTreeSummary, isGitRepo, snapshotTree } from '../git.ts';
+import { formatDiff, trackChanges } from './changes.ts';
 import { render } from '../prompts/index.ts';
 import type { RunContext } from '../run.ts';
 import type { Verdict } from '../types.ts';
 import { fencedBlocks } from '../../../shared/text.ts';
 
 const label = agentLabel;
-const MAX_DIFF_CHARS = 60_000;
 
 export interface ReviewResult {
   verdict?: 'APPROVE' | 'CHANGES_REQUESTED';
@@ -104,12 +104,6 @@ function buildTestHint(testCommand: string | undefined) {
     : 'Detect and run the project\'s relevant test / type-check / build commands (e.g. from package.json, Makefile, pyproject). If there are none, do a focused manual check.';
 }
 
-export function formatDiff(diff: string) {
-  if (!diff.trim()) return '_(no changes detected)_';
-  const cut = diff.length > MAX_DIFF_CHARS;
-  return '```diff\n' + (cut ? diff.slice(0, MAX_DIFF_CHARS) : diff) + '\n```' + (cut ? '\n(diff truncated – inspect the files directly for the rest)' : '');
-}
-
 async function reviewTurn(
   ctx: RunContext,
   o: { reviewer: Parameters<typeof label>[0]; coder: Parameters<typeof label>[0]; r: number; diff: string; summary: string; testHint: string },
@@ -188,15 +182,17 @@ async function nextStep(
  * Nothing is committed; the final diff is shown to the user.
  */
 export async function runPair(ctx: RunContext) {
-  const { cwd, maxRounds, coder, testCommand } = ctx.run.config;
-  const prompt = ctx.prompt;
-  const reviewer = ctx.run.config.reviewer ?? defaultPartner(coder);
-
+  const { cwd } = ctx.run.config;
   if (!(await isGitRepo(cwd))) {
     throw new Error(`Pair mode needs a git repository so changes can be diffed and reverted. "${cwd}" is not one (run \`git init\` there first).`);
   }
-  const base = await snapshotTree(cwd);
-  ctx.update({ baseTree: base });
+  await trackChanges(ctx, true, (base) => pairRounds(ctx, base!));
+}
+
+async function pairRounds(ctx: RunContext, base: string) {
+  const { cwd, maxRounds, coder, testCommand } = ctx.run.config;
+  const prompt = ctx.prompt;
+  const reviewer = ctx.run.config.reviewer ?? defaultPartner(coder);
   ctx.note('Đã chụp trạng thái ban đầu', `Snapshot working tree (tree ${base.slice(0, 10)}). Diff cuối phiên chỉ gồm thay đổi của agent. Không có gì được commit.`);
 
   const testHint = buildTestHint(testCommand);
@@ -246,7 +242,6 @@ export async function runPair(ctx: RunContext) {
   }
 
   const diff = await diffSince(cwd, base);
-  ctx.update({ afterTree: await snapshotTree(cwd) });
   const final = buildFinalReport({ approved, rounds, coder, reviewer, lastReview, diff, summary });
   ctx.update({ diff, final });
 }

@@ -1,8 +1,8 @@
 import type { AgentName } from '../agents/types.ts';
 import { runChecks } from '../checks.ts';
-import { diffSince, isGitRepo, snapshotTree } from '../git.ts';
+import { diffSince } from '../git.ts';
 import { renderTemplate } from '../prompts/index.ts';
-import { formatDiff } from './pair.ts';
+import { formatDiff, trackChanges } from './changes.ts';
 import type { RunContext, TurnResult } from '../run.ts';
 import { DEFAULT_MAX_LOOPS, getCliSettingsSync, loadSettings } from '../settings.ts';
 import { isAuto } from '../router/roles.ts';
@@ -82,15 +82,6 @@ function roleTurn(ctx: RunContext, t: RoleTurn): Promise<TurnResult> {
   });
 }
 
-/** Runs `work`, then records what it changed in the repository as the run's diff (only when edits are possible). */
-async function withDiff(ctx: RunContext, edits: boolean, work: (base: string | undefined) => Promise<void>): Promise<void> {
-  const { cwd } = ctx.run.config;
-  const base = edits && (await isGitRepo(cwd)) ? await snapshotTree(cwd) : undefined;
-  if (base) ctx.update({ baseTree: base });
-  await work(base);
-  if (base) ctx.update({ diff: await diffSince(cwd, base), afterTree: await snapshotTree(cwd) });
-}
-
 const label = (role: RoleDef) => `${role.icon} ${role.name}`.trim();
 
 /** A run with no saved role (only an explicit permission): the prompt goes through unchanged. */
@@ -105,7 +96,7 @@ export async function runRole(ctx: RunContext): Promise<void> {
   if (cfg.roleId && !saved) throw new Error(`Vai trò "${cfg.roleId}" không còn tồn tại`);
   const permission = cfg.permission ?? saved?.permission ?? 'read';
   const role = saved ?? adHocRole(cfg.coder, permission);
-  await withDiff(ctx, permission === 'edit', async () => {
+  await trackChanges(ctx, permission === 'edit', async () => {
     const result = await roleTurn(ctx, { role, agent: cfg.coder, permission, vars: { task: ctx.prompt, prev: '' }, round: 1, title: label(role) });
     ctx.update({ final: result.text });
   });
@@ -206,7 +197,7 @@ export async function runPipeline(ctx: RunContext): Promise<void> {
   const steps = planPipeline(ctx.run.config.pipelineId, await loadSettings());
   if (typeof steps === 'string') throw new Error(steps);
   const progress: Progress = { task: ctx.prompt, prev: '', outputs: {}, failures: new Map(), lastFail: new Map(), executed: 0 };
-  await withDiff(ctx, steps.some((s) => s.role.permission === 'edit'), (base) => {
+  await trackChanges(ctx, steps.some((s) => s.role.permission === 'edit'), (base) => {
     progress.base = base;
     return runFrom(ctx, steps, 0, progress);
   });

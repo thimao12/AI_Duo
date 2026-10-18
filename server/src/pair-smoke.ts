@@ -119,7 +119,7 @@ try {
     return fencedReview('APPROVE', ',"issues":"x"');
   });
   await runPair(approval.ctx);
-  assert.match(String(approval.updates.at(-1)?.final), /Codex đã approve/);
+  assert.match(String(approval.updates.findLast((u) => u.final !== undefined)?.final), /Codex đã approve/);
   assert.equal(approval.turns.find((turn) => turn.phase === 'review')?.verdict, 'APPROVE');
   assert.equal(approval.notes.some((note) => note.title === 'Reviewer không trả verdict hợp lệ'), false);
 
@@ -131,12 +131,28 @@ try {
   await runPair(sameAgent.ctx);
   assert.equal((sameAgent.turns.find((turn) => turn.phase === 'review') as any)?.agent, 'codex');
 
+  // A run that fails after the coder wrote files still records what changed, so Undo and /commit can use it.
+  const crashRepo = await makeRepo();
+  const crash = fakeContext(crashRepo, 'claude', 1, async (turn) => {
+    if (turn.phase === 'code') {
+      await writeFile(path.join(crashRepo, 'half-done.txt'), 'partial\n');
+      throw new Error('agent crashed');
+    }
+    return 'unused';
+  });
+  await assert.rejects(runPair(crash.ctx), /agent crashed/);
+  const recorded = Object.assign({}, ...crash.updates);
+  assert.match(String(recorded.baseTree), /^[0-9a-f]{40}/);
+  assert.match(String(recorded.afterTree), /^[0-9a-f]{40}/);
+  assert.notEqual(recorded.afterTree, recorded.baseTree);
+  assert.match(String(recorded.diff), /half-done\.txt/);
+
   const invalidRepo = await makeRepo();
   const invalid = fakeContext(invalidRepo, 'claude', 1, (turn) =>
     Promise.resolve(turn.phase === 'review' ? 'I would not APPROVE this' : 'Implemented.'),
   );
   await runPair(invalid.ctx);
-  assert.match(String(invalid.updates.at(-1)?.final), /Chưa được approve sau 1 vòng review/);
+  assert.match(String(invalid.updates.findLast((u) => u.final !== undefined)?.final), /Chưa được approve sau 1 vòng review/);
   assert.equal(invalid.turns.find((turn) => turn.phase === 'review')?.verdict, 'CHANGES_REQUESTED');
   assert.ok(invalid.notes.some(({ title, text }) => title === 'Reviewer không trả verdict hợp lệ' && text === '→ coi như CHANGES_REQUESTED'));
   assert.equal(invalid.decisionsAsked.length, 1, 'a failed review pauses at the configured review limit');
@@ -152,7 +168,7 @@ try {
   assert.equal(extensionReview, 4);
   assert.equal(extension.decisionsAsked.length, 2, 'the run asks again after each additional two reviews');
   assert.deepEqual(extension.updates.filter((patch) => 'pairRoundsGranted' in patch).map((patch) => patch.pairRoundsGranted), [2]);
-  assert.match(String(extension.updates.at(-1)?.final), /Chưa được approve sau 4 vòng review/);
+  assert.match(String(extension.updates.findLast((u) => u.final !== undefined)?.final), /Chưa được approve sau 4 vòng review/);
 
   // Both reviewer identities are watched. Their tracked writes warn, block approval,
   // and are named explicitly in the next coder fix prompt.
@@ -167,7 +183,7 @@ try {
       return fencedReview('APPROVE');
     });
     await runPair(mutation.ctx);
-    const final = String(mutation.updates.at(-1)?.final);
+    const final = String(mutation.updates.findLast((u) => u.final !== undefined)?.final);
     assert.match(final, /Chưa được approve sau 2 vòng review/);
     assert.equal(reviewRound, 2);
     assert.ok(mutation.notes.some(({ title, text }) => title === 'Reviewer đã sửa tệp trong lượt đánh giá' && /git diff --stat/.test(text) && /reviewer\.txt/.test(text)));
