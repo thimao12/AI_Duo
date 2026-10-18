@@ -1,5 +1,8 @@
 import { Box, Text } from 'ink';
+import type { EditInfo } from '../../../server/src/agents/types.ts';
 import type { Message, Part } from '../../../server/src/types.ts';
+import { countChanges, diffTexts } from './diff.ts';
+import { DiffView } from './DiffView.tsx';
 import { Markdown } from './Markdown.tsx';
 import { Spinner } from './Spinner.tsx';
 import { SPEAKER_NAME, speakerTone, tone } from './theme.ts';
@@ -11,7 +14,14 @@ export interface PartItem {
   text: string;
   /** Tool calls: still waiting for their result. */
   pending?: boolean;
+  /** File edits: what changed. */
+  edit?: EditInfo;
+  /** Shell and MCP calls: the output that came back. */
+  output?: string;
 }
+
+/** Tools whose output is worth showing under the call; file reads would only add noise. */
+const SHOWS_OUTPUT = /^(Bash|Shell|MCP|PowerShell)\b/;
 
 /** Fold raw message parts into what is worth showing: text, one line per tool call, one line for reasoning. */
 export function toPartItems(parts: readonly Part[], running: boolean): PartItem[] {
@@ -27,8 +37,12 @@ export function toPartItems(parts: readonly Part[], running: boolean): PartItem[
       return;
     }
     flushReasoning();
-    if (part.kind === 'tool_result') return;
-    if (part.kind === 'tool') items.push({ id: items.length, kind: 'tool', text: part.content, pending: running && index === parts.length - 1 });
+    if (part.kind === 'tool_result') {
+      const call = items.at(-1);
+      if (call?.kind === 'tool' && SHOWS_OUTPUT.test(call.text) && part.content.trim()) call.output = part.content;
+      return;
+    }
+    if (part.kind === 'tool') items.push({ id: items.length, kind: 'tool', text: part.content, pending: running && index === parts.length - 1, ...(part.edit && { edit: part.edit }) });
     else if (part.content.trim()) items.push({ id: items.length, kind: part.kind, text: part.content });
   });
   flushReasoning();
@@ -73,17 +87,75 @@ function Footer({ message }: Readonly<{ message: Message }>) {
   );
 }
 
+const OUTPUT_LINES = 8;
+
+/** Codex reports "exit N" on the first line of a command's output. */
+function splitExit(output: string): { code?: number; body: string } {
+  const match = /^exit (\d+)\r?\n?/.exec(output);
+  return match ? { code: Number(match[1]), body: output.slice(match[0].length) } : { body: output };
+}
+
+function ToolOutput({ output, width }: Readonly<{ output: string; width: number }>) {
+  const { code, body } = splitExit(output);
+  const lines = body.replace(/\s+$/, '').split('\n');
+  const shown = lines.slice(0, OUTPUT_LINES);
+  return (
+    <Box flexDirection="column" paddingLeft={4}>
+      {shown.map((line, i) => (
+        <Text key={i} dimColor>{`│ ${oneLine(line, width - 10)}`}</Text>
+      ))}
+      {lines.length > shown.length ? <Text dimColor>{`│ … ${lines.length - shown.length} more line(s)`}</Text> : null}
+      {code !== undefined ? <Text color={tone(code === 0 ? 'green' : 'red')}>{code === 0 ? '└ exit 0' : `└ exit ${code}`}</Text> : null}
+    </Box>
+  );
+}
+
+function EditBlock({ edit, width }: Readonly<{ edit: EditInfo; width: number }>) {
+  const lines = diffTexts(edit.oldText, edit.newText);
+  const { added, removed } = countChanges(lines);
+  return (
+    <Box flexDirection="column">
+      <Text wrap="truncate-end">
+        {'  '}
+        <Text bold>{edit.path}</Text>
+        <Text color={tone('green')}>{` +${added}`}</Text>
+        <Text color={tone('red')}>{` −${removed}`}</Text>
+      </Text>
+      <DiffView lines={lines} width={width - 2} maxRows={24} />
+    </Box>
+  );
+}
+
+function ToolLine({ item, width }: Readonly<{ item: PartItem; width: number }>) {
+  const mark = item.pending ? <Spinner /> : <Text color={tone('green')}>✓</Text>;
+  if (item.edit) {
+    return (
+      <Box flexDirection="column">
+        <Text dimColor>
+          {`  ${item.text.split(':')[0]} `}
+          {mark}
+        </Text>
+        <EditBlock edit={item.edit} width={width} />
+      </Box>
+    );
+  }
+  return (
+    <Box flexDirection="column">
+      <Text dimColor>
+        {`  $ ${oneLine(item.text, width - 8)} `}
+        {mark}
+      </Text>
+      {item.output ? <ToolOutput output={item.output} width={width} /> : null}
+    </Box>
+  );
+}
+
 function PartLine({ item, width }: Readonly<{ item: PartItem; width: number }>) {
   switch (item.kind) {
     case 'text':
       return <Markdown text={item.text} />;
     case 'tool':
-      return (
-        <Text dimColor>
-          {`  $ ${oneLine(item.text, width - 8)} `}
-          {item.pending ? <Spinner /> : <Text color={tone('green')}>✓</Text>}
-        </Text>
-      );
+      return <ToolLine item={item} width={width} />;
     case 'error':
       return <Text color={tone('red')}>{`  ✗ ${oneLine(item.text, width - 6)}`}</Text>;
     default:

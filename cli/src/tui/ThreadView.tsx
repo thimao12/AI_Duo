@@ -1,6 +1,9 @@
 import { Box, Text } from 'ink';
 import { memo } from 'react';
 import type { Message, Run } from '../../../server/src/types.ts';
+import { parseDiff } from './diff.ts';
+import { FileDiffView } from './DiffView.tsx';
+import { Logo } from './Logo.tsx';
 import { MessageView, UserLine } from './MessageView.tsx';
 import { ShellBlock } from './ShellView.tsx';
 import { tone } from './theme.ts';
@@ -8,20 +11,47 @@ import { effortFor, formatUsageLine, oneLine, summarizeDiff, type ThreadItem } f
 
 const MAX_FILES = 12;
 
-function Header({ item }: Readonly<{ item: Extract<ThreadItem, { kind: 'header' }> }>) {
+const TAGLINE = 'Claude × Codex × Antigravity';
+
+/** Logo on the left, name, folder and key hints on the right. */
+export function BrandHeader({ version, cwd, branch }: Readonly<{ version: string; cwd: string; branch?: string }>) {
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={tone('cyan')} paddingX={1}>
-      <Text>
-        <Text bold color={tone('cyan')}>
-          AI Duo
+    <Box columnGap={3} marginBottom={1}>
+      <Logo />
+      <Box flexDirection="column" flexShrink={1} justifyContent="center">
+        <Text wrap="truncate-end">
+          <Text bold color={tone('blue')}>{'AI Duo'}</Text>
+          <Text dimColor>{` ${version}`}</Text>
         </Text>
-        <Text dimColor>{` v${item.version}`}</Text>
-      </Text>
-      <Text dimColor>
-        {item.cwd}
-        {item.branch ? ` · ⎇ ${item.branch}` : ''}
-      </Text>
-      <Text dimColor>/help for commands · Tab picks a role · Shift+Tab switches Code/Plan · ! runs a shell command</Text>
+        <Text wrap="truncate-end" color={tone('cyan')}>{TAGLINE}</Text>
+        <Text wrap="truncate-end" dimColor>
+          {cwd}
+          {branch ? ` · ⎇ ${branch}` : ''}
+        </Text>
+        <Text wrap="truncate-end" dimColor>/help commands · Tab role · Shift+Tab Code/Plan · ! shell</Text>
+      </Box>
+    </Box>
+  );
+}
+
+function Header({ item }: Readonly<{ item: Extract<ThreadItem, { kind: 'header' }> }>) {
+  return <BrandHeader version={`v${item.version}`} cwd={item.cwd} branch={item.branch} />;
+}
+
+const MAX_DIFF_FILES = 6;
+const MAX_DIFF_ROWS = 30;
+
+/** The changes of a run as red/green rows (first files only); the rest are listed by name. */
+function RunDiff({ diff, files, width }: Readonly<{ diff?: string; files: string[]; width: number }>) {
+  const parsed = parseDiff(diff);
+  if (parsed.length === 0) return <FileList files={files} width={width} />;
+  const rest = parsed.slice(MAX_DIFF_FILES).map((f) => f.path);
+  return (
+    <Box flexDirection="column">
+      {parsed.slice(0, MAX_DIFF_FILES).map((file) => (
+        <FileDiffView key={file.path} file={file} width={width - 2} maxRows={MAX_DIFF_ROWS} />
+      ))}
+      {rest.length ? <FileList files={rest} width={width} /> : null}
     </Box>
   );
 }
@@ -59,7 +89,7 @@ export function RunSummary({ run, width }: Readonly<{ run: Run; width: number }>
         <Text dimColor>{`${changed}${usageSuffix}`}</Text>
       </Text>
       {run.error ? <Text color={tone('red')}>{run.error}</Text> : null}
-      <FileList files={diff.files} width={width} />
+      <RunDiff diff={run.diff} files={diff.files} width={width} />
       <Text dimColor>{`run ${run.id}`}</Text>
     </Box>
   );
@@ -114,10 +144,13 @@ interface FullscreenHeaderProps {
   branch?: string;
   /** One line only (very short terminals). */
   compact: boolean;
+  /** Tall and wide enough for the logo. */
+  roomy?: boolean;
 }
 
 /** Fixed top bar of the full-screen chat: 1-2 lines, truncated to the terminal width. */
-export function FullscreenHeader({ version, cwd, branch, compact }: Readonly<FullscreenHeaderProps>) {
+export function FullscreenHeader({ version, cwd, branch, compact, roomy }: Readonly<FullscreenHeaderProps>) {
+  if (roomy && !compact) return <BrandHeader version={`v${version}`} cwd={cwd} branch={branch} />;
   const suffix = branch ? ` · ⎇ ${branch}` : '';
   const where = cwd + suffix;
   return (

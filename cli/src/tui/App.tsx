@@ -12,7 +12,8 @@ import { historyText } from './imageTokens.ts';
 import { buildRequest, effectiveMode } from './requestBuilder.ts';
 import { findCommand, HELP_LINES, SLASH_COMMANDS } from './slash.ts';
 import { StatusLine } from './StatusLine.tsx';
-import { tone, usableWidth } from './theme.ts';
+import { getCliSettingsSync, getCliSettings, setCliSettings } from '../../../server/src/settings.ts';
+import { activeTheme, setTheme, tone, usableWidth } from './theme.ts';
 import { FinishedThread, FullscreenHeader, LiveThread, ThreadItemView, windowLog } from './ThreadView.tsx';
 import { useSelection, type SelectionApi } from './useSelection.ts';
 import { useSession, type ChatService, type Session } from './useSession.ts';
@@ -128,6 +129,20 @@ export function App(props: Readonly<AppProps>) {
   const [draft, setDraft] = useState('');
   const [shellMode, setShellMode] = useState(false);
   const [custom, setCustom] = useState<CustomCommand[]>([]);
+  // The saved theme applies at start unless AI_DUO_THEME names one; the id keys the full-screen layout so a change repaints it.
+  const [themeId, setThemeId] = useState(() => {
+    const saved = getCliSettingsSync().theme;
+    if (saved && !process.env.AI_DUO_THEME) setTheme(saved);
+    return activeTheme().id;
+  });
+  const pickTheme = (id: string) => {
+    if (!setTheme(id)) return;
+    setThemeId(activeTheme().id);
+    getCliSettings()
+      .then((cli) => setCliSettings({ ...cli, theme: id }))
+      .then((saved) => typeof saved === 'string' && session.notice('warn', `Could not save the theme: ${saved}`))
+      .catch(() => session.notice('warn', 'Could not save the theme.'));
+  };
   const [followTick, setFollowTick] = useState(0);
   const { onRunChange } = props;
   const runId = session.run?.id;
@@ -209,6 +224,7 @@ export function App(props: Readonly<AppProps>) {
     onPickSession: (id) => void resume(id),
     onPickPipeline: selection.pickPipeline,
     onPickOverrides: selection.pickOverrides,
+    onPickTheme: pickTheme,
     overrides: selection.selection.overrides,
     role: selection.selection.role,
     pipelineId: selection.selection.pipelineId,
@@ -270,6 +286,7 @@ export function App(props: Readonly<AppProps>) {
   }
   return (
     <FullscreenLayout
+      key={themeId}
       session={session}
       header={{ version: props.version, cwd, branch: props.branch }}
       columns={columns ?? 80}
@@ -339,7 +356,7 @@ function FullscreenLayout({ session, header, columns, rows, width, banner, shell
   const panelOpen = panel !== null;
   return (
     <Box flexDirection="column" height={frame} width={columns}>
-      <FullscreenHeader {...header} compact={rows < 14} />
+      <FullscreenHeader {...header} compact={rows < 14} roomy={rows >= 26 && columns >= 60} />
       <Box flexDirection="column" flexGrow={1} flexBasis={0} minHeight={0} display={panelOpen ? 'none' : 'flex'}>
         <Viewport resetKey={session.epoch} followTick={followTick} active={!panelOpen} edgeKeys={edgeKeys}>
           {banner}

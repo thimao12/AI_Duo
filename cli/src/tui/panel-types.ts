@@ -17,6 +17,8 @@ export interface PanelProps {
   onPickSession?: (runId: string) => void;
   /** Pipelines panel: run a saved pipeline with the composer's next message as the task. */
   onPickPipeline?: (pipelineId: string | null) => void;
+  /** Theme panel: switch to this theme (applied and saved by the shell). */
+  onPickTheme?: (themeId: string) => void;
   /** Model panel: choose the agent/model/effort/permission overrides for the next message. */
   onPickOverrides?: (overrides: SessionOverrides) => void;
   /** Current overrides, so a picker can show the active choice. */

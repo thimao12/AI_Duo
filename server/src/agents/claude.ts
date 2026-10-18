@@ -4,7 +4,7 @@ import { getCliSettingsSync } from '../settings.ts';
 import { claudeMcpArgs, claudeMcpTools, mcpServersFor, tierFor } from '../mcp.ts';
 import { checkAgent } from './check.ts';
 import { AbortedError, spawnJsonl } from './process.ts';
-import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult, Usage } from './types.ts';
+import type { AgentAdapter, AgentEvent, EditInfo, Role, RunOptions, RunResult, Usage } from './types.ts';
 
 /** `extraTools` (MCP tool prefixes) join the allowlist of whichever tier applies. */
 export function permissionArgs(role: Role, permission?: 'read' | 'edit', extraTools: readonly string[] = []): string[] {
@@ -27,6 +27,18 @@ function summarizeInput(input: any): string {
   if (typeof input.pattern === 'string') return input.pattern;
   const s = JSON.stringify(input);
   return s.length > 300 ? s.slice(0, 300) + '…' : s;
+}
+
+/** The text change of an Edit, MultiEdit or Write call, one entry per replaced snippet. */
+export function editsOf(name: string, input: any): EditInfo[] {
+  const path = typeof input?.file_path === 'string' ? input.file_path : undefined;
+  if (!path) return [];
+  if (name === 'Edit' && typeof input.new_string === 'string') return [{ path, oldText: String(input.old_string ?? ''), newText: input.new_string }];
+  if (name === 'MultiEdit' && Array.isArray(input.edits)) {
+    return input.edits.filter((e: any) => typeof e?.new_string === 'string').map((e: any) => ({ path, oldText: String(e.old_string ?? ''), newText: e.new_string }));
+  }
+  if (name === 'Write' && typeof input.content === 'string') return [{ path, oldText: '', newText: input.content }];
+  return [];
 }
 
 function toolResultText(content: any): string {
@@ -132,7 +144,11 @@ export function onJson(ev: any, state: ClaudeJsonState): { state: ClaudeJsonStat
   if (ev.type === 'stream_event' && topLevel) onStreamEvent(ev, next, events);
   else if (ev.type === 'assistant') {
     for (const block of ev.message?.content ?? []) {
-      if (block.type === 'tool_use') events.push({ kind: 'tool', content: `${block.name}: ${summarizeInput(block.input)}` });
+      if (block.type !== 'tool_use') continue;
+      const content = `${block.name}: ${summarizeInput(block.input)}`;
+      const edits = editsOf(block.name, block.input);
+      if (edits.length === 0) events.push({ kind: 'tool', content });
+      for (const edit of edits) events.push({ kind: 'tool', content, edit });
     }
   } else if (ev.type === 'user' && topLevel) onToolResults(ev, events);
   else if (ev.type === 'result') onResult(ev, next);

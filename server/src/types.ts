@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentName, Role, Usage } from './agents/types.ts';
+import type { AgentEvent, AgentName, EditInfo, Role, Usage } from './agents/types.ts';
 
 export type Mode = 'code' | 'plan' | 'pipeline';
 /** What an agent turn may do: read-only, or edit files and run commands. */
@@ -90,6 +90,8 @@ export type PlanDecisionAnswer =
 export interface Part {
   kind: 'text' | 'tool' | 'tool_result' | 'raw' | 'error';
   content: string;
+  /** The change a file-editing tool call made. */
+  edit?: EditInfo;
 }
 
 export interface Message {
@@ -160,7 +162,7 @@ export function applyAgentEvent(parts: Part[], e: AgentEvent) {
   } else if (e.kind === 'text' && last?.kind === 'text') {
     last.content += (last.content ? '\n\n' : '') + e.content;
   } else {
-    parts.push({ kind: e.kind === 'text' ? 'text' : e.kind, content: e.content });
+    parts.push({ kind: e.kind === 'text' ? 'text' : e.kind, content: e.content, ...(e.edit && { edit: e.edit }) });
   }
 }
 
@@ -307,6 +309,8 @@ export interface CliSettings {
   turnTimeoutMin?: number;
   /** Default test command when a request omits it. */
   testCommand?: string;
+  /** Colour theme of the terminal UI (an id such as tokyo-night); unknown ids fall back to the default. */
+  theme?: string;
   /** Shell commands run in the project folder around every agent turn; a failure is noted in the thread. */
   hooks?: Partial<Record<HookName, string>>;
   /** MCP servers added to Claude and Codex turns (Antigravity has no MCP flag). */

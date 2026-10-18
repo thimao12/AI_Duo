@@ -15,9 +15,18 @@ export type AgentEventKind =
   | 'raw' // unrecognised line, shown as-is
   | 'error';
 
+/** What a file-editing tool call changed, when the CLI reports it (Claude's Edit/MultiEdit/Write). */
+export interface EditInfo {
+  path: string;
+  /** Replaced text; empty for a newly written file. */
+  oldText: string;
+  newText: string;
+}
+
 export interface AgentEvent {
   kind: AgentEventKind;
   content: string;
+  edit?: EditInfo;
   /** Current account limit window, when the CLI reports one. */
   rateLimit?: { type?: string; utilization?: number; resetsAt?: number };
 }

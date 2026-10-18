@@ -6,6 +6,7 @@ import PipelinesPanel from './panels/PipelinesPanel.tsx';
 import RolesPanel from './panels/RolesPanel.tsx';
 import SessionsPanel from './panels/SessionsPanel.tsx';
 import SettingsPanel from './panels/SettingsPanel.tsx';
+import ThemePanel from './panels/ThemePanel.tsx';
 import UsagePanel from './panels/UsagePanel.tsx';
 
 /**
@@ -24,6 +25,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'usage', description: 'Claude and Codex usage limits', panel: (p: PanelProps) => createElement(UsagePanel, p) },
   { name: 'login', description: 'Check and connect the Claude, Codex and Antigravity CLIs', panel: (p: PanelProps) => createElement(ConnectionPanel, p) },
   { name: 'settings', description: 'Per-CLI settings', panel: (p: PanelProps) => createElement(SettingsPanel, p) },
+  { name: 'theme', description: 'Choose a colour theme', panel: (p: PanelProps) => createElement(ThemePanel, p) },
   { name: 'paste-image', description: 'Attach an image from the clipboard (also Ctrl+V / Alt+V)' },
   { name: 'clear-images', description: 'Remove the attached images and their [Image #N] tokens' },
   { name: 'skip-auth', description: 'Toggle running although a CLI cannot report its login' },
