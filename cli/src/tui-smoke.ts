@@ -335,13 +335,13 @@ await step('slash menu: filter, choose, run /help, unknown command', async () =>
   await t.seeing('Ask anything');
   await t.type('/');
   await t.seeing('/help');
-  assert.ok(t.frame().includes('/clear') && t.frame().includes('1/17 ↓'), 'the first commands are listed');
-  for (let i = 0; i < 9; i++) await t.type(KEY.down);
+  assert.ok(t.frame().includes('/clear') && t.frame().includes('1/18 ↓'), 'the first commands are listed');
+  for (let i = 0; i < 10; i++) await t.type(KEY.down);
   await t.seeing('› /usage');
-  assert.ok(t.frame().includes('10/17 ↑ ↓'), 'the menu follows the selection past the first eight commands');
+  assert.ok(t.frame().includes('11/18 ↑ ↓'), 'the menu follows the selection past the first eight commands');
   for (let i = 0; i < 7; i++) await t.type(KEY.down);
   await t.seeing('› /exit');
-  assert.ok(t.frame().includes('17/17 ↑') && !t.frame().includes('17/17 ↑ ↓'), 'the last command has no items below');
+  assert.ok(t.frame().includes('18/18 ↑') && !t.frame().includes('18/18 ↑ ↓'), 'the last command has no items below');
   await t.type(KEY.down);
   await t.seeing('› /help');
   await t.type(KEY.up);
@@ -571,6 +571,30 @@ await step('/undo: no run yet, then the file changes of the last run are taken b
   await t.type(KEY.enter);
   await t.seeing('2 file(s) restored');
   assert.deepEqual(calls, ['run-1']);
+});
+
+await step('/commit: no run yet, then the last run is committed with the typed or the default message', async () => {
+  const service = new FakeService();
+  const calls: [string, string | undefined][] = [];
+  (service as unknown as { commit: (id: string, message?: string) => Promise<{ commit: string; files: string[]; message: string }> }).commit = async (id, message) => {
+    calls.push([id, message]);
+    return { commit: 'abc1234', files: ['a.ts'], message: message ?? 'default title' };
+  };
+  const t = open(service);
+  await t.seeing('Ask anything');
+  await t.type('/commit');
+  await t.type(KEY.enter);
+  await t.seeing('Nothing to commit');
+  await t.type('fix it');
+  await t.type(KEY.enter);
+  await t.seeing('done');
+  await t.type('/commit tidy the thing');
+  await t.type(KEY.enter);
+  await t.seeing('Committed abc1234: tidy the thing');
+  await t.type('/commit');
+  await t.type(KEY.enter);
+  await t.seeing('Committed abc1234: default title');
+  assert.deepEqual(calls, [['run-1', 'tidy the thing'], ['run-1', undefined]]);
 });
 
 await rm(temp, { recursive: true, force: true }).catch(() => {});

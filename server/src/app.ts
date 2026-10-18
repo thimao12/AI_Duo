@@ -116,6 +116,13 @@ app.patch('/api/runs/:id', (c) =>
 
 app.post('/api/runs/:id/undo', (c) => handle(c, async () => c.json(await service.undo(c.req.param('id')))));
 
+app.post('/api/runs/:id/commit', (c) =>
+  handle(c, async () => {
+    const body = await c.req.json().catch(() => null);
+    return c.json(await service.commit(c.req.param('id'), body?.message));
+  }),
+);
+
 app.delete('/api/runs/:id', (c) =>
   handle(c, async () => {
     await service.delete(c.req.param('id'));

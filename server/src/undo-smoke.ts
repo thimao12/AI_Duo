@@ -71,6 +71,29 @@ try {
   assert.equal(await read('a.txt'), 'one\ntwo\nthree\n');
   assert.equal(await read('mine.txt'), 'edited later\n', 'later work on other files is kept');
 
+  // Commit: only the files the run changed, with other staged and unstaged work left alone.
+  const { changedFiles, commitFiles } = await import('./git.ts');
+  await write('a.txt', 'one\ntwo\nthree\n');
+  await write('other.txt', 'staged by me\n');
+  git('add', 'other.txt');
+  await write('mine.txt', 'unstaged edit\n');
+  const before = await snapshotTree(repo);
+  await write('a.txt', 'one\nAGENT\nthree\n');
+  await write('made.txt', 'new\n');
+  const done = await snapshotTree(repo);
+  const touched = await changedFiles(repo, before, done);
+  assert.deepEqual(touched.sort(), ['a.txt', 'made.txt']);
+  const made = await commitFiles(repo, touched, 'AI Duo: edit a and add made');
+  assert.deepEqual(made.files.sort(), ['a.txt', 'made.txt']);
+  assert.match(made.commit, /^[0-9a-f]{7,}$/);
+  assert.equal(git('log', '-1', '--format=%s').trim(), 'AI Duo: edit a and add made');
+  assert.deepEqual(git('show', '--name-only', '--format=', 'HEAD').trim().split('\n').sort(), ['a.txt', 'made.txt']);
+  assert.match(git('status', '--short'), /A\s+other\.txt/, 'work I had staged is still staged, not committed');
+  assert.match(git('status', '--short'), /M\s+mine\.txt/, 'unstaged work is untouched');
+  await assert.rejects(commitFiles(repo, touched, 'again'), /không có thay đổi/);
+  await assert.rejects(commitFiles(repo, [], 'x'), /Không có file/);
+  await assert.rejects(commitFiles(repo, touched, '  '), /nội dung commit/);
+
   await assert.rejects(undoSince(repo, 'not-a-tree', after), /Invalid Git tree ID/);
   await assert.rejects(undoSince(temp, base, after), /Git repository/);
 

@@ -132,6 +132,8 @@ export interface Run {
   afterTree?: string;
   /** When the changes were taken back with Undo. */
   undoneAt?: number;
+  /** The commit made from this run's changes (/commit). */
+  commit?: string;
   error?: string;
   /** A Code run pauses at its review limit until the user continues or stops. */
   pairDecision?: PairDecision | null;
@@ -149,7 +151,7 @@ export type RunEvent =
   | { type: 'message.start'; message: Message }
   | { type: 'message.event'; id: string; event: AgentEvent }
   | { type: 'message.end'; id: string; status: Message['status']; verdict?: Verdict; usage?: Usage; endedAt: number }
-  | { type: 'run.update'; patch: Partial<Pick<Run, 'status' | 'final' | 'diff' | 'baseTree' | 'afterTree' | 'undoneAt' | 'error' | 'endedAt' | 'usage' | 'claudeLimits' | 'pairDecision' | 'pairRoundsGranted' | 'planDecision'>> };
+  | { type: 'run.update'; patch: Partial<Pick<Run, 'status' | 'final' | 'diff' | 'baseTree' | 'afterTree' | 'undoneAt' | 'commit' | 'error' | 'endedAt' | 'usage' | 'claudeLimits' | 'pairDecision' | 'pairRoundsGranted' | 'planDecision'>> };
 
 export function addUsage(a: Usage | undefined, b: Usage): Usage {
   const costUsd = a?.costUsd !== undefined || b.costUsd !== undefined ? (a?.costUsd ?? 0) + (b.costUsd ?? 0) : undefined;

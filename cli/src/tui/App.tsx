@@ -79,10 +79,11 @@ interface Shell {
   exit(): void;
   openPanel(command: SlashCommand): void;
   undo(): void;
+  commit(message: string): void;
 }
 
 /** Commands the shell runs itself (no panel). Returns an error message for an unknown one. */
-function runShellCommand(name: string, shell: Shell): string | null {
+function runShellCommand(name: string, shell: Shell, args = ''): string | null {
   const { session, selection } = shell;
   switch (name) {
     case 'help':
@@ -98,6 +99,10 @@ function runShellCommand(name: string, shell: Shell): string | null {
     case 'undo':
       if (session.phase !== 'idle') return 'Stop the current run first (Ctrl+C).';
       shell.undo();
+      return null;
+    case 'commit':
+      if (session.phase !== 'idle') return 'Stop the current run first (Ctrl+C).';
+      shell.commit(args);
       return null;
     case 'skip-auth':
       session.notice('warn', selection.toggleSkipAuth() ? 'Runs will start even if a CLI cannot report its login.' : 'Login check is strict again.');
@@ -118,7 +123,7 @@ function runSlash(text: string, shell: Shell): string | null {
     shell.openPanel(command);
     return null;
   }
-  return runShellCommand(command.name, shell);
+  return runShellCommand(command.name, shell, text.trim().split(' ').slice(1).join(' ').trim());
 }
 
 export function App(props: Readonly<AppProps>) {
@@ -192,7 +197,18 @@ export function App(props: Readonly<AppProps>) {
       (err: unknown) => session.notice('error', errorText(err)),
     );
   };
-  const shell: Shell = { session, selection, exit, openPanel: setPanel, undo };
+  const commit = (message: string) => {
+    const id = session.run?.id;
+    if (!id) {
+      session.notice('warn', 'Nothing to commit yet: this session has no run.');
+      return;
+    }
+    service.commit(id, message || undefined).then(
+      (done) => session.notice('info', `Committed ${done.commit}: ${done.message} (${done.files.length} file(s): ${done.files.slice(0, 5).join(', ')}${done.files.length > 5 ? ', …' : ''}). Not pushed.`),
+      (err: unknown) => session.notice('error', errorText(err)),
+    );
+  };
+  const shell: Shell = { session, selection, exit, openPanel: setPanel, undo, commit };
 
   const rememberPrompt = (text: string) => {
     const next = addToHistory(history, text);

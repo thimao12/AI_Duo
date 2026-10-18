@@ -3,7 +3,7 @@ import { AGENT_NAMES, agentLabel, agents, defaultPartner, type AgentCheck, type 
 import { AGY_IMAGES_UNSUPPORTED } from './agents/antigravity.ts';
 import { resolveBin } from './agents/bins.ts';
 import { binVersion } from './agents/check.ts';
-import { gitRequiredMessage, isGitRepo, undoSince } from './git.ts';
+import { changedFiles, commitFiles, gitRequiredMessage, isGitRepo, undoSince } from './git.ts';
 import { acquireRepoLock, describeOwner, lockTarget, RepoLockedError, runsActiveElsewhere, type LockOwner, type RepoLock } from './lock.ts';
 import { runDebate } from './modes/debate.ts';
 import { runPair } from './modes/pair.ts';
@@ -464,6 +464,38 @@ export class RunService {
     run.diff = '';
     await saveRun(run);
     return { files: result.files, reverted: true };
+  }
+
+  /** The message /commit proposes: the run's title, or the first line of its request. */
+  async commitMessage(id: string): Promise<string> {
+    const run = await this.get(id);
+    if (!run) throw new ServiceError('not_found', 'not found');
+    const line = (run.title || run.config.prompt).split('\n')[0].trim().slice(0, 72);
+    return line || 'Changes made with AI Duo';
+  }
+
+  /**
+   * Commits the files a finished run changed (and only those). The message is the user's, or the run's
+   * title; nothing is pushed.
+   */
+  async commit(id: string, message?: string): Promise<{ commit: string; files: string[]; message: string }> {
+    if (active.has(id) || (await this.activeElsewhere(id))) throw new ServiceError('conflict', 'Dừng phiên đang chạy trước khi commit.');
+    const run = await this.get(id);
+    if (!run) throw new ServiceError('not_found', 'not found');
+    if (!run.baseTree || !run.afterTree) throw new ServiceError('conflict', 'Phiên này không có thay đổi file nào để commit.');
+    if (run.undoneAt) throw new ServiceError('conflict', 'Phiên này đã được hoàn tác, không còn gì để commit.');
+    if (run.commit) throw new ServiceError('conflict', `Phiên này đã được commit (${run.commit}).`);
+    const text = typeof message === 'string' && message.trim() ? message.trim() : await this.commitMessage(id);
+    const cwd = authorizeDirectory(run.config.cwd);
+    try {
+      const files = await changedFiles(cwd, run.baseTree, run.afterTree);
+      const result = await commitFiles(cwd, files, text);
+      run.commit = result.commit;
+      await saveRun(run);
+      return { ...result, message: text };
+    } catch (err) {
+      throw new ServiceError('conflict', (err as Error).message);
+    }
   }
 
   /** Owner of the lock when another AI Duo process (CLI, desktop, another server) runs this run. */
