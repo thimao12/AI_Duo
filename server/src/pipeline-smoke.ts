@@ -60,7 +60,10 @@ try {
   assert.equal(ask.final, 'The answer.');
   assert.deepEqual(calls.map((c) => [c.agent, c.role, c.permission, c.model]), [['claude', 'thinker', 'read', 'haiku']]);
   assert.match(calls[0].prompt, /What does main do\?/);
-  assert.equal(ask.config.route, undefined, 'a role bypasses the router');
+  // The role is resolved by the keyword rules alone (no model call): Ask is a light, read-only question.
+  assert.equal(ask.config.route?.source, 'rules');
+  assert.match(ask.config.route?.reason ?? '', /Ask: model haiku/);
+  assert.deepEqual(ask.config.roleRoutes, { ask: { agent: 'claude', model: 'haiku' } });
   assert.equal((await listRuns()).find((r) => r.id === ask.id)?.agent, 'claude');
 
   // ---- Precedence: explicit request fields > role > router.
@@ -76,7 +79,34 @@ try {
   calls.length = 0;
   const coded = await runToEnd({ mode: 'code', roleId: 'code', prompt: 'add a thing', cwd: repo });
   assert.equal(coded.status, 'done', coded.error);
-  assert.deepEqual([calls[0].role, calls[0].permission, calls[0].model, calls[0].effort], ['coder', 'edit', 'sonnet', 'medium']);
+  // The factory Code role is "auto": a light task gets the cheapest model, a heavy one the strongest.
+  assert.deepEqual([calls[0].role, calls[0].permission, calls[0].model, calls[0].effort], ['coder', 'edit', 'haiku', undefined]);
+  calls.length = 0;
+  const heavy = await runToEnd({ mode: 'code', roleId: 'code', prompt: 'Refactor toàn bộ module auth, tách file và migrate sang kiến trúc mới', cwd: repo });
+  assert.equal(heavy.status, 'done', heavy.error);
+  assert.deepEqual([calls[0].agent, calls[0].model, calls[0].effort], ['claude', 'opus', 'high']);
+  assert.match(heavy.config.route?.reason ?? '', /Code: model opus\/high \(mức heavy\)/);
+  calls.length = 0;
+  const pinned = await runToEnd({ mode: 'code', roleId: 'code', prompt: 'add a thing', cwd: repo, models: { claude: 'sonnet' } });
+  assert.equal(pinned.status, 'done', pinned.error);
+  assert.equal(calls[0].model, 'sonnet', 'a model named in the request beats the router');
+
+  // A role whose agent is not usable runs on another CLI, with that CLI's model for the task.
+  const codexCheck = agents.codex.check;
+  agents.codex.check = (): Promise<AgentCheck> => Promise.resolve({ agent: 'codex', path: 'codex', version: null, error: 'codex is not installed', auth: 'skipped' });
+  calls.length = 0;
+  const review = await runToEnd({ mode: 'code', roleId: 'review', prompt: 'Review the change', cwd: plain });
+  assert.equal(review.status, 'done', review.error);
+  assert.deepEqual([calls[0].agent, calls[0].model], ['claude', 'sonnet'], 'Review falls back from Codex to Claude');
+  assert.match(review.config.route?.reason ?? '', /Review: Codex không dùng được → Claude/);
+  assert.equal(review.config.roleRoutes?.review?.agent, 'claude');
+  calls.length = 0;
+  await runToEnd({ mode: 'code', roleId: 'review', prompt: 'Review the change', cwd: plain, coder: 'codex', models: { codex: 'gpt-x' } }).then(
+    () => assert.fail('an agent named in the request is used as given, so its failed preflight stops the run'),
+    () => undefined,
+  );
+  assert.equal(calls.length, 0);
+  agents.codex.check = codexCheck;
   assert.equal((await runToEnd({ mode: 'code', roleId: 'code', permission: 'read', prompt: 'x', cwd: plain })).status, 'done');
   await expectError(service.start({ mode: 'code', roleId: 'missing', prompt: 'x', cwd: repo }), 'invalid', /not found/);
   await expectError(service.start({ mode: 'plan', roleId: 'ask', prompt: 'x', cwd: repo }), 'invalid', /roleId/);

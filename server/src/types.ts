@@ -58,6 +58,8 @@ export interface RunConfig {
   pipelineId?: string;
   /** Set when mode/agents/models were picked by the auto-router. */
   route?: RoutePlan;
+  /** What each role of a role or pipeline run resolved to (its agent and model may be "auto" or its agent unusable). */
+  roleRoutes?: Record<string, RoleRoute>;
   /**
    * The agents the user picked by hand (Code/Plan), kept for Plan → Code and for follow-ups that pick none;
    * absent when the router chose. Each side is only what was asked: the other one comes from the default pair.
@@ -180,15 +182,22 @@ export interface RoleDef {
   icon: string;
   description: string;
   agent: AgentName;
-  /** Empty = the CLI's default model. */
+  /** Empty = the CLI's default model; "auto" = the router picks one for the task. */
   model: string;
-  /** Empty = the CLI's default effort. */
+  /** Empty = the CLI's default effort; "auto" = the router's. */
   effort: string;
   permission: Permission;
   /** Prompt template; {{task}}, {{prev}} and {{<role id>}} are replaced in one pass. */
   template: string;
   /** The role ends its answer with VERDICT: PASS or VERDICT: FAIL, which steers a pipeline. */
   gradable: boolean;
+}
+
+/** The agent, model and effort a role runs with in one run (see router/roles.ts). */
+export interface RoleRoute {
+  agent: AgentName;
+  model?: string;
+  effort?: string;
 }
 
 export interface PipelineStep {

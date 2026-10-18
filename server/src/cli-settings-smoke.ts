@@ -308,10 +308,15 @@ try {
   assert.equal(plain.turnTimeoutMin, 30);
   assert.equal(plain.testCommand, undefined);
 
-  // Roles: their own model wins; an empty one falls back to the CLI default.
+  // Roles: their own model wins; an empty (or unresolved "auto") one falls back to the CLI default; a route beats both.
   await settings.setCliSettings({ claude: { defaultModel: 'opus', defaultEffort: 'low' } });
-  const [code, ask] = [(await settings.getRoles()).find((r) => r.id === 'code')!, { ...(await settings.getRoles())[0], model: '', effort: '' }];
+  const factoryCode = (await settings.getRoles()).find((r) => r.id === 'code')!;
+  assert.equal(factoryCode.model, 'auto', 'the factory roles follow the router');
+  const [code, ask] = [{ ...factoryCode, model: 'sonnet', effort: 'medium' }, { ...(await settings.getRoles())[0], model: '', effort: '' }];
   assert.deepEqual(roleModel({}, code, 'claude'), { model: 'sonnet', effort: 'medium' });
+  assert.deepEqual(roleModel({}, factoryCode, 'claude'), { model: 'opus', effort: 'low' }, 'auto without a route is the CLI default');
+  assert.deepEqual(roleModel({}, factoryCode, 'claude', { agent: 'claude', model: 'haiku' }), { model: 'haiku', effort: 'low' }, 'a route sets the model; the effort it leaves out is the CLI default');
+  assert.deepEqual(roleModel({}, factoryCode, 'codex', { agent: 'claude', model: 'haiku' }), { model: undefined, effort: undefined }, 'a route only applies to its own agent');
   assert.deepEqual(roleModel({}, ask, 'claude'), { model: 'opus', effort: 'low' });
   assert.deepEqual(roleModel({ models: { claude: 'haiku' } }, ask, 'claude'), { model: 'haiku', effort: undefined });
 

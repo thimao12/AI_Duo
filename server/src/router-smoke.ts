@@ -164,6 +164,33 @@ try {
   assert.equal(custom.antigravity.heavy.model, DEFAULT_CATALOG.antigravity.heavy.model);
   assert.equal(custom.antigravity.light.model, 'gemini-3.7-flash-low');
 
+  // Roles: the role's own agent when usable, else the best usable one; "auto" picks the model by tier.
+  const { resolveRole, roleTier } = await import('./router/roles.ts');
+  const role = (over: object) => ({ id: 'r', name: 'R', icon: '', description: '', agent: 'codex' as const, model: 'auto', effort: 'auto', permission: 'read' as const, template: '{{task}}', gradable: false, ...over });
+  const base = { taskType: 'edit' as const, complexity: 'standard' as const, catalog: cat };
+  assert.equal(roleTier(role({ gradable: true }), 'light'), 'standard', 'a grader never goes below standard');
+  assert.equal(roleTier(role({ permission: 'read' }), 'heavy'), 'standard', 'a read-only answer never goes above standard');
+  assert.equal(roleTier(role({ permission: 'edit' }), 'heavy'), 'heavy', 'an editing role follows the task');
+  const own = resolveRole(role({}), base);
+  assert.deepEqual([own.agent, own.model, own.effort], ['codex', cat.codex.standard.model, 'medium']);
+  assert.match(own.note ?? '', /R: model/);
+  const moved = resolveRole(role({}), { ...base, availability: only('codex') });
+  assert.deepEqual([moved.agent, moved.model], ['claude', 'sonnet']);
+  assert.match(moved.note ?? '', /Codex không dùng được → Claude/);
+  const noClaude = resolveRole(role({ agent: 'claude' }), { ...base, availability: only('claude', 'codex') });
+  assert.equal(noClaude.agent, 'antigravity');
+  assert.equal(noClaude.model, cat.antigravity.standard.model);
+  const pinned = resolveRole(role({ model: 'gpt-x', effort: 'high' }), base);
+  assert.deepEqual([pinned.model, pinned.effort, pinned.note], ['gpt-x', 'high', undefined], 'a model named in the role is kept when its agent is usable');
+  const pinnedMoved = resolveRole(role({ model: 'gpt-x', effort: 'high' }), { ...base, availability: only('codex') });
+  assert.equal(pinnedMoved.model, 'sonnet', 'a model name does not travel to another CLI');
+  const forced = resolveRole(role({}), { ...base, availability: only('codex'), agent: 'codex' });
+  assert.deepEqual([forced.agent, forced.model], ['codex', cat.codex.standard.model], 'an agent named in the request is used as given');
+  const nothing = resolveRole(role({}), { ...base, availability: only('claude', 'codex', 'antigravity') });
+  assert.equal(nothing.agent, 'codex', 'nothing usable: the role keeps its agent and preflight reports it');
+  assert.equal(resolveRole(role({}), { ...base, availability: only('codex'), images: true }).agent, 'claude', 'images exclude Antigravity');
+  assert.equal(resolveRole(role({ model: '', effort: '' }), base).model, undefined, 'an empty model stays the CLI default');
+
   console.log('router smoke: ok');
 } finally {
   await rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(console.error);

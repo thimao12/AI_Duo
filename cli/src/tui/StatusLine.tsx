@@ -39,7 +39,9 @@ export function describeTarget(role: RoleDef | null, overrides: SessionOverrides
   if (!agent) return reviewer ? `default coder${reviewer}` : routeLabel(route);
   const model = overrides.model ?? (overrides.agent ? undefined : role?.model);
   const effort = overrides.effort ?? (overrides.agent ? undefined : role?.effort);
-  return [agent, model, effort].filter(Boolean).join('/') + reviewer;
+  // A role left to the router shows "auto" once (the agent may still change if it is not usable).
+  const parts = model === 'auto' ? [agent, 'auto'] : [agent, model, effort === 'auto' ? undefined : effort];
+  return parts.filter(Boolean).join('/') + reviewer;
 }
 
 function permissionOf(role: RoleDef | null, overrides: SessionOverrides): string {

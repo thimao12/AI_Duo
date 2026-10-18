@@ -197,7 +197,7 @@ await step('TerminalInput: one reader, read() for Ink, wheel to subscribers, raw
   input.dispose();
   input.dispose();
   assert.equal(source.listenerCount('data'), 0);
-  assert.equal(source.paused, true);
+  assert.equal(source.paused, false, "the real stdin is left alone: pausing it closed the terminal tab on Windows");
 });
 
 /* ---- the full-screen chat ---- */

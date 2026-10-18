@@ -73,8 +73,9 @@ export function toggleRole(form: ComposerForm, role: { id: string; agent: AgentN
     roleId: role.id,
     agent: role.agent,
     permission: role.permission,
-    models: { ...form.models, [role.agent]: role.model },
-    efforts: { ...form.efforts, [role.agent]: role.effort },
+    // "auto" is the router's choice at run time, not a model name to put in the picker.
+    models: { ...form.models, [role.agent]: role.model === 'auto' ? '' : role.model },
+    efforts: { ...form.efforts, [role.agent]: role.effort === 'auto' ? '' : role.effort },
   };
 }
 

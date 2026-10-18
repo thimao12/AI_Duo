@@ -232,11 +232,7 @@ export class TerminalInput extends EventEmitter implements WheelSource {
     clearTimeout(this.flushTimer);
     this.source.off('data', this.onData);
     this.wheelListeners.clear();
-    try {
-      this.source.pause?.();
-    } catch {
-      // the stream is already gone
-    }
+    // No pause() here: pausing the real stdin right before the process exits closed the whole terminal tab on Windows.
   }
 
   private readonly onData = (data: string | Buffer) => {

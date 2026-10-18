@@ -53,9 +53,9 @@ export function roleFields(role: RoleDef, catalog: ModelCatalog): FormField[] {
       kind: 'cycle',
       editable: true,
       value: role.model,
-      options: withCurrent(models, role.model),
+      options: withCurrent(['auto', ...models], role.model),
       placeholder: 'mặc định',
-      hint: `←/→ đổi · Enter gõ tên khác. Gợi ý: ${models.join(', ') || 'không có'}`,
+      hint: `←/→ đổi · auto = router chọn theo độ khó của việc · Enter gõ tên khác. Gợi ý: ${models.join(', ') || 'không có'}`,
     },
     {
       id: 'effort',
@@ -63,9 +63,9 @@ export function roleFields(role: RoleDef, catalog: ModelCatalog): FormField[] {
       kind: 'cycle',
       editable: true,
       value: role.effort,
-      options: withCurrent(efforts, role.effort),
+      options: withCurrent(['auto', ...efforts], role.effort),
       placeholder: 'mặc định',
-      hint: `←/→ đổi · Enter gõ giá trị khác. Gợi ý: ${efforts.join(', ') || 'không có'}`,
+      hint: `←/→ đổi · auto = theo model router chọn · Enter gõ giá trị khác. Gợi ý: ${efforts.join(', ') || 'không có'}`,
     },
     { id: 'permission', label: 'Quyền mặc định', kind: 'cycle', value: role.permission, options: ['read', 'edit'], optionLabels: [PERMISSION_LABEL.read, PERMISSION_LABEL.edit] },
     { id: 'gradable', label: 'Chấm đạt/chưa đạt', kind: 'cycle', value: role.gradable ? 'yes' : 'no', options: ['no', 'yes'], optionLabels: ['Không', 'Có (nhánh pass/fail trong pipeline)'] },
@@ -97,8 +97,11 @@ export function changeRole(role: RoleDef, id: string, value: string, catalog: Mo
   }
 }
 
-const summary = (role: RoleDef): string =>
-  [AGENT_LABEL[role.agent] ?? role.agent, role.model || 'mặc định', role.effort || 'mặc định', PERMISSION_LABEL[role.permission]].join(' · ');
+const summary = (role: RoleDef): string => {
+  // "auto" is the router's choice for the task, so the effort needs no word of its own.
+  const model = role.model === 'auto' ? ['model tự động'] : [role.model || 'mặc định', role.effort === 'auto' ? 'effort tự động' : role.effort || 'mặc định'];
+  return [AGENT_LABEL[role.agent] ?? role.agent, ...model, PERMISSION_LABEL[role.permission]].join(' · ');
+};
 
 interface ListProps {
   roles: readonly RoleDef[];

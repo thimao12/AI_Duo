@@ -185,7 +185,7 @@ try {
   let closed = 0;
   const roles = mount(h(RolesPanel, { cwd: workDir, onClose: () => { closed += 1; }, onPickRole: (r: { id: string } | null) => pickedRoles.push(r?.id ?? null) }));
   frame = await seen(roles, 'Không dùng vai trò (tự động)');
-  assert.ok(frame.includes('Plan') && frame.includes('Claude · opus · high · Chỉ đọc'), frame);
+  assert.ok(frame.includes('Plan') && frame.includes('Claude · model tự động · Chỉ đọc'), frame);
   await press(roles, KEY.down, KEY.enter);
   assert.deepEqual(pickedRoles, ['plan']);
   assert.equal(closed, 1);

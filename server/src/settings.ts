@@ -38,32 +38,32 @@ const GRADE_RULE = 'Kết thúc câu trả lời bằng đúng một dòng: VERD
 const DEFAULT_ROLES: readonly RoleDef[] = [
   {
     id: 'plan', name: 'Plan', icon: '🧭', description: 'Lập kế hoạch triển khai, chỉ đọc.',
-    agent: 'claude', model: 'opus', effort: 'high', permission: 'read', gradable: false,
+    agent: 'claude', model: 'auto', effort: 'auto', permission: 'read', gradable: false,
     template: 'Bạn là kiến trúc sư phần mềm, chỉ đọc mã, không sửa file.\n\nNhiệm vụ:\n{{task}}\n\nNgữ cảnh trước đó:\n{{prev}}\n\nĐưa ra kế hoạch cụ thể: file liên quan, các bước theo thứ tự, trường hợp biên và cách kiểm chứng.',
   },
   {
     id: 'review', name: 'Review', icon: '🔍', description: 'Đọc và đánh giá thay đổi, cho PASS/FAIL.',
-    agent: 'codex', model: '', effort: '', permission: 'read', gradable: true,
+    agent: 'codex', model: 'auto', effort: 'auto', permission: 'read', gradable: true,
     template: `Bạn là người review mã, chỉ đọc, không sửa file.\n\nNhiệm vụ gốc:\n{{task}}\n\nKết quả cần review:\n{{prev}}\n\nThay đổi trong repo (diff):\n{{diff}}\n\nKết quả kiểm tra tĩnh (đã chạy sẵn, không cần chạy lại):\n{{checks}}\n\nChỉ đọc thêm file khi diff không đủ. Kiểm tra tính đúng đắn, phạm vi và rủi ro. Liệt kê vấn đề cụ thể. ${GRADE_RULE}`,
   },
   {
     id: 'code', name: 'Code', icon: '💻', description: 'Viết và sửa mã trong dự án.',
-    agent: 'claude', model: 'sonnet', effort: 'medium', permission: 'edit', gradable: false,
+    agent: 'claude', model: 'auto', effort: 'auto', permission: 'edit', gradable: false,
     template: 'Bạn là lập trình viên. Thực hiện nhiệm vụ dưới đây trong thư mục làm việc, rồi tự kiểm tra kết quả.\n\nNhiệm vụ:\n{{task}}\n\nĐầu vào từ bước trước (kế hoạch hoặc phản hồi review):\n{{prev}}',
   },
   {
     id: 'test', name: 'Test', icon: '🧪', description: 'Đánh giá kết quả có đạt yêu cầu không, cho PASS/FAIL.',
-    agent: 'codex', model: '', effort: '', permission: 'read', gradable: true,
+    agent: 'codex', model: 'auto', effort: 'auto', permission: 'read', gradable: true,
     template: `Bạn là kiểm thử viên, chỉ đọc, không sửa file.\n\nNhiệm vụ gốc:\n{{task}}\n\nKết quả cần kiểm thử:\n{{prev}}\n\nThay đổi trong repo (diff):\n{{diff}}\n\nĐối chiếu kết quả với yêu cầu, nêu các lỗi tìm thấy. ${GRADE_RULE}`,
   },
   {
     id: 'debug', name: 'Debug', icon: '🐞', description: 'Tìm nguyên nhân lỗi và sửa.',
-    agent: 'claude', model: 'sonnet', effort: 'high', permission: 'edit', gradable: false,
+    agent: 'claude', model: 'auto', effort: 'auto', permission: 'edit', gradable: false,
     template: 'Bạn đang gỡ lỗi. Tìm nguyên nhân gốc rễ rồi sửa tối thiểu cần thiết.\n\nMô tả lỗi:\n{{task}}\n\nThông tin thêm:\n{{prev}}',
   },
   {
     id: 'ask', name: 'Ask', icon: '💬', description: 'Hỏi đáp nhanh về mã, chỉ đọc.',
-    agent: 'claude', model: 'haiku', effort: '', permission: 'read', gradable: false,
+    agent: 'claude', model: 'auto', effort: 'auto', permission: 'read', gradable: false,
     template: 'Trả lời ngắn gọn, chính xác câu hỏi sau về dự án (chỉ đọc, không sửa file).\n\n{{task}}',
   },
 ];
@@ -206,6 +206,25 @@ export function getCliSettingsSync(): CliSettings {
   return cliCache!.cli;
 }
 
+/** The model and effort the factory roles had before they became "auto"; a stored role that still has exactly these was never edited. */
+const OLD_FACTORY: Record<string, { agent: string; model: string; effort: string }> = {
+  plan: { agent: 'claude', model: 'opus', effort: 'high' },
+  review: { agent: 'codex', model: '', effort: '' },
+  code: { agent: 'claude', model: 'sonnet', effort: 'medium' },
+  test: { agent: 'codex', model: '', effort: '' },
+  debug: { agent: 'claude', model: 'sonnet', effort: 'high' },
+  ask: { agent: 'claude', model: 'haiku', effort: '' },
+};
+
+/** Unedited factory roles follow the router ("auto"); roles the user changed are left alone. */
+export function upgradeFactoryRoles(roles: readonly RoleDef[]): RoleDef[] {
+  return roles.map((role) => {
+    const old = OLD_FACTORY[role.id];
+    const untouched = old && role.agent === old.agent && role.model === old.model && role.effort === old.effort;
+    return untouched ? { ...role, model: 'auto', effort: 'auto' } : role;
+  });
+}
+
 export async function loadSettings(): Promise<Settings> {
   let stored: unknown;
   try {
@@ -215,7 +234,7 @@ export async function loadSettings(): Promise<Settings> {
   }
   const saved = isObj(stored) ? stored : {};
   const roles = validateRoles(saved.roles);
-  const cleanRoles = typeof roles === 'string' ? defaultRoles() : roles;
+  const cleanRoles = typeof roles === 'string' ? defaultRoles() : upgradeFactoryRoles(roles);
   const pipelines = validatePipelines(saved.pipelines ?? [], cleanRoles);
   const cli = loadCliSettings(saved.cli);
   rememberCli(cli);

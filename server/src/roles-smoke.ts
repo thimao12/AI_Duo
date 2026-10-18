@@ -35,6 +35,19 @@ try {
   assert.deepEqual(defaults.filter((r) => r.permission === 'edit').map((r) => r.id), ['code', 'debug']);
   assert.deepEqual(defaults.filter((r) => r.gradable).map((r) => r.id), ['review', 'test']);
   assert.equal(existsSync(settingsPath), false, 'reading defaults does not create the file');
+  assert.ok(defaults.every((r) => r.model === 'auto' && r.effort === 'auto'), 'the factory roles leave the model to the router');
+  assert.deepEqual(defaults.map((r) => r.agent), ['claude', 'codex', 'claude', 'codex', 'claude', 'claude'], 'each keeps its preferred agent');
+
+  // Roles stored before "auto" existed follow it unless the user changed them.
+  const oldFactory = settings.upgradeFactoryRoles([
+    { ...defaults[0], model: 'opus', effort: 'high' },
+    { ...defaults[1], model: '', effort: '' },
+    { ...defaults[2], model: 'sonnet', effort: 'high' },
+    { ...defaults[3], model: 'gpt-x', effort: '' },
+    { ...defaults[4], agent: 'codex', model: 'sonnet', effort: 'high' },
+    { ...defaults[5], id: 'mine', model: 'haiku', effort: '' },
+  ]);
+  assert.deepEqual(oldFactory.map((r) => [r.model, r.effort]), [['auto', 'auto'], ['auto', 'auto'], ['sonnet', 'high'], ['gpt-x', ''], ['sonnet', 'high'], ['haiku', '']], 'only roles still at the old factory values are upgraded');
 
   // ---- Validation.
   const role = { ...defaults[0] };

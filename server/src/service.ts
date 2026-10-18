@@ -17,12 +17,14 @@ import { isDataId, writeRunImages } from './data-path.ts';
 import { authorizeDirectory, projectDirectories } from './project-directories.ts';
 import { classifyWithHaiku, type Classifier } from './router/classify.ts';
 import { evaluateAvailability, type Availability } from './router/availability.ts';
+import { loadCatalog } from './router/catalog.ts';
 import { autoRoute } from './router/index.ts';
+import { isAuto, resolveRole } from './router/roles.ts';
 import { classifyByRules, CONFIDENT } from './router/rules.ts';
 import { getUsage } from './usage.ts';
 import { active, newRunId, RunContext } from './run.ts';
 import { deleteRun, listRuns, loadRun, saveRun, summarizeRun, type RunSummary } from './store.ts';
-import type { Mode, Permission, PlanDecisionAnswer, RoleDef, Run, RunConfig, RunEvent } from './types.ts';
+import type { Mode, Permission, PlanDecisionAnswer, RoleDef, RoleRoute, Run, RunConfig, RunEvent } from './types.ts';
 
 /** How long the instant route preview trusts what the last start found about the CLIs. */
 const AVAILABILITY_MAX_AGE_MS = 5 * 60_000;
@@ -195,8 +197,12 @@ function agentFieldProblem(body: any): string | undefined {
   return undefined;
 }
 
+/** Per-agent model or effort of a request; empty and "auto" (a role's router-chosen value) mean none. */
 const perAgent = (values: any): Partial<Record<AgentName, string>> =>
-  Object.fromEntries(AGENT_NAMES.map((agent) => [agent, String(values?.[agent] ?? '').trim() || undefined]));
+  Object.fromEntries(AGENT_NAMES.map((agent) => {
+    const value = String(values?.[agent] ?? '').trim();
+    return [agent, value && !isAuto(value) ? value : undefined];
+  }));
 
 const MODES: ReadonlySet<string> = new Set(['code', 'plan', 'pipeline']);
 
@@ -278,6 +284,10 @@ interface Selection {
   agents?: AgentName[];
   /** Nothing can be written: no Git repository or repository lock is needed. */
   readOnly: boolean;
+  /** The roles the run uses (one for a role run, the steps' roles for a pipeline): each is resolved by the router. */
+  roles?: RoleDef[];
+  /** An agent named in the request, used as given for a single role. */
+  forcedAgent?: AgentName;
 }
 
 /** Routing stays on for Code/Plan; the agents of a Code/Plan run are checked from the config. */
@@ -306,14 +316,15 @@ function selectRole(body: any, role: RoleDef): Selection {
   // Explicit request fields win over the role.
   const agent: AgentName = isAgent(body.coder) ? body.coder : role.agent;
   const permission: Permission = body.permission === 'read' || body.permission === 'edit' ? body.permission : role.permission;
-  return { body: { ...body, coder: agent, reviewer: agent, permission }, manual: true, agents: [agent], readOnly: permission === 'read' };
+  return { body: { ...body, coder: agent, reviewer: agent, permission }, manual: true, agents: [agent], readOnly: permission === 'read', roles: [role], forcedAgent: isAgent(body.coder) ? body.coder : undefined };
 }
 
 function selectPipeline(body: any, settings: Settings): Selection {
   const steps = planPipeline(body.pipelineId, settings);
   if (typeof steps === 'string') throw new ServiceError('invalid', steps);
   const agents = [...new Set(steps.map((s) => s.role.agent))];
-  return { body: { ...body, coder: agents[0], reviewer: agents[0], permission: undefined }, manual: true, agents, readOnly: steps.every((s) => s.role.permission === 'read') };
+  const roles = [...new Map(steps.map((s) => [s.role.id, s.role])).values()];
+  return { body: { ...body, coder: agents[0], reviewer: agents[0], permission: undefined }, manual: true, agents, readOnly: steps.every((s) => s.role.permission === 'read'), roles };
 }
 
 /**
@@ -577,9 +588,35 @@ export class RunService {
     return { cfg: { ...cfg, route }, routeUsage: usage };
   }
 
+  /**
+   * A role or pipeline run: each role keeps its agent when usable, otherwise another usable CLI takes over,
+   * and a role whose model is "auto" gets one for the task's size. The result is kept in `roleRoutes`.
+   */
+  private async configureRoles(sel: Selection, mode: Mode, prompt: string, cwd: string, checks: Checks) {
+    const body = sel.body;
+    const skipAuthCheck = body?.skipAuthCheck === true;
+    const availability = await this.availabilityFor(cwd, skipAuthCheck, checks);
+    const { taskType, complexity } = classifyByRules(prompt);
+    const catalog = loadCatalog();
+    const images = Array.isArray(body?.images) && body.images.length > 0;
+    const roleRoutes: Record<string, RoleRoute> = {};
+    const notes: string[] = [];
+    for (const role of sel.roles ?? []) {
+      const { note, ...route } = resolveRole(role, { taskType, complexity, catalog, availability, images, agent: sel.forcedAgent });
+      roleRoutes[role.id] = route;
+      if (note) notes.push(note);
+    }
+    const used = [...new Set(Object.values(roleRoutes).map((r) => r.agent))];
+    // Antigravity's login cannot be read, so a role that lands on it runs without the login check.
+    const cfg = withCliDefaults(manualConfig({ ...body, mode, coder: used[0], reviewer: used[0], skipAuthCheck: skipAuthCheck || used.includes('antigravity') }, prompt, cwd));
+    await this.assertPreflight(used, cwd, cfg.skipAuthCheck, checks);
+    return { cfg: { ...cfg, roleRoutes, ...(notes.length && { route: { taskType, complexity, source: 'rules' as const, reason: notes.join('\n'), models: {} } }) }, routeUsage: undefined };
+  }
+
   /** The config for a request: routed, or built from an explicit agent, role or pipeline (no router, no model call). */
   private async configure(sel: Selection, mode: Mode, prompt: string, cwd: string, checks: Checks) {
     if (!sel.manual && mode !== 'pipeline') return this.routeAndCheck(sel.body, mode, prompt, cwd, checks);
+    if (sel.roles?.length) return this.configureRoles(sel, mode, prompt, cwd, checks);
     const cfg = withCliDefaults(manualConfig({ ...sel.body, mode }, prompt, cwd));
     await this.assertPreflight(sel.agents ?? agentsFor(cfg), cwd, sel.body?.skipAuthCheck === true, checks);
     return { cfg, routeUsage: undefined };

@@ -5,7 +5,8 @@ import { renderTemplate } from '../prompts/index.ts';
 import { formatDiff } from './pair.ts';
 import type { RunContext, TurnResult } from '../run.ts';
 import { DEFAULT_MAX_LOOPS, getCliSettingsSync, loadSettings } from '../settings.ts';
-import type { Permission, PipelineStep, RoleDef, RunConfig, Verdict } from '../types.ts';
+import { isAuto } from '../router/roles.ts';
+import type { Permission, PipelineStep, RoleDef, RoleRoute, RunConfig, Verdict } from '../types.ts';
 import { lastVerdict } from '../../../shared/text.ts';
 
 /** Upper bound on steps executed in one pipeline run, whatever the loop settings say. */
@@ -34,14 +35,19 @@ export function parseGrade(text: string): Verdict | undefined {
   return undefined;
 }
 
-/** The role's model and effort for `agent`; manual choices in the request win, and a role's own only fit its agent. */
-export function roleModel(cfg: Pick<RunConfig, 'models' | 'efforts'>, role: RoleDef, agent: AgentName): { model?: string; effort?: string } {
-  const own = role.agent === agent ? role : undefined;
+/**
+ * The role's model and effort for `agent`; manual choices in the request win, then what the router
+ * resolved for this run (`route`), then the role's own, which only fit its own agent. "auto" is not a
+ * model name: without a route it means the CLI default.
+ */
+export function roleModel(cfg: Pick<RunConfig, 'models' | 'efforts'>, role: RoleDef, agent: AgentName, route?: RoleRoute): { model?: string; effort?: string } {
+  const real = (value: string | undefined) => (value && !isAuto(value) ? value : undefined);
+  const chosen = route?.agent === agent ? route : role.agent === agent ? { model: real(role.model), effort: real(role.effort) } : undefined;
   const manualModel = cfg.models?.[agent];
   const saved = getCliSettingsSync()[agent];
-  const model = manualModel || own?.model || saved.defaultModel || undefined;
+  const model = manualModel || chosen?.model || saved.defaultModel || undefined;
   // A manual model drops the role's effort: it was chosen for the role's own model.
-  const effort = cfg.efforts?.[agent] || (manualModel ? undefined : own?.effort || saved.defaultEffort) || undefined;
+  const effort = cfg.efforts?.[agent] || (manualModel ? undefined : chosen?.effort || saved.defaultEffort) || undefined;
   return { model, effort };
 }
 
@@ -57,9 +63,12 @@ interface RoleTurn {
 }
 
 function roleTurn(ctx: RunContext, t: RoleTurn): Promise<TurnResult> {
-  const { model, effort } = roleModel(ctx.run.config, t.role, t.agent);
+  // The agent the router resolved for this role in this run (the role's own when it is usable).
+  const route = ctx.run.config.roleRoutes?.[t.role.id];
+  const agent = route?.agent ?? t.agent;
+  const { model, effort } = roleModel(ctx.run.config, t.role, agent, route);
   return ctx.turn({
-    agent: t.agent,
+    agent,
     role: t.permission === 'edit' ? 'coder' : 'thinker',
     permission: t.permission,
     phase: 'role',
