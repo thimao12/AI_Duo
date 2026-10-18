@@ -273,12 +273,8 @@ export interface ConnectionStatus {
   error: string | null;
 }
 
-export interface UsageReport {
-  claude: AgentUsage;
-  codex: AgentUsage;
-  /** agy reports no quota, so this only ever says so. */
-  antigravity: AgentUsage;
-}
+/** One entry per agent of the registry; an agent without a quota source (agy, new CLIs) says `unavailable`. */
+export type UsageReport = Record<AgentName, AgentUsage>;
 
 /* ---- Per-CLI manual configuration (kept in settings.json) ---- */
 

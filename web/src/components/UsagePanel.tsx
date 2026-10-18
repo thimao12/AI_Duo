@@ -102,6 +102,7 @@ const isLive = (usage: AgentUsage) => usage.live === true || usage.source === 'l
 /** "trực tiếp", "từ log lúc 14:05" or "từ lần chạy lúc 14:05". */
 export function sourceLabel(usage: AgentUsage): string {
   if (isLive(usage)) return 'trực tiếp';
+  if (usage.source === 'unavailable') return 'CLI không công bố quota';
   const base = usage.source === 'codex-session-log' ? 'từ log' : 'từ lần chạy';
   return usage.updatedAt ? `${base} lúc ${clock(new Date(usage.updatedAt))}` : base;
 }
@@ -296,7 +297,7 @@ function UsageContent({ status, refreshStatus, onOpenCliSettings }: Readonly<Usa
         </button>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        {AGENTS.map((name) => (
+        {(report ? (Object.keys(report) as AgentName[]) : AGENTS).map((name) => (
           <AgentCard key={name} name={name} recheckSignal={updatedAt?.getTime() ?? 0} onOpenCliSettings={onOpenCliSettings} usage={report?.[name]} version={status?.[name] ?? null} error={status ? status[`${name}Error`] : null} />
         ))}
       </div>

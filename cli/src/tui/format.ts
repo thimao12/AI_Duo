@@ -45,6 +45,7 @@ export const isLive = (usage: AgentUsage) => usage.live === true || usage.source
 /** "trực tiếp", "từ log lúc 14:05" or "từ lần chạy lúc 14:05". */
 export function sourceLabel(usage: AgentUsage): string {
   if (isLive(usage)) return 'trực tiếp';
+  if (usage.source === 'unavailable') return 'CLI không công bố quota';
   const base = usage.source === 'codex-session-log' ? 'từ log' : 'từ lần chạy';
   return usage.updatedAt ? `${base} lúc ${clock(new Date(usage.updatedAt))}` : base;
 }

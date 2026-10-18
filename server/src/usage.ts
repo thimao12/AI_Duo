@@ -2,6 +2,7 @@ import { open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import type { RunSummary } from './store.ts';
+import { AGENT_NAMES, type AgentName } from './agents/index.ts';
 import type { AgentUsage, UsageReport } from './types.ts';
 import { buildWindow, fetchClaudeLive, fetchCodexLive, FIVE_HOUR_MINUTES, WEEK_MINUTES, type LiveDeps, type LiveResult } from './usage-live.ts';
 
@@ -138,17 +139,29 @@ function withLive(fallback: AgentUsage, live: LiveResult): AgentUsage {
   return usage;
 }
 
-/** Plan usage windows of both agents: asked live when possible, else from data the CLIs left on disk; never calls a model. */
+interface UsageContext {
+  runs?: RunSummary[];
+  now: number;
+  /** Ask the CLI or account for live numbers (otherwise only what is left on disk is read). */
+  live: boolean;
+  deps: LiveDeps;
+}
+
+/** Where each agent's numbers come from. An agent missing here (agy, a CLI added later) reports `unavailable`. */
+const SOURCES: Partial<Record<AgentName, (ctx: UsageContext) => Promise<AgentUsage>>> = {
+  claude: async ({ runs, now, live, deps }) => {
+    const disk = claudeUsage(runs, now);
+    return live ? withLive(disk, await fetchClaudeLive(deps)) : disk;
+  },
+  codex: async ({ now, live, deps }) => {
+    const [disk, liveResult] = await Promise.all([codexUsage(now), live ? fetchCodexLive(deps) : undefined]);
+    return liveResult ? withLive(disk, liveResult) : disk;
+  },
+};
+
+/** Plan usage windows of every agent in the registry: asked live when possible, else from data the CLIs left on disk; never calls a model. */
 export async function getUsage(runs?: RunSummary[], now = Date.now(), opts: UsageOptions = {}): Promise<UsageReport> {
-  const deps: LiveDeps = { ...opts.deps, force: opts.force };
-  const skipped: LiveResult = { ok: false, error: 'unavailable' };
-  const [claudeLive, codexLive, codex] = await Promise.all([
-    opts.live === false ? skipped : fetchClaudeLive(deps),
-    opts.live === false ? skipped : fetchCodexLive(deps),
-    codexUsage(now),
-  ]);
-  const claude = claudeUsage(runs, now);
-  const antigravity: AgentUsage = { source: 'unavailable' };
-  if (opts.live === false) return { claude, codex, antigravity };
-  return { claude: withLive(claude, claudeLive), codex: withLive(codex, codexLive), antigravity };
+  const ctx: UsageContext = { runs, now, live: opts.live !== false, deps: { ...opts.deps, force: opts.force } };
+  const entries = await Promise.all(AGENT_NAMES.map(async (name) => [name, (await SOURCES[name]?.(ctx)) ?? { source: 'unavailable' }] as const));
+  return Object.fromEntries(entries) as UsageReport;
 }

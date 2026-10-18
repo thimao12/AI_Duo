@@ -325,6 +325,7 @@ try {
   assert.ok(/Reset \d\d:\d\d (hôm nay|ngày mai) · còn 1g (19|20)p/.test(frame), frame);
   assert.ok(frame.includes('[từ log]') && frame.includes('Cần đăng nhập lại') && frame.includes('Đã reset – chưa có số liệu mới') && frame.includes('Thẻ reset 1') && !frame.includes('Đã dùng'), frame);
   assert.ok(frame.includes('chưa kết nối'), 'codex has no version');
+  assert.ok(frame.includes('Antigravity') && frame.includes('[CLI không công bố quota]'), `every CLI of the registry has a card: ${frame}`);
   await press(usage, 'r');
   await until(usage, () => forces.includes(true), 'forced refresh');
   usage.unmount();

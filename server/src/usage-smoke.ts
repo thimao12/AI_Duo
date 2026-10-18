@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { RunSummary } from './store.ts';
+import { AGENT_NAMES } from './agents/index.ts';
 import { getUsage } from './usage.ts';
 
 const now = Date.parse('2026-06-01T12:00:00Z');
@@ -81,6 +82,19 @@ try {
   assert.equal(claude.weekly?.stale, true);
   assert.equal(claude.fiveHour?.stale, undefined);
   assert.equal(claude.updatedAt, new Date(3000).toISOString());
+  // Every agent of the registry has an entry; an agent without a quota source says so, and one added later appears by itself.
+  const report = await getUsage(undefined, now, off);
+  assert.deepEqual(Object.keys(report).sort(), [...AGENT_NAMES].sort());
+  assert.deepEqual(report.antigravity, { source: 'unavailable' });
+  const names = AGENT_NAMES as unknown as string[];
+  names.push('fourth');
+  try {
+    const withFourth = (await getUsage(undefined, now, off)) as Record<string, unknown>;
+    assert.deepEqual(withFourth.fourth, { source: 'unavailable' });
+    assert.equal(Object.keys(withFourth).length, AGENT_NAMES.length);
+  } finally {
+    names.pop();
+  }
   console.log('usage smoke ok');
 } finally {
   await rm(root, { recursive: true, force: true });

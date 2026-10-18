@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
+import { AGENT_NAMES, agentLabel } from '../../../../server/src/agents/index.ts';
 import type { AgentName } from '../../../../server/src/agents/types.ts';
 import { detectCli } from '../../../../server/src/routes/cli-settings.ts';
 import type { AgentUsage, UsageReport, UsageResetCredit, UsageWindow } from '../../../../server/src/types.ts';
@@ -12,8 +13,6 @@ import { tone } from '../theme.ts';
 import Panel from '../widgets/Panel.tsx';
 
 const REFRESH_MS = 60_000;
-const AGENTS: readonly AgentName[] = ['claude', 'codex'];
-const LABEL: Record<AgentName, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
 
 export interface UsageData {
   report: UsageReport;
@@ -23,11 +22,11 @@ export interface UsageData {
 
 export type UsageLoader = (force: boolean) => Promise<UsageData>;
 
-/** Live usage of both agents plus their CLI versions. */
+/** Live usage of every agent of the registry plus their CLI versions. */
 export const loadUsage: UsageLoader = async (force) => {
   const runs = await getService().list();
-  const [report, claude, codex] = await Promise.all([getUsage(runs, Date.now(), { force }), detectCli('claude'), detectCli('codex')]);
-  return { report, versions: { claude: claude.version, codex: codex.version } };
+  const [report, detected] = await Promise.all([getUsage(runs, Date.now(), { force }), Promise.all(AGENT_NAMES.map((name) => detectCli(name)))]);
+  return { report, versions: Object.fromEntries(detected.map((d) => [d.name, d.version])) };
 };
 
 interface BarRowProps {
@@ -102,7 +101,7 @@ function AgentCard({ name, usage, version }: Readonly<CardProps>) {
     <Box flexDirection="column" marginBottom={1}>
       <Box>
         <Text color={tone(version ? 'green' : 'red')}>● </Text>
-        <Text bold>{LABEL[name]}</Text>
+        <Text bold>{agentLabel(name)}</Text>
         {usage?.plan ? <Text color={tone('cyan')}>{` ${usage.plan.toUpperCase()}`}</Text> : null}
         <Text dimColor>{`  ${version ?? 'chưa kết nối'}`}</Text>
         {usage ? <Text color={tone(live ? 'green' : 'gray')}>{`  [${sourceLabel(usage)}]`}</Text> : null}
@@ -122,7 +121,7 @@ export interface UsagePanelProps extends PanelProps {
   loader?: UsageLoader;
 }
 
-/** /usage: plan usage windows and CLI versions of Claude and Codex; `r` refreshes, and it refreshes itself every minute. */
+/** /usage: plan usage windows and CLI versions of every connected CLI; `r` refreshes, and it refreshes itself every minute. */
 export default function UsagePanel({ onClose, loader = loadUsage }: Readonly<UsagePanelProps>) {
   const { data, error, loading, reload } = useLoader(loader);
   const [updatedAt, setUpdatedAt] = useState<Date | null>(null);
@@ -138,7 +137,7 @@ export default function UsagePanel({ onClose, loader = loadUsage }: Readonly<Usa
   const updated = updatedAt ? `Cập nhật lúc ${clock(updatedAt)} · ` : '';
   return (
     <Panel title="Usage" onClose={onClose} error={error} hints={[['r', 'làm mới'], ['Esc', 'đóng']]}>
-      {AGENTS.map((name) => (
+      {AGENT_NAMES.map((name) => (
         <AgentCard key={name} name={name} usage={data?.report[name]} version={data?.versions[name]} />
       ))}
       <Text dimColor>{`${refreshing}${updated}tự làm mới mỗi 60 giây`}</Text>
