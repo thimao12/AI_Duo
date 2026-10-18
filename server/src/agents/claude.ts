@@ -11,7 +11,7 @@ export function permissionArgs(role: Role, permission?: 'read' | 'edit', extraTo
   const allow = (tools: string) => [tools, ...extraTools].join(',');
   switch (tierFor(role, permission)) {
     case 'coder':
-      return ['--permission-mode', 'acceptEdits', '--allowedTools', allow('Bash,Edit,Write,Read,Grep,Glob,TodoWrite')];
+      return ['--permission-mode', 'acceptEdits', '--allowedTools', allow('Bash,Edit,Write,Read,Grep,Glob,TodoWrite,Skill')];
     case 'reviewer':
       return ['--allowedTools', allow('Bash,Read,Grep,Glob'), '--disallowedTools', 'Edit,Write,NotebookEdit'];
     case 'thinker':
