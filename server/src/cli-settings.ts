@@ -1,7 +1,7 @@
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import { effortNameProblem, modelNameProblem } from './models.ts';
-import type { CliConfig, CliSettings } from './types.ts';
+import type { CliConfig, CliSettings, McpServer } from './types.ts';
 
 /** Validation of the per-CLI manual configuration; pure apart from checking that binPath is a file. */
 
@@ -11,6 +11,9 @@ export const MAX_ENV_KEYS = 50;
 export const MAX_ENV_VALUE = 2000;
 export const MAX_TEST_COMMAND = 500;
 export const MAX_TURN_TIMEOUT_MIN = 240;
+const MAX_MCP_SERVERS = 20;
+const MCP_NAME = /^[A-Za-z0-9_-]{1,32}$/;
+const MCP_ROLES: readonly string[] = ['coder', 'reviewer', 'thinker'];
 const ENV_KEY = /^[A-Za-z_]\w{0,63}$/;
 const FORBIDDEN_KEYS: ReadonlySet<string> = new Set(['__proto__', 'constructor', 'prototype']);
 
@@ -124,6 +127,38 @@ function cliProblem(input: unknown, label: string, checkFile: boolean): CliConfi
   return problem ?? cleanCli(input);
 }
 
+function mcpProblem(value: unknown): McpServer[] | string {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value) || value.length > MAX_MCP_SERVERS) return `mcp phải là danh sách tối đa ${MAX_MCP_SERVERS} server.`;
+  const servers: McpServer[] = [];
+  for (const [index, item] of value.entries()) {
+    const at = `mcp[${index}]`;
+    if (!isObj(item)) return `${at} phải là một đối tượng.`;
+    if (typeof item.name !== 'string' || !MCP_NAME.test(item.name)) return `${at}.name chỉ gồm chữ, số, gạch dưới hoặc gạch ngang (tối đa 32 ký tự).`;
+    if (servers.some((s) => s.name === item.name)) return `${at}.name "${item.name}" bị trùng.`;
+    const command = typeof item.command === 'string' ? item.command.trim() : '';
+    if (!command || command.length > MAX_ARG_LENGTH || hasNul(command)) return `${at}.command phải là chuỗi không rỗng, tối đa ${MAX_ARG_LENGTH} ký tự.`;
+    const server: McpServer = { name: item.name, command };
+    if (item.args !== undefined) {
+      if (!Array.isArray(item.args) || item.args.length > MAX_EXTRA_ARGS || item.args.some((a) => typeof a !== 'string' || a.length > MAX_ARG_LENGTH || hasNul(a))) {
+        return `${at}.args phải là danh sách tối đa ${MAX_EXTRA_ARGS} chuỗi, mỗi chuỗi tối đa ${MAX_ARG_LENGTH} ký tự, không chứa ký tự NUL.`;
+      }
+      if (item.args.length) server.args = [...item.args] as string[];
+    }
+    if (item.env !== undefined) {
+      const problem = envProblem(item.env, `${at}.env`);
+      if (problem) return problem;
+      if (Object.keys(item.env as Obj).length) server.env = { ...(item.env as Record<string, string>) };
+    }
+    if (item.roles !== undefined) {
+      if (!Array.isArray(item.roles) || item.roles.some((r) => typeof r !== 'string' || !MCP_ROLES.includes(r))) return `${at}.roles chỉ gồm coder, reviewer hoặc thinker.`;
+      server.roles = [...new Set(item.roles)] as McpServer['roles'];
+    }
+    servers.push(server);
+  }
+  return servers;
+}
+
 function testCommandProblem(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string' || value.length > MAX_TEST_COMMAND || hasNul(value)) return `testCommand phải là chuỗi tối đa ${MAX_TEST_COMMAND} ký tự, không chứa ký tự NUL.`;
@@ -147,7 +182,10 @@ export function validateCliSettings(input: unknown, checkFile = true): CliSettin
   if (typeof antigravity === 'string') return antigravity;
   const problem = timeoutProblem(input.turnTimeoutMin) ?? testCommandProblem(input.testCommand);
   if (problem) return problem;
+  const mcp = mcpProblem(input.mcp);
+  if (typeof mcp === 'string') return mcp;
   const settings: CliSettings = { claude, codex, antigravity };
+  if (mcp.length) settings.mcp = mcp;
   if (typeof input.turnTimeoutMin === 'number') settings.turnTimeoutMin = input.turnTimeoutMin;
   const testCommand = typeof input.testCommand === 'string' ? input.testCommand.trim() : '';
   if (testCommand) settings.testCommand = testCommand;

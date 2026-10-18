@@ -108,6 +108,28 @@ try {
   bad({ turnTimeoutMin: 0 }, /turnTimeoutMin/);
   bad({ turnTimeoutMin: 241 }, /turnTimeoutMin/);
   bad({ turnTimeoutMin: 1.5 }, /turnTimeoutMin/);
+  /* ---- MCP servers ---- */
+  const mcpOk = cli.validateCliSettings({ mcp: [{ name: 'files', command: ' npx ', args: ['-y', 'srv'], env: { TOKEN: 'x' }, roles: ['coder', 'coder', 'reviewer'] }, { name: 'plain', command: 'node' }] });
+  assert.deepEqual((mcpOk as { mcp: unknown }).mcp, [{ name: 'files', command: 'npx', args: ['-y', 'srv'], env: { TOKEN: 'x' }, roles: ['coder', 'reviewer'] }, { name: 'plain', command: 'node' }]);
+  assert.deepEqual(cli.validateCliSettings({ mcp: [] }), base, 'an empty list is dropped');
+  bad({ mcp: 'x' }, /danh sách/);
+  bad({ mcp: Array.from({ length: 21 }, (_, i) => ({ name: `s${i}`, command: 'x' })) }, /tối đa 20/);
+  bad({ mcp: [{ name: 'a b', command: 'x' }] }, /name/);
+  bad({ mcp: [{ name: 'a', command: '' }] }, /command/);
+  bad({ mcp: [{ name: 'a', command: 'x' }, { name: 'a', command: 'y' }] }, /trùng/);
+  bad({ mcp: [{ name: 'a', command: 'x', args: [1] }] }, /args/);
+  bad({ mcp: [{ name: 'a', command: 'x', env: { '1': 'v' } }] }, /không hợp lệ/);
+  bad({ mcp: [{ name: 'a', command: 'x', roles: ['admin'] }] }, /roles/);
+  const mcp = await import('./mcp.ts');
+  const servers = [{ name: 'files', command: 'npx', args: ['-y', 'srv'], env: { TOKEN: 'x y' } }, { name: 'ro', command: 'node', roles: ['reviewer' as const] }];
+  assert.deepEqual(mcp.mcpServersFor('coder', servers).map((s) => s.name), ['files'], 'default is coder only');
+  assert.deepEqual(mcp.mcpServersFor('reviewer', servers).map((s) => s.name), ['ro']);
+  assert.deepEqual(mcp.mcpServersFor('thinker', servers), []);
+  assert.deepEqual(mcp.claudeMcpArgs([]), []);
+  assert.deepEqual(JSON.parse(mcp.claudeMcpArgs(servers)[1]), { mcpServers: { files: { command: 'npx', args: ['-y', 'srv'], env: { TOKEN: 'x y' } }, ro: { command: 'node', args: [] } } });
+  assert.deepEqual(mcp.claudeMcpTools(servers), ['mcp__files', 'mcp__ro']);
+  assert.deepEqual(mcp.codexMcpArgs([servers[0]]), ['-c', 'mcp_servers.files.command="npx"', '-c', 'mcp_servers.files.args=["-y","srv"]', '-c', 'mcp_servers.files.env={"TOKEN"="x y"}']);
+  assert.equal(mcp.tierFor('reviewer', 'edit'), 'coder');
   bad({ turnTimeoutMin: '30' }, /turnTimeoutMin/);
   bad({ testCommand: 'x'.repeat(501) }, /testCommand/);
   bad({ testCommand: 'npm test\0' }, /testCommand/);

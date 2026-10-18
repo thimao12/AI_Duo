@@ -1,26 +1,22 @@
 import { agentEnv, assertPlanOnly, blockClaudeUntil, claudeOverageMessage } from './billing.ts';
 import { resolveBin } from './bins.ts';
 import { getCliSettingsSync } from '../settings.ts';
+import { claudeMcpArgs, claudeMcpTools, mcpServersFor, tierFor } from '../mcp.ts';
 import { checkAgent } from './check.ts';
 import { AbortedError, spawnJsonl } from './process.ts';
 import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult, Usage } from './types.ts';
 
-/** An explicit permission replaces the role's tier: edit = coder, read = reviewer (if it was one) or thinker. */
-function tierFor(role: Role, permission?: 'read' | 'edit'): Role {
-  if (permission === 'edit') return 'coder';
-  if (permission === 'read') return role === 'reviewer' ? 'reviewer' : 'thinker';
-  return role;
-}
-
-export function permissionArgs(role: Role, permission?: 'read' | 'edit'): string[] {
+/** `extraTools` (MCP tool prefixes) join the allowlist of whichever tier applies. */
+export function permissionArgs(role: Role, permission?: 'read' | 'edit', extraTools: readonly string[] = []): string[] {
+  const allow = (tools: string) => [tools, ...extraTools].join(',');
   switch (tierFor(role, permission)) {
     case 'coder':
-      return ['--permission-mode', 'acceptEdits', '--allowedTools', 'Bash,Edit,Write,Read,Grep,Glob,TodoWrite'];
+      return ['--permission-mode', 'acceptEdits', '--allowedTools', allow('Bash,Edit,Write,Read,Grep,Glob,TodoWrite')];
     case 'reviewer':
-      return ['--allowedTools', 'Bash,Read,Grep,Glob', '--disallowedTools', 'Edit,Write,NotebookEdit'];
+      return ['--allowedTools', allow('Bash,Read,Grep,Glob'), '--disallowedTools', 'Edit,Write,NotebookEdit'];
     case 'thinker':
     default:
-      return ['--allowedTools', 'Read,Grep,Glob,WebSearch,WebFetch', '--disallowedTools', 'Bash,Edit,Write,NotebookEdit'];
+      return ['--allowedTools', allow('Read,Grep,Glob,WebSearch,WebFetch'), '--disallowedTools', 'Bash,Edit,Write,NotebookEdit'];
   }
 }
 
@@ -147,7 +143,8 @@ export function onJson(ev: any, state: ClaudeJsonState): { state: ClaudeJsonStat
 export const claude: AgentAdapter = {
   name: 'claude',
   async run(o: RunOptions): Promise<RunResult> {
-    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', ...permissionArgs(o.role, o.permission)];
+    const mcp = mcpServersFor(tierFor(o.role, o.permission));
+    const args = ['-p', '--output-format', 'stream-json', '--verbose', '--include-partial-messages', ...permissionArgs(o.role, o.permission, claudeMcpTools(mcp)), ...claudeMcpArgs(mcp)];
     if (o.model) args.push('--model', o.model);
     if (o.effort) args.push('--effort', o.effort);
     if (o.sessionId) args.push('--resume', o.sessionId);

@@ -287,6 +287,16 @@ export interface CliConfig {
   defaultEffort?: string;
 }
 
+/** An MCP server AI Duo hands to the agent CLIs (stdio transport). */
+export interface McpServer {
+  /** Letters, digits, `_` and `-`; becomes the tool prefix `mcp__<name>`. */
+  name: string;
+  command: string;
+  args?: string[];
+  env?: Record<string, string>;
+  /** Roles whose turns may use it; default coder only, since AI Duo cannot know which tools only read. */
+  roles?: Role[];
+}
 export interface CliSettings {
   claude: CliConfig;
   codex: CliConfig;
@@ -295,4 +305,6 @@ export interface CliSettings {
   turnTimeoutMin?: number;
   /** Default test command when a request omits it. */
   testCommand?: string;
+  /** MCP servers added to Claude and Codex turns (Antigravity has no MCP flag). */
+  mcp?: McpServer[];
 }

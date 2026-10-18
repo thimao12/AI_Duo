@@ -4,6 +4,7 @@ import path from 'node:path';
 import { agentEnv, assertPlanOnly } from './billing.ts';
 import { resolveBin } from './bins.ts';
 import { getCliSettingsSync } from '../settings.ts';
+import { codexMcpArgs, mcpServersFor, tierFor } from '../mcp.ts';
 import { checkAgent } from './check.ts';
 import { spawnJsonl } from './process.ts';
 import type { AgentAdapter, AgentEvent, Role, RunOptions, RunResult, Usage } from './types.ts';
@@ -100,6 +101,7 @@ export const codex: AgentAdapter = {
     const args = o.sessionId
       ? ['exec', 'resume', '--json', '--skip-git-repo-check', '-c', `sandbox_mode="${sandbox}"`, '-o', lastFile]
       : ['exec', '--json', '--skip-git-repo-check', '-C', o.cwd, '-s', sandbox, '-o', lastFile];
+    args.push(...codexMcpArgs(mcpServersFor(tierFor(o.role, o.permission))));
     if (o.model) args.push('-m', o.model);
     if (o.effort) args.push('-c', `model_reasoning_effort="${o.effort}"`);
     for (const image of o.images ?? []) args.push('--image', image);
