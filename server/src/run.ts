@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { agentLabel, agents, type AgentName, type Role, type Usage } from './agents/index.ts';
 import { AbortedError } from './agents/process.ts';
+import { runHook } from './hooks.ts';
 import { saveRun } from './store.ts';
 import { paths } from './paths.ts';
 import { authorizeDirectory } from './project-directories.ts';
-import { addUsage, applyAgentEvent, type Message, type ModelRole, type PairDecision, type PlanDecision, type PlanDecisionAnswer, type Permission, type Run, type RunConfig, type RunEvent, type Speaker, type Verdict } from './types.ts';
+import { addUsage, applyAgentEvent, type HookName, type Message, type ModelRole, type PairDecision, type PlanDecision, type PlanDecisionAnswer, type Permission, type Run, type RunConfig, type RunEvent, type Speaker, type Verdict } from './types.ts';
 
 export interface TurnOptions {
   agent: AgentName;
@@ -223,6 +224,7 @@ export class RunContext {
     const m = this.startMessage(t.agent, t.phase, t.round, t.title, [model, effort].filter(Boolean).join(' · ') || undefined);
     const key = t.sessionKey ? `${t.agent}:${t.sessionKey}` : undefined;
     try {
+      await this.hook('beforeTurn', t);
       const res = await agents[t.agent].run({
         prompt: t.prompt,
         images: this.currentImages ?? this.imagePaths(),
@@ -246,10 +248,17 @@ export class RunContext {
       if (!m.parts.some((p) => p.kind === 'text') && res.finalText) this.pushEvent(m, { kind: 'text', content: res.finalText });
       const verdict = await t.parseVerdict?.(res.finalText);
       this.endMessage(m, 'done', verdict, res.usage);
+      await this.hook('afterTurn', t);
       return { text: res.finalText, verdict };
     } catch (err) {
       this.failTurn(m, err);
     }
+  }
+
+  /** A failing hook is reported in the thread and never stops the turn. */
+  private async hook(name: HookName, t: TurnOptions) {
+    const result = await runHook(name, authorizeDirectory(this.run.config.cwd), { agent: t.agent, role: t.role, phase: t.phase, run: this.run.id }, this.abort.signal);
+    if (result && !result.ok) this.note(`Hook ${name} lỗi`, result.output || 'Lệnh kết thúc với mã lỗi.');
   }
 
   private imagePaths(): string[] | undefined {

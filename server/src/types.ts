@@ -287,6 +287,8 @@ export interface CliConfig {
   defaultEffort?: string;
 }
 
+export type HookName = 'beforeTurn' | 'afterTurn';
+
 /** An MCP server AI Duo hands to the agent CLIs (stdio transport). */
 export interface McpServer {
   /** Letters, digits, `_` and `-`; becomes the tool prefix `mcp__<name>`. */
@@ -305,6 +307,8 @@ export interface CliSettings {
   turnTimeoutMin?: number;
   /** Default test command when a request omits it. */
   testCommand?: string;
+  /** Shell commands run in the project folder around every agent turn; a failure is noted in the thread. */
+  hooks?: Partial<Record<HookName, string>>;
   /** MCP servers added to Claude and Codex turns (Antigravity has no MCP flag). */
   mcp?: McpServer[];
 }

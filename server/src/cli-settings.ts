@@ -1,7 +1,7 @@
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import { effortNameProblem, modelNameProblem } from './models.ts';
-import type { CliConfig, CliSettings, McpServer } from './types.ts';
+import type { CliConfig, CliSettings, HookName, McpServer } from './types.ts';
 
 /** Validation of the per-CLI manual configuration; pure apart from checking that binPath is a file. */
 
@@ -159,6 +159,20 @@ function mcpProblem(value: unknown): McpServer[] | string {
   return servers;
 }
 
+const HOOK_NAMES: readonly HookName[] = ['beforeTurn', 'afterTurn'];
+
+function hooksProblem(value: unknown): Partial<Record<HookName, string>> | string {
+  if (value === undefined || value === null) return {};
+  if (!isObj(value)) return 'hooks phải là một đối tượng.';
+  const hooks: Partial<Record<HookName, string>> = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (!HOOK_NAMES.includes(key as HookName)) return `hooks.${key} không hợp lệ (dùng ${HOOK_NAMES.join(', ')}).`;
+    if (typeof item !== 'string' || item.length > MAX_TEST_COMMAND || hasNul(item)) return `hooks.${key} phải là chuỗi tối đa ${MAX_TEST_COMMAND} ký tự, không chứa ký tự NUL.`;
+    if (item.trim()) hooks[key as HookName] = item.trim();
+  }
+  return hooks;
+}
+
 function testCommandProblem(value: unknown): string | undefined {
   if (value === undefined || value === null) return undefined;
   if (typeof value !== 'string' || value.length > MAX_TEST_COMMAND || hasNul(value)) return `testCommand phải là chuỗi tối đa ${MAX_TEST_COMMAND} ký tự, không chứa ký tự NUL.`;
@@ -182,10 +196,13 @@ export function validateCliSettings(input: unknown, checkFile = true): CliSettin
   if (typeof antigravity === 'string') return antigravity;
   const problem = timeoutProblem(input.turnTimeoutMin) ?? testCommandProblem(input.testCommand);
   if (problem) return problem;
+  const hooks = hooksProblem(input.hooks);
+  if (typeof hooks === 'string') return hooks;
   const mcp = mcpProblem(input.mcp);
   if (typeof mcp === 'string') return mcp;
   const settings: CliSettings = { claude, codex, antigravity };
   if (mcp.length) settings.mcp = mcp;
+  if (Object.keys(hooks).length) settings.hooks = hooks;
   if (typeof input.turnTimeoutMin === 'number') settings.turnTimeoutMin = input.turnTimeoutMin;
   const testCommand = typeof input.testCommand === 'string' ? input.testCommand.trim() : '';
   if (testCommand) settings.testCommand = testCommand;
