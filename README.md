@@ -1,6 +1,6 @@
-# AI Duo – Claude × Codex
+# AI Duo – Claude, Codex và Antigravity
 
-App web local để **Claude Code** và **Codex** cùng làm việc với nhau. App gọi 2 CLI ở chế độ headless (`claude -p`, `codex exec`), nên dùng luôn subscription/đăng nhập sẵn có trên máy, không cần API key.
+App web local để **Claude Code**, **Codex** và **Antigravity** cùng làm việc. App gọi CLI ở chế độ headless (`claude -p`, `codex exec`, `agy`), nên dùng đăng nhập sẵn có trên máy, không cần API key. Router tự chọn Claude/Codex; bạn có thể chọn Antigravity bằng tay.
 
 ## Chế độ
 
@@ -28,17 +28,24 @@ Bản desktop lưu lịch sử phiên ở `%APPDATA%\AI Duo\runs` và prompt ở
 
 ```bash
 pnpm cli:build                               # → cli/dist/ai-duo.mjs + cli/dist/prompts
-node cli/dist/ai-duo.mjs doctor              # hoặc: cd cli && npm link → gọi `ai-duo` ở bất kỳ đâu
+node cli/dist/ai-duo.mjs doctor              # hoặc: cd cli && npm link → tự build và gọi `ai-duo` ở bất kỳ đâu
+ai-duo doctor antigravity                    # chỉ kiểm tra agent được nêu (mặc định: cả ba)
 ai-duo run "thêm nút xuất CSV" --mode plan   # chạy trong thư mục hiện tại (hoặc --cwd <dir>)
+ai-duo run "…" --coder antigravity --reviewer codex --antigravity-model <model> --skip-auth-check
 ai-duo runs                                  # phiên của repo hiện tại (--all: mọi thư mục)
 ai-duo show <id> [--diff]                    ai-duo continue <id> "sửa thêm…"
 pnpm cli run "…" --cwd <dir>                 # chạy thẳng từ source ở gốc repo, không cần build
 ```
 
-CLI chạy trực tiếp trên cùng lõi `RunService` với server (routing, kiểm tra agent, khóa repo, Plan → Code), không cần server đang chạy. Vẫn cần Node ≥ 22, Git, Claude CLI và Codex CLI trên máy. Tiến độ in ra `stderr`, kết quả cuối ra `stdout` (`--json` cho máy đọc); không có TTY hoặc có `NO_COLOR` thì bỏ màu. Mã thoát: `0` xong · `1` phiên lỗi · `2` yêu cầu sai · `3` kiểm tra agent thất bại · `4` repo đang bị khóa · `130` bị hủy.
+Nếu `ai-duo` báo thiếu `dist/ai-duo.mjs`, chạy `pnpm cli:build` tại gốc repo rồi thử lại. Lệnh đã liên kết qua `npm link` dùng trực tiếp bản build trong `cli/dist`; build thất bại sẽ giữ lại bản đang có.
+
+CLI chạy trực tiếp trên cùng lõi `RunService` với server (routing, kiểm tra agent, khóa repo, Plan → Code), không cần server đang chạy. Cần Node ≥ 22 và CLI của các agent được chọn: mặc định là Claude và Codex; nếu chọn Antigravity thì cần `agy` (hoặc đặt `AGY_BIN`). Code cần Git; Plan có thể chạy ngoài Git. Tiến độ in ra `stderr`, kết quả cuối ra `stdout` (`--json` cho máy đọc); không có TTY hoặc có `NO_COLOR` thì bỏ màu. Mã thoát: `0` xong · `1` phiên lỗi · `2` yêu cầu sai · `3` kiểm tra agent thất bại · `4` repo đang bị khóa · `130` bị hủy.
 
 - Trước khi tạo phiên (sau routing, trước lượt model đầu tiên), CLI/server kiểm tra từng agent sẽ dùng: tìm binary, chạy `--version`, và kiểm tra đăng nhập bằng `claude auth status` / `codex login status` (không gọi model). Chưa đăng nhập hoặc đăng nhập kiểu tính tiền theo API → dừng ngay. Nếu phiên bản CLI không báo được trạng thái đăng nhập → “không xác minh được”, cần `--skip-auth-check` (API: `skipAuthCheck: true`) để chạy tiếp. `ai-duo doctor` in đường dẫn, phiên bản, trạng thái đăng nhập, thư mục dữ liệu và các khóa.
 - Điểm quyết định: có TTY thì CLI hỏi (Plan: `approve` / `refine` kèm góp ý / `stop`; Code: `continue` / `stop`; phải gõ lựa chọn rõ ràng). **Không có TTY thì mọi điểm quyết định mặc định là stop**, trừ khi có cờ: `--plan-decision=approve|stop` cho Plan (approve chuyển sang Code, được sửa file, nên không bao giờ là mặc định) và `--pair-extra-rounds=N` cho Code (mặc định `0`; mỗi lần cấp 2 vòng, không vượt quá N). Plan chạy được ngoài Git, nhưng duyệt kế hoạch sẽ chuyển sang Code (cần Git): khi đó “approve” bị từ chối kèm hướng dẫn `git init`, kế hoạch vẫn chờ để sửa/dừng, còn `--plan-decision=approve` ngoài Git bị từ chối ngay từ đầu (mã thoát `2`). Nếu stdin đóng trong lúc đang hỏi, CLI báo `stdin closed; cannot collect decision`, trả lời stop rồi kết thúc bình thường.
+- **Chọn agent:** `--coder` / `--reviewer` nhận `claude`, `codex`, `antigravity` hoặc `auto`. Chọn tay thì bỏ qua router; chỉ chọn một bên thì bên kia theo cặp mặc định (Claude ↔ Codex, Antigravity ↔ Claude; Plan không có `--reviewer` thì agent tự review kế hoạch). Lựa chọn tay được giữ khi Plan chuyển sang Code và khi `continue` không nêu agent; `--coder auto` cho router chọn lại. Router không bao giờ tự chọn Antigravity. Trong chat: `/model` có thêm Reviewer, chọn "Tự động" (hoặc `x`) thì lượt sau được định tuyến lại.
+- **Antigravity (`agy`):** chạy headless với `--input-format/--output-format stream-json`, luôn kèm `--mode plan` cho lượt chỉ đọc và `--mode accept-edits` cho lượt được sửa file; `extraArgs` không được ghi đè mode, định dạng, hội thoại hay prompt. `agy` không có lệnh kiểm tra đăng nhập nên luôn hiện “chưa xác minh” – chạy cần `--skip-auth-check` (`/skip-auth` trong chat); lỗi đăng nhập thật trong lượt chạy được báo kèm hướng dẫn chạy `agy` để đăng nhập lại. Đầu vào stream-json chỉ nhận văn bản, nên tin nhắn có ảnh gửi tới Antigravity bị từ chối trước khi chạy. Công cụ cần duyệt bị headless từ chối mềm (lượt vẫn kết thúc, thông báo trên stderr) và được hiển thị lại. Kiểm tra thật trên máy (gọi model, tốn hạn mức): `pnpm --filter server test:antigravity-headless`.
+- **Cuộn trong chat toàn màn hình:** con lăn chuột cuộn thread. Nếu terminal vẫn đổi con lăn thành ↑/↓, các phím này cuộn khi ô nhập trống và không gọi lại prompt cũ; dùng **Ctrl+P/Ctrl+N** để xem prompt trước/sau. Khi ô nhập có chữ, ↑/↓ chỉ di chuyển giữa các dòng; chế độ inline vẫn hỗ trợ ↑/↓ gọi lịch sử. Khi bật mouse reporting, giữ **Shift** để kéo chọn văn bản; `AI_DUO_MOUSE=0` tắt mouse reporting. PageUp/PageDown, Ctrl/Alt+↑/↓, Home/End vẫn cuộn như trước. Khi thoát, chế độ chuột được tắt và alternate scroll (DECSET 1007) được khôi phục: XTRESTORE nếu terminal hỗ trợ, hoặc theo giá trị terminal trả lời qua DECRQM; terminal không hỗ trợ cả hai thì 1007 giữ trạng thái tắt.
 - Ctrl+C hủy cây tiến trình agent, lưu phiên ở trạng thái `cancelled` và nhả khóa; nhấn lần nữa để thoát ngay (khi đó khóa còn lại tới khi `ai-duo unlock`). Chỉ hủy được từ chính terminal đang chạy; web/desktop hiển thị phiên đó đang chạy (theo checkpoint trên đĩa) nhưng không dừng được nó.
 
 **Dữ liệu dùng chung:** web (`pnpm dev`), desktop và CLI mặc định dùng chung `%APPDATA%\AI Duo\runs` (macOS: `~/Library/Application Support/AI Duo`, Linux: `~/.config/AI Duo`), nên phiên tạo bằng CLI mở được trong web/desktop và ngược lại. CLI dùng prompt ở `%APPDATA%\AI Duo\prompts` và chỉ chép các template còn thiếu, như desktop. `AI_DUO_DATA_DIR` và `AI_DUO_PROMPTS_DIR` luôn được ưu tiên. Trước đây `pnpm dev` lưu ở `data/runs` trong repo; để tiếp tục dùng lịch sử cũ, đặt `AI_DUO_DATA_DIR=<repo>/data/runs`, hoặc chép các file `*.json` (và thư mục `images/`) sang `%APPDATA%\AI Duo\runs`.
@@ -78,11 +85,11 @@ View phiên tự kết nối lại khi mất SSE; banner sẽ hiện trong lúc 
 
 ## Quyền của agent
 
-| Vai | Claude | Codex |
-|---|---|---|
-| thinker (debate) | chỉ Read/Grep/Glob/Web | `-s read-only` |
-| coder | `acceptEdits` + Bash/Edit/Write | `-s workspace-write` |
-| reviewer | Bash/Read, cấm Edit/Write | `-s workspace-write` + được dặn không sửa file |
+| Vai | Claude | Codex | Antigravity |
+|---|---|---|---|
+| thinker (Debate/Plan) | chỉ Read/Grep/Glob/Web | `-s read-only` | `--mode plan` (chỉ Plan) |
+| coder | `acceptEdits` + Bash/Edit/Write | `-s workspace-write` | `--mode accept-edits` |
+| reviewer | Bash/Read, cấm Edit/Write | `-s workspace-write` + được dặn không sửa file | `--mode plan` |
 
 Pair mode chụp snapshot working tree lúc bắt đầu (dùng index tạm, không đụng vào staging của bạn), nên diff cuối chỉ chứa thay đổi do agent tạo ra, kể cả khi repo đang có sẵn thay đổi chưa commit.
 
