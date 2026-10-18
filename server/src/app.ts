@@ -114,6 +114,8 @@ app.patch('/api/runs/:id', (c) =>
   }),
 );
 
+app.post('/api/runs/:id/undo', (c) => handle(c, async () => c.json(await service.undo(c.req.param('id')))));
+
 app.delete('/api/runs/:id', (c) =>
   handle(c, async () => {
     await service.delete(c.req.param('id'));

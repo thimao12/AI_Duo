@@ -3,7 +3,7 @@ import { AGENT_NAMES, agentLabel, agents, defaultPartner, type AgentCheck, type 
 import { AGY_IMAGES_UNSUPPORTED } from './agents/antigravity.ts';
 import { resolveBin } from './agents/bins.ts';
 import { binVersion } from './agents/check.ts';
-import { gitRequiredMessage, isGitRepo } from './git.ts';
+import { gitRequiredMessage, isGitRepo, undoSince } from './git.ts';
 import { acquireRepoLock, describeOwner, lockTarget, RepoLockedError, runsActiveElsewhere, type LockOwner, type RepoLock } from './lock.ts';
 import { runDebate } from './modes/debate.ts';
 import { runPair } from './modes/pair.ts';
@@ -425,6 +425,27 @@ export class RunService {
     run.title = title.trim();
     await saveRun(run);
     return run.title;
+  }
+
+  /** Takes back the file changes a finished run made (see undoSince); the run keeps its history. */
+  async undo(id: string): Promise<{ files: string[]; reverted: boolean }> {
+    if (active.has(id) || (await this.activeElsewhere(id))) throw new ServiceError('conflict', 'Dừng phiên đang chạy trước khi hoàn tác.');
+    const run = await this.get(id);
+    if (!run) throw new ServiceError('not_found', 'not found');
+    if (!run.baseTree || !run.afterTree) throw new ServiceError('conflict', 'Phiên này không có điểm khôi phục (chỉ phiên Code có chỉnh sửa mới có).');
+    if (run.undoneAt) throw new ServiceError('conflict', 'Phiên này đã được hoàn tác.');
+    const cwd = authorizeDirectory(run.config.cwd);
+    let result;
+    try {
+      result = await undoSince(cwd, run.baseTree, run.afterTree);
+    } catch (err) {
+      throw new ServiceError('conflict', (err as Error).message);
+    }
+    if (result.status === 'nothing') return { files: [], reverted: false };
+    run.undoneAt = Date.now();
+    run.diff = '';
+    await saveRun(run);
+    return { files: result.files, reverted: true };
   }
 
   /** Owner of the lock when another AI Duo process (CLI, desktop, another server) runs this run. */

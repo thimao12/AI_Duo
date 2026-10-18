@@ -77,8 +77,9 @@ function roleTurn(ctx: RunContext, t: RoleTurn): Promise<TurnResult> {
 async function withDiff(ctx: RunContext, edits: boolean, work: (base: string | undefined) => Promise<void>): Promise<void> {
   const { cwd } = ctx.run.config;
   const base = edits && (await isGitRepo(cwd)) ? await snapshotTree(cwd) : undefined;
+  if (base) ctx.update({ baseTree: base });
   await work(base);
-  if (base) ctx.update({ diff: await diffSince(cwd, base) });
+  if (base) ctx.update({ diff: await diffSince(cwd, base), afterTree: await snapshotTree(cwd) });
 }
 
 const label = (role: RoleDef) => `${role.icon} ${role.name}`.trim();

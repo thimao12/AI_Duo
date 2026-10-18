@@ -17,6 +17,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'help', description: 'Show commands and key bindings' },
   { name: 'clear', description: 'Clear the screen (the session continues)' },
   { name: 'new', description: 'Start a new session' },
+  { name: 'undo', description: 'Take back the file changes of the last run' },
   { name: 'sessions', description: 'Browse and resume earlier sessions', panel: (p: PanelProps) => createElement(SessionsPanel, p) },
   { name: 'resume', description: 'Resume an earlier session (same as /sessions)', panel: (p: PanelProps) => createElement(SessionsPanel, p) },
   { name: 'roles', description: 'Pick or edit roles (Plan, Review, Code…)', panel: (p: PanelProps) => createElement(RolesPanel, p) },

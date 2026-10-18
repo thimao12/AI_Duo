@@ -8,31 +8,38 @@ import { gradientAt } from './themes.ts';
  * The first A takes the theme's warm gradient, the second (drawn over it) the cool one; `X` marks a pixel.
  */
 const FIRST_A = [
-  '....XXX....',
-  '....XXX....',
-  '...XX.XX...',
-  '...XX.XX...',
-  '..XX...XX..',
-  '..XX...XX..',
-  '.XXXXXXXXX.',
-  '.XXXXXXXXX.',
-  'XX.......XX',
-  'XX.......XX',
-  'XX.......XX',
-  'XX.......XX',
+  '.....XX.....',
+  '.....XX.....',
+  '....XXXX....',
+  '....XXXX....',
+  '...XX..XX...',
+  '...XX..XX...',
+  '..XX....XX..',
+  '..XXXXXXXX..',
+  '.XX......XX.',
+  '.XX......XX.',
+  'XX........XX',
+  'XX........XX',
 ];
-const OFFSET = 6;
+const OFFSET = 9;
 const HEIGHT = FIRST_A.length;
-const WIDTH = FIRST_A[0].length + OFFSET;
+const GLYPH_WIDTH = FIRST_A[0].length;
+const WIDTH = GLYPH_WIDTH + OFFSET;
 
 export const LOGO_ROWS = HEIGHT / 2;
 export const LOGO_WIDTH = WIDTH;
 
-/** The colour of pixel (x, y), or undefined for an empty pixel. */
+const filled = (x: number, y: number): boolean => FIRST_A[y]?.[x] === 'X';
+
+/**
+ * The colour of pixel (x, y), or undefined for an empty pixel. The gradient runs mostly top to bottom
+ * with a slight diagonal lean, and the second A is cut out of the first by a one-pixel gap so the two
+ * letters interlock instead of melting into one blob.
+ */
 export function logoPixel(x: number, y: number, warm: readonly string[], cool: readonly string[]): string | undefined {
-  const t = y / (HEIGHT - 1);
-  if (FIRST_A[y]?.[x - OFFSET] === 'X') return gradientAt(cool, t);
-  if (FIRST_A[y]?.[x] === 'X') return gradientAt(warm, t);
+  const t = Math.min(1, (y / (HEIGHT - 1)) * 0.85 + (x / (WIDTH - 1)) * 0.15);
+  if (filled(x - OFFSET, y)) return gradientAt(cool, t);
+  if (filled(x, y) && !filled(x - OFFSET - 1, y) && !filled(x - OFFSET + 1, y)) return gradientAt(warm, t);
   return undefined;
 }
 

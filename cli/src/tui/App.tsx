@@ -13,7 +13,7 @@ import { buildRequest, effectiveMode } from './requestBuilder.ts';
 import { findCommand, HELP_LINES, SLASH_COMMANDS } from './slash.ts';
 import { StatusLine } from './StatusLine.tsx';
 import { getCliSettingsSync, getCliSettings, setCliSettings } from '../../../server/src/settings.ts';
-import { activeTheme, setTheme, tone, usableWidth } from './theme.ts';
+import { activeTheme, errorText, setTheme, tone, usableWidth } from './theme.ts';
 import { FinishedThread, FullscreenHeader, LiveThread, ThreadItemView, windowLog } from './ThreadView.tsx';
 import { useSelection, type SelectionApi } from './useSelection.ts';
 import { useSession, type ChatService, type Session } from './useSession.ts';
@@ -78,6 +78,7 @@ interface Shell {
   selection: SelectionApi;
   exit(): void;
   openPanel(command: SlashCommand): void;
+  undo(): void;
 }
 
 /** Commands the shell runs itself (no panel). Returns an error message for an unknown one. */
@@ -93,6 +94,10 @@ function runShellCommand(name: string, shell: Shell): string | null {
     case 'new':
       if (session.phase !== 'idle') return 'Stop the current run first (Ctrl+C).';
       session.reset();
+      return null;
+    case 'undo':
+      if (session.phase !== 'idle') return 'Stop the current run first (Ctrl+C).';
+      shell.undo();
       return null;
     case 'skip-auth':
       session.notice('warn', selection.toggleSkipAuth() ? 'Runs will start even if a CLI cannot report its login.' : 'Login check is strict again.');
@@ -173,7 +178,21 @@ export function App(props: Readonly<AppProps>) {
     setPanel(null);
     selection.reload();
   };
-  const shell: Shell = { session, selection, exit, openPanel: setPanel };
+  const undo = () => {
+    const id = session.run?.id;
+    if (!id) {
+      session.notice('warn', 'Nothing to undo yet: this session has no run.');
+      return;
+    }
+    service.undo(id).then(
+      (done) => {
+        const shown = done.files.slice(0, 5).join(', ') + (done.files.length > 5 ? ', …' : '');
+        session.notice(done.reverted ? 'info' : 'warn', done.reverted ? `Undone: ${done.files.length} file(s) restored (${shown}). Nothing was committed.` : 'Nothing to undo: the run changed no files.');
+      },
+      (err: unknown) => session.notice('error', errorText(err)),
+    );
+  };
+  const shell: Shell = { session, selection, exit, openPanel: setPanel, undo };
 
   const rememberPrompt = (text: string) => {
     const next = addToHistory(history, text);

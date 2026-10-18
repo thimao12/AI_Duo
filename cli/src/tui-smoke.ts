@@ -335,13 +335,13 @@ await step('slash menu: filter, choose, run /help, unknown command', async () =>
   await t.seeing('Ask anything');
   await t.type('/');
   await t.seeing('/help');
-  assert.ok(t.frame().includes('/clear') && t.frame().includes('1/16 ↓'), 'the first commands are listed');
-  for (let i = 0; i < 8; i++) await t.type(KEY.down);
+  assert.ok(t.frame().includes('/clear') && t.frame().includes('1/17 ↓'), 'the first commands are listed');
+  for (let i = 0; i < 9; i++) await t.type(KEY.down);
   await t.seeing('› /usage');
-  assert.ok(t.frame().includes('9/16 ↑ ↓'), 'the menu follows the selection past the first eight commands');
+  assert.ok(t.frame().includes('10/17 ↑ ↓'), 'the menu follows the selection past the first eight commands');
   for (let i = 0; i < 7; i++) await t.type(KEY.down);
   await t.seeing('› /exit');
-  assert.ok(t.frame().includes('16/16 ↑') && !t.frame().includes('16/16 ↑ ↓'), 'the last command has no items below');
+  assert.ok(t.frame().includes('17/17 ↑') && !t.frame().includes('17/17 ↑ ↓'), 'the last command has no items below');
   await t.type(KEY.down);
   await t.seeing('› /help');
   await t.type(KEY.up);
@@ -546,6 +546,27 @@ await step('custom slash commands from .ai-duo/commands expand into the prompt; 
   await h.seeing('Commands:');
   assert.equal(h.service.seen.length, 0, 'the custom /help did not replace the built-in');
   await rm(dir, { recursive: true, force: true });
+});
+
+await step('/undo: no run yet, then the file changes of the last run are taken back', async () => {
+  const service = new FakeService();
+  const calls: string[] = [];
+  (service as unknown as { undo: (id: string) => Promise<{ files: string[]; reverted: boolean }> }).undo = async (id) => {
+    calls.push(id);
+    return { files: ['a.ts', 'b.ts'], reverted: true };
+  };
+  const t = open(service);
+  await t.seeing('Ask anything');
+  await t.type('/undo');
+  await t.type(KEY.enter);
+  await t.seeing('no run');
+  await t.type('fix it');
+  await t.type(KEY.enter);
+  await t.seeing('done');
+  await t.type('/undo');
+  await t.type(KEY.enter);
+  await t.seeing('2 file(s) restored');
+  assert.deepEqual(calls, ['run-1']);
 });
 
 await rm(temp, { recursive: true, force: true }).catch(() => {});

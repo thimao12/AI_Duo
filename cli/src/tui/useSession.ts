@@ -7,7 +7,7 @@ import { errorText } from './theme.ts';
 import { commitFinished, effortFor, liveMessages, type ThreadItem } from './thread.ts';
 
 /** The part of RunService the chat uses; tests supply a fake. */
-export type ChatService = Pick<RunService, 'start' | 'continue' | 'get' | 'preflight' | 'previewRoute' | 'abortAll'>;
+export type ChatService = Pick<RunService, 'start' | 'continue' | 'get' | 'preflight' | 'previewRoute' | 'abortAll' | 'undo'>;
 
 export type Phase = 'idle' | 'starting' | 'running';
 

@@ -196,6 +196,7 @@ export async function runPair(ctx: RunContext) {
     throw new Error(`Pair mode needs a git repository so changes can be diffed and reverted. "${cwd}" is not one (run \`git init\` there first).`);
   }
   const base = await snapshotTree(cwd);
+  ctx.update({ baseTree: base });
   ctx.note('Đã chụp trạng thái ban đầu', `Snapshot working tree (tree ${base.slice(0, 10)}). Diff cuối phiên chỉ gồm thay đổi của agent. Không có gì được commit.`);
 
   const testHint = buildTestHint(testCommand);
@@ -245,6 +246,7 @@ export async function runPair(ctx: RunContext) {
   }
 
   const diff = await diffSince(cwd, base);
+  ctx.update({ afterTree: await snapshotTree(cwd) });
   const final = buildFinalReport({ approved, rounds, coder, reviewer, lastReview, diff, summary });
   ctx.update({ diff, final });
 }
