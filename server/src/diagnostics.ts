@@ -58,9 +58,3 @@ export function parseDiagnostics(tool: string, output: string, cwd: string): Dia
   return (PARSERS[tool]?.(output, cwd) ?? []).slice(0, MAX_DIAGNOSTICS);
 }
 
-/** A prompt for an agent to fix the given problems, or empty when there are none. */
-export function fixPrompt(diagnostics: readonly Diagnostic[]): string {
-  if (!diagnostics.length) return '';
-  const lines = diagnostics.map((d) => `- ${d.file}:${d.line}${d.column ? `:${d.column}` : ''} ${d.code ? `[${d.code}] ` : ''}${d.message}`);
-  return `Sửa các lỗi sau (chỉ sửa những gì cần thiết, rồi chạy lại công cụ kiểm tra):\n${lines.join('\n')}`;
-}

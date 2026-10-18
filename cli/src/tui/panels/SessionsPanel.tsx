@@ -6,13 +6,14 @@ import type { RunSummary } from '../../../../server/src/store.ts';
 import { relativeTime } from '../format.ts';
 import type { PanelProps } from '../panel-types.ts';
 import { getService } from '../service.ts';
-import { errText, paint, useLoader } from '../util.ts';
+import { useLoader } from '../util.ts';
+import { tone, errorText, type Tone } from '../theme.ts';
 import Confirm from '../widgets/Confirm.tsx';
 import Panel from '../widgets/Panel.tsx';
 import SelectList from '../widgets/SelectList.tsx';
 
 const STATUS_MARK: Record<RunStatus, string> = { running: '●', done: '✓', error: '✗', cancelled: '■' };
-const STATUS_COLOR: Record<RunStatus, string> = { running: 'yellow', done: 'green', error: 'red', cancelled: 'gray' };
+const STATUS_COLOR: Record<RunStatus, Tone> = { running: 'yellow', done: 'green', error: 'red', cancelled: 'gray' };
 const MODE_LABEL: Record<string, string> = { code: 'Code', plan: 'Plan', pipeline: 'Pipeline', debate: 'Debate', pair: 'Pair' };
 
 const sameFolder = (a: string, b: string): boolean => {
@@ -47,7 +48,7 @@ export default function SessionsPanel({ cwd, onClose, onPickSession }: Readonly<
       setError(undefined);
       loaded.reload();
     } catch (err) {
-      setError(errText(err));
+      setError(errorText(err));
     }
   };
 
@@ -63,7 +64,7 @@ export default function SessionsPanel({ cwd, onClose, onPickSession }: Readonly<
           getKey={(run) => run.id}
           getLabel={(run) => `${STATUS_MARK[run.status]} ${runTitle(run)}`}
           getDescription={(run) => runDescription(run)}
-          getColor={(run) => paint(STATUS_COLOR[run.status])}
+          getColor={(run) => tone(STATUS_COLOR[run.status])}
           filterable
           filterText={(run) => `${runTitle(run)} ${run.prompt} ${run.mode} ${run.agent} ${path.basename(run.cwd)}`}
           onSelect={(run) => {

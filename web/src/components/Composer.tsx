@@ -47,7 +47,6 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
   const imageRef = useRef<DraftImage[]>([]);
   const imagesTouched = useRef(false);
   const set = <K extends keyof Form>(key: K, value: Form[K]) => setForm((f) => ({ ...f, [key]: value }));
-  const auto = true;
 
   useEffect(() => {
     let mounted = true;
@@ -162,7 +161,7 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
     await saveDraftImages(next).catch(() => setError('Không thể lưu ảnh nháp.'));
   };
 
-  return { form, set, setForm, agents, catalog, preview, error, busy, submit, auto, images, imagesReady, removeImage, addImages };
+  return { form, set, setForm, agents, catalog, preview, error, busy, submit, images, imagesReady, removeImage, addImages };
 }
 
 function placeholderFor(hero: boolean, threadId: string | undefined, cwd: string): string {
@@ -334,7 +333,7 @@ const field =
   'w-full rounded-lg border border-line bg-bg px-2.5 py-1.5 text-[13px] text-fg placeholder:text-faint transition-colors hover:border-line-strong focus:border-focus focus:outline-none placeholder:font-sans';
 
 export default function Composer({ variant, projects, onCreated, threadCwd, threadId, threadMode, onContinue, seed, onAgents }: Readonly<ComposerProps>) {
-  const { form, set, setForm, agents, catalog, preview, error, busy, submit, auto, images, imagesReady, removeImage, addImages } = useNewRunForm(onCreated, threadCwd, threadId, threadMode, onContinue);
+  const { form, set, setForm, agents, catalog, preview, error, busy, submit, images, imagesReady, removeImage, addImages } = useNewRunForm(onCreated, threadCwd, threadId, threadMode, onContinue);
   const text = useRef<HTMLTextAreaElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const hero = variant === 'hero';
@@ -420,7 +419,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
           className={`composer-input block w-full resize-none bg-transparent px-4 text-[14.5px] leading-relaxed text-fg placeholder:text-faint focus:outline-none ${hero ? 'min-h-24 pt-4 pb-2' : 'min-h-11 pt-3 pb-1'}`}
         />
 
-        {auto && preview && (
+        {preview && (
           <p className="flex items-start gap-1.5 px-4 pb-1 text-[12px] leading-snug text-faint">
             <Waypoints aria-hidden className="mt-px size-3.5 shrink-0" />
             <span className="line-clamp-2">
@@ -500,7 +499,7 @@ export default function Composer({ variant, projects, onCreated, threadCwd, thre
           <button
             type="submit"
             disabled={!canSend}
-            aria-label={submitLabel(busy, auto && !!preview?.askHaiku)}
+            aria-label={submitLabel(busy, !!preview?.askHaiku)}
             title="Gửi (Enter)"
             className="grid size-8 shrink-0 place-items-center rounded-full bg-primary text-primary-fg transition-[opacity,transform] hover:opacity-85 active:scale-95 disabled:bg-surface-2 disabled:text-faint"
           >

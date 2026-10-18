@@ -94,7 +94,7 @@ export const api = {
   agents: () => fetch('/api/agents').then((r) => json<AgentStatus>(r)),
   models: () => fetch('/api/models').then((r) => json<ModelCatalog>(r)),
   list: () => fetch('/api/runs').then((r) => json<RunSummary[]>(r)),
-  rename: (id: string, title: string) => fetch(`/api/runs/${id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title }) }).then((r) => json<{ title: string }>(r)),
+  rename: (id: string, title: string) => fetch(`/api/runs/${id}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ title }) }).then((r) => json<{ title: string }>(r)),
   delete: (id: string) => fetch(`/api/runs/${id}`, { method: 'DELETE' }).then((r) => json<{ ok: boolean }>(r)),
   getRun: async (id: string) => {
     const res = await fetch(`/api/runs/${id}`, { cache: 'no-store' });
@@ -102,25 +102,25 @@ export const api = {
     return json<Run>(res);
   },
   create: (cfg: NewRunRequest) =>
-    fetch('/api/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(cfg) }).then((r) =>
+    fetch('/api/runs', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(cfg) }).then((r) =>
       json<{ id: string }>(r),
     ),
   continue: (id: string, prompt: string, images: NonNullable<NewRunRequest['images']>, config: Partial<NewRunRequest> = {}) =>
-    fetch(`/api/runs/${id}/messages`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...config, prompt, images, mode: config.mode ?? 'code' }) }).then((r) => json<{ id: string }>(r)),
+    fetch(`/api/runs/${id}/messages`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ ...config, prompt, images, mode: config.mode ?? 'code' }) }).then((r) => json<{ id: string }>(r)),
   previewRoute: (prompt: string, mode: Mode, signal?: AbortSignal) =>
-    fetch('/api/route/preview', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ prompt, mode }), signal }).then((r) =>
+    fetch('/api/route/preview', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ prompt, mode }), signal }).then((r) =>
       json<RoutePreview>(r),
     ),
   cancel: (id: string) =>
-    fetch(`/api/runs/${id}/cancel`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' }).then((r) =>
+    fetch(`/api/runs/${id}/cancel`, { method: 'POST', headers: JSON_HEADERS, body: '{}' }).then((r) =>
       json(r),
     ),
   pairDecision: (id: string, continueRun: boolean) =>
-    fetch(`/api/runs/${id}/pair-decision`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ continue: continueRun }) }).then((r) =>
+    fetch(`/api/runs/${id}/pair-decision`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ continue: continueRun }) }).then((r) =>
       json<{ ok: boolean }>(r),
     ),
   planDecision: (id: string, action: 'approve' | 'stop' | 'refine', feedback?: string) =>
-    fetch(`/api/runs/${id}/plan-decision`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, feedback }) }).then((r) =>
+    fetch(`/api/runs/${id}/plan-decision`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ action, feedback }) }).then((r) =>
       json<{ ok: boolean }>(r),
     ),
 };

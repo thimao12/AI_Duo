@@ -7,10 +7,10 @@
 web (rendered inside an Electron desktop window on Windows; also runs in a browser via `pnpm dev`)
 
 ## Users
-One developer (the owner), using it daily on Windows. They hand coding and review work to Claude Code and Codex inside their own local repositories, then decide whether to commit.
+One developer (the owner), using it daily on Windows. They hand coding and review work to Claude Code, Codex and Antigravity inside their own local repositories, then decide whether to commit.
 
 ## Product Purpose
-AI Duo orchestrates two coding agents, Claude Code and Codex, through their local CLIs, using the user's existing subscriptions with no API keys. It offers three modes:
+AI Duo orchestrates three coding agents, Claude Code, Codex and Antigravity, through their local CLIs, using the user's existing subscriptions with no API keys. It offers three modes:
 - **Debate:** both agents propose, cross-review each other, and a judge writes the final solution.
 - **Pair:** one agent codes in the repo; the other reviews the diff and runs the tests, looping until it approves.
 - **Auto:** a router picks the mode, which agent codes, and the models.

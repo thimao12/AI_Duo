@@ -2,11 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AgentName } from '../../../server/src/agents/types.ts';
 import { listModels } from '../../../server/src/models.ts';
 import type { ModelCatalog } from '../../../server/src/types.ts';
-
-/** A colour name, or undefined when NO_COLOR asks for plain text. Read at render time. */
-export const paint = (name: string): string | undefined => (process.env.NO_COLOR ? undefined : name);
-
-export const errText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+import { errorText } from './theme.ts';
 
 /** A fresh id that satisfies the server's /^[a-z0-9-]{1,32}$/ and is not in `taken`. */
 export function newId(prefix: string, taken: readonly string[]): string {
@@ -40,7 +36,7 @@ export function useLoader<T>(load: (force: boolean) => Promise<T>): LoaderState<
         if (id === seq.current) setState({ data, loading: false });
       },
       (err: unknown) => {
-        if (id === seq.current) setState((s) => ({ data: s.data, error: errText(err), loading: false }));
+        if (id === seq.current) setState((s) => ({ data: s.data, error: errorText(err), loading: false }));
       },
     );
   }, []);

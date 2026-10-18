@@ -8,7 +8,8 @@ import Confirm from '../widgets/Confirm.tsx';
 import Form, { type FormField } from '../widgets/Form.tsx';
 import Panel from '../widgets/Panel.tsx';
 import SelectList from '../widgets/SelectList.tsx';
-import { effortsFor, errText, modelIds, newId, paint, safeCatalog, useLoader, withCurrent } from '../util.ts';
+import { effortsFor, modelIds, newId, safeCatalog, useLoader, withCurrent } from '../util.ts';
+import { tone, errorText } from '../theme.ts';
 
 const AGENT_LABEL: Record<AgentName, string> = { claude: 'Claude', codex: 'Codex', antigravity: 'Antigravity' };
 
@@ -215,7 +216,7 @@ function useRolesData() {
       loaded.reload();
       setView({ kind: 'list' });
     } catch (err) {
-      setError(errText(err));
+      setError(errorText(err));
     }
   };
 
@@ -260,7 +261,7 @@ export default function RolesPanel({ onClose, onPickRole, role }: Readonly<Panel
           onBack={data.back}
         />
       ) : (
-        <Text color={paint('gray')}>Đang tải…</Text>
+        <Text color={tone('gray')}>Đang tải…</Text>
       )}
     </Panel>
   );

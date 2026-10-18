@@ -1,3 +1,4 @@
+import type { Tone } from './theme.ts';
 import type { AgentUsage, UsageWindow } from '../../../server/src/types.ts';
 
 /** Vietnamese formatters for usage windows and run lists (same wording as the web app). */
@@ -57,7 +58,7 @@ export function textBar(percent: number, width = 20): string {
 }
 
 /** green below 75, amber from 75, red from 90. */
-export function barColor(percent: number): string {
+export function barColor(percent: number): Tone {
   if (percent >= 90) return 'red';
   if (percent >= 75) return 'yellow';
   return 'green';
@@ -67,7 +68,7 @@ export function barColor(percent: number): string {
 export const remainingPercent = (usedPercent: number) => 100 - clampPercent(usedPercent);
 
 /** For a "left" bar: green when plenty is left, amber at 25% or less, red at 10% or less. */
-export function leftColor(left: number): string {
+export function leftColor(left: number): Tone {
   if (left <= 10) return 'red';
   if (left <= 25) return 'yellow';
   return 'green';

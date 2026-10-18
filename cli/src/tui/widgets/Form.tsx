@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Box, Text, useInput, type Key } from 'ink';
-import { paint, windowStart } from '../util.ts';
+import { windowStart } from '../util.ts';
+import { tone } from '../theme.ts';
 import { fitRows, usePanelRows } from './rows.ts';
 import TextField from './TextField.tsx';
 
@@ -63,12 +64,12 @@ function FieldRow({ field, selected, labelWidth }: Readonly<{ field: FormField; 
   const empty = field.value === '' && !cycle;
   return (
     <Box>
-      <Text color={paint('cyan')}>{selected ? '❯ ' : '  '}</Text>
+      <Text color={tone('cyan')}>{selected ? '❯ ' : '  '}</Text>
       <Box width={labelWidth} flexShrink={0}>
         <Text bold={selected} wrap="truncate-end">{field.label}</Text>
       </Box>
       <Box flexShrink={1} marginLeft={1}>
-        <Text wrap="truncate-end" dimColor={empty} color={selected ? paint('cyan') : undefined}>
+        <Text wrap="truncate-end" dimColor={empty} color={selected ? tone('cyan') : undefined}>
           {cycle && selected ? '◂ ' : ''}
           {displayValue(field)}
           {cycle && selected ? ' ▸' : ''}
@@ -88,7 +89,7 @@ function Editor({ field, onChange, onDone }: Readonly<EditorProps>) {
   const multiline = field.kind === 'multiline';
   const help = multiline ? 'Ctrl+S / Esc xong · Enter xuống dòng' : 'Enter xong · Esc xong';
   return (
-    <Box flexDirection="column" borderStyle="single" borderColor={paint('yellow')} paddingX={1}>
+    <Box flexDirection="column" borderStyle="single" borderColor={tone('yellow')} paddingX={1}>
       <Text dimColor>{`${field.label} · ${help}`}</Text>
       <TextField value={field.value} onChange={onChange} mask={field.mask} multiline={multiline} placeholder={field.placeholder} onSubmit={onDone} onCancel={onDone} />
     </Box>
@@ -127,7 +128,7 @@ export default function Form({ fields, onChange, onSave, onCancel, onKey, isActi
     <Box flexDirection="column">
       {fields.slice(top, top + maxRows).map((f) => (
         <Box key={f.id} flexDirection="column">
-          {f.section ? <Text bold color={paint('magenta')}>{f.section}</Text> : null}
+          {f.section ? <Text bold color={tone('magenta')}>{f.section}</Text> : null}
           <FieldRow field={f} selected={f === field} labelWidth={width} />
         </Box>
       ))}

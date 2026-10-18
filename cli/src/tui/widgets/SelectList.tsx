@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Box, Text, useInput, type Key } from 'ink';
-import { paint, windowStart } from '../util.ts';
+import { windowStart } from '../util.ts';
+import { tone } from '../theme.ts';
 import { fitRows, usePanelRows } from './rows.ts';
 
 export interface SelectListProps<T> {
@@ -59,10 +60,10 @@ function Row<T>({ item, selected, props, width }: Readonly<{ item: T; selected: 
   const description = props.getDescription?.(item);
   return (
     <Box>
-      <Text color={paint('cyan')}>{selected ? '❯ ' : '  '}</Text>
-      <Text color={paint('green')}>{props.isCurrent?.(item) ? '● ' : '  '}</Text>
+      <Text color={tone('cyan')}>{selected ? '❯ ' : '  '}</Text>
+      <Text color={tone('green')}>{props.isCurrent?.(item) ? '● ' : '  '}</Text>
       <Box width={width} flexShrink={0}>
-        <Text wrap="truncate-end" bold={selected} color={selected ? paint('cyan') : color}>{props.getLabel(item)}</Text>
+        <Text wrap="truncate-end" bold={selected} color={selected ? tone('cyan') : color}>{props.getLabel(item)}</Text>
       </Box>
       {description ? (
         <Box flexGrow={1} flexShrink={1} marginLeft={1}>

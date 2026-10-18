@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Box, Text, useInput, type Key } from 'ink';
 import { after, before, insertText } from '../editor.ts';
-import { paint } from '../util.ts';
+import { tone } from '../theme.ts';
 
 export interface EditState {
   value: string;
@@ -146,7 +146,7 @@ export default function TextField({ value, onChange, onSubmit, onCancel, mask, m
   }, { isActive: focus });
 
   if (value === '' && placeholder) {
-    return <Text>{focus ? <Text inverse> </Text> : null}<Text dimColor color={paint('gray')}>{placeholder}</Text></Text>;
+    return <Text>{focus ? <Text inverse> </Text> : null}<Text dimColor color={tone('gray')}>{placeholder}</Text></Text>;
   }
   const text = shown(value, mask);
   const starts = lineStarts(text);

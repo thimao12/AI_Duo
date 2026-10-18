@@ -4,7 +4,8 @@ import { detectCli, type CliDetection } from '../../../../server/src/routes/cli-
 import { getCliSettings, setCliSettings } from '../../../../server/src/settings.ts';
 import type { CliSettings } from '../../../../server/src/types.ts';
 import type { PanelProps } from '../panel-types.ts';
-import { errText, modelIds, paint, safeCatalog, useLoader } from '../util.ts';
+import { modelIds, safeCatalog, useLoader } from '../util.ts';
+import { tone, errorText } from '../theme.ts';
 import Confirm from '../widgets/Confirm.tsx';
 import Form, { type FormField } from '../widgets/Form.tsx';
 import Panel from '../widgets/Panel.tsx';
@@ -102,7 +103,7 @@ function DetectLines({ detections }: Readonly<{ detections: Partial<Record<Agent
     <Box flexDirection="column" marginTop={1}>
       <Text dimColor>Đang dùng:</Text>
       {AGENTS.map((agent) => (
-        <Text key={agent} wrap="truncate-end" color={detections[agent]?.version ? paint('green') : paint('yellow')}>{detectionText(agent, detections[agent])}</Text>
+        <Text key={agent} wrap="truncate-end" color={detections[agent]?.version ? tone('green') : tone('yellow')}>{detectionText(agent, detections[agent])}</Text>
       ))}
     </Box>
   );
@@ -158,7 +159,7 @@ function SettingsEditor({ initial, detector, onClose }: Readonly<EditorProps>) {
       setNotice('Đã lưu.');
       setSaves((n) => n + 1);
     } catch (err) {
-      setError(errText(err));
+      setError(errorText(err));
     }
   };
 
@@ -170,7 +171,7 @@ function SettingsEditor({ initial, detector, onClose }: Readonly<EditorProps>) {
       ) : (
         <Form fields={settingsFields(values)} onChange={(id, value) => setValues((v) => ({ ...v, [id]: value }))} onSave={() => void save()} onCancel={cancel} maxRows={9} />
       )}
-      {notice ? <Text color={paint('green')}>{notice}</Text> : null}
+      {notice ? <Text color={tone('green')}>{notice}</Text> : null}
       <DetectLines detections={detections} />
     </Panel>
   );
@@ -187,7 +188,7 @@ export default function SettingsPanel({ onClose, detector = detectCli }: Readonl
   if (!loaded.data) {
     return (
       <Panel title="Cài đặt CLI" onClose={onClose} error={loaded.error} hints={[['Esc', 'đóng']]}>
-        <Text color={paint('gray')}>Đang tải…</Text>
+        <Text color={tone('gray')}>Đang tải…</Text>
       </Panel>
     );
   }

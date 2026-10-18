@@ -2,7 +2,7 @@
   "name": "desktop",
   "productName": "AI Duo",
   "version": "0.1.0",
-  "description": "Claude × Codex – debate and pair-programming desktop app",
+  "description": "Claude × Codex × Antigravity – debate and pair-programming desktop app",
   "private": true,
   "type": "module",
   "main": "main.mjs",

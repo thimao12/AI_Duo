@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { detectChecks, runCheckResults } from './checks.ts';
-import { fixPrompt, parseDiagnostics } from './diagnostics.ts';
+import { parseDiagnostics } from './diagnostics.ts';
 import { diagnosticsRoutes } from './routes/diagnostics.ts';
 
 const root = await mkdtemp(path.join(tmpdir(), 'ai-duo-checks-'));
@@ -44,8 +44,6 @@ try {
   const biome = ['src/c.ts:3:5 lint/suspicious/noDoubleEquals ━━━━━━━━━━', '', '  x Use === instead.'].join('\n');
   assert.deepEqual(parseDiagnostics('biome', biome, root).map((d) => [d.file, d.line, d.code]), [['src/c.ts', 3, 'lint/suspicious/noDoubleEquals']]);
   assert.deepEqual(parseDiagnostics('unknown', 'src/a.ts(1,1): error TS1: x', root), []);
-  assert.equal(fixPrompt([]), '');
-  assert.match(fixPrompt(tsc), /src\/a\.ts:12:5 \[TS2322\]/);
 
   console.log('PASS checks: detection, failure reporting, parsers, diagnostics route');
 } finally {

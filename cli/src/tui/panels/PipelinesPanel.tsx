@@ -7,7 +7,8 @@ import Confirm from '../widgets/Confirm.tsx';
 import Panel from '../widgets/Panel.tsx';
 import SelectList from '../widgets/SelectList.tsx';
 import TextField from '../widgets/TextField.tsx';
-import { errText, newId, paint, useLoader } from '../util.ts';
+import { newId, useLoader } from '../util.ts';
+import { tone, errorText } from '../theme.ts';
 
 const CLEAR_LABEL = 'Không chạy pipeline';
 
@@ -172,7 +173,7 @@ function PipelineEditor(props: Readonly<EditorProps>) {
         labelWidth={26}
       />
       {editingName ? (
-        <Box borderStyle="single" borderColor={paint('yellow')} paddingX={1}>
+        <Box borderStyle="single" borderColor={tone('yellow')} paddingX={1}>
           <TextField value={draft.name} onChange={(name) => onChange({ ...draft, name })} onSubmit={() => setEditingName(false)} onCancel={() => setEditingName(false)} />
         </Box>
       ) : null}
@@ -285,7 +286,7 @@ function usePipelinesData() {
       loaded.reload();
       setView({ kind: 'list' });
     } catch (err) {
-      setError(errText(err));
+      setError(errorText(err));
     }
   };
 
@@ -348,7 +349,7 @@ export default function PipelinesPanel({ onClose, onPickPipeline, pipelineId }: 
           onBack={data.back}
         />
       ) : (
-        <Text color={paint('gray')}>Đang tải…</Text>
+        <Text color={tone('gray')}>Đang tải…</Text>
       )}
     </Panel>
   );

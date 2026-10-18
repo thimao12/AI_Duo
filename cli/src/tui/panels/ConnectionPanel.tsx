@@ -4,7 +4,8 @@ import type { AgentName } from '../../../../server/src/agents/types.ts';
 import { getConnection, openLogin, type LoginOutcome } from '../../../../server/src/connection.ts';
 import type { ConnectionStatus } from '../../../../server/src/types.ts';
 import type { PanelProps } from '../panel-types.ts';
-import { errText, paint, useLoader } from '../util.ts';
+import { useLoader } from '../util.ts';
+import { tone, errorText, type Tone } from '../theme.ts';
 import Panel from '../widgets/Panel.tsx';
 
 const RECHECK_AFTER_LOGIN_MS = 5000;
@@ -45,7 +46,7 @@ const unverifiedAgy = (name: AgentName, status: ConnectionStatus | undefined): b
 /** True when the user still has something to do (install or log in). */
 export const needsSetup = (status: ConnectionStatus): boolean => !status.installed || status.loggedIn === false;
 
-function statusColor(status: ConnectionStatus): string {
+function statusColor(status: ConnectionStatus): Tone {
   if (needsSetup(status)) return 'red';
   return status.loggedIn === null ? 'yellow' : 'green';
 }
@@ -66,14 +67,14 @@ function AgentBlock({ name, status, selected }: Readonly<{ name: AgentName; stat
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box>
-        <Text color={paint('cyan')}>{selected ? '❯ ' : '  '}</Text>
-        <Text color={status ? paint(statusColor(status)) : undefined}>● </Text>
+        <Text color={tone('cyan')}>{selected ? '❯ ' : '  '}</Text>
+        <Text color={status ? tone(statusColor(status)) : undefined}>● </Text>
         <Text bold>{LABEL[name]}</Text>
         <Text>{`  ${status ? connectionLabel(status) : 'Đang kiểm tra…'}`}</Text>
         {status?.version ? <Text dimColor>{`  ${status.version}`}</Text> : null}
       </Box>
       {unverifiedAgy(name, status) ? <Text dimColor>{`    ${AGY_UNVERIFIED}`}</Text> : null}
-      {status?.error && status.installed && !unverifiedAgy(name, status) ? <Text color={paint('red')}>{`    ${status.error}`}</Text> : null}
+      {status?.error && status.installed && !unverifiedAgy(name, status) ? <Text color={tone('red')}>{`    ${status.error}`}</Text> : null}
       {status && needsSetup(status) ? <Guide name={name} status={status} /> : null}
     </Box>
   );
@@ -106,7 +107,7 @@ export default function ConnectionPanel({ onClose, loader = (agent) => getConnec
         setMessage(OUTCOME_TEXT[outcome]);
         if (outcome === 'opened') setRecheckAt(Date.now());
       },
-      (err: unknown) => setMessage(errText(err)),
+      (err: unknown) => setMessage(errorText(err)),
     );
   };
 
@@ -122,7 +123,7 @@ export default function ConnectionPanel({ onClose, loader = (agent) => getConnec
       {AGENTS.map((name, i) => (
         <AgentBlock key={name} name={name} status={data?.[i]} selected={i === selected} />
       ))}
-      {message ? <Text color={paint('cyan')}>{message}</Text> : null}
+      {message ? <Text color={tone('cyan')}>{message}</Text> : null}
     </Panel>
   );
 }

@@ -7,7 +7,8 @@ import { getUsage } from '../../../../server/src/usage.ts';
 import { barColor, clampPercent, clock, formatExpiry, formatRemaining, formatReset, isExpiredWindow, isLive, leftColor, remainingPercent, sourceLabel, textBar } from '../format.ts';
 import type { PanelProps } from '../panel-types.ts';
 import { getService } from '../service.ts';
-import { paint, useInterval, useLoader } from '../util.ts';
+import { useInterval, useLoader } from '../util.ts';
+import { tone } from '../theme.ts';
 import Panel from '../widgets/Panel.tsx';
 
 const REFRESH_MS = 60_000;
@@ -52,7 +53,7 @@ function BarRow({ label, window: win, live, left }: Readonly<BarRowProps>) {
   return (
     <Box>
       <Text>{`  ${label.padEnd(7)}`}</Text>
-      <Text color={paint(color)}>{textBar(percent)}</Text>
+      <Text color={tone(color)}>{textBar(percent)}</Text>
       <Text bold>{` ${String(percent).padStart(3)}% `}</Text>
       <Text>{`${suffix} `}</Text>
       {win.resetsAt ? (
@@ -84,8 +85,8 @@ function ResetCredits({ credits }: Readonly<{ credits: NonNullable<AgentUsage['r
 }
 
 function Notice({ error }: Readonly<{ error: NonNullable<AgentUsage['error']> }>) {
-  if (error === 'unavailable') return <Text color={paint('yellow')}>{'  Không lấy được số liệu trực tiếp'}</Text>;
-  return <Text color={paint('yellow')}>{'  Cần đăng nhập lại: chạy /login'}</Text>;
+  if (error === 'unavailable') return <Text color={tone('yellow')}>{'  Không lấy được số liệu trực tiếp'}</Text>;
+  return <Text color={tone('yellow')}>{'  Cần đăng nhập lại: chạy /login'}</Text>;
 }
 
 interface CardProps {
@@ -100,11 +101,11 @@ function AgentCard({ name, usage, version }: Readonly<CardProps>) {
   return (
     <Box flexDirection="column" marginBottom={1}>
       <Box>
-        <Text color={paint(version ? 'green' : 'red')}>● </Text>
+        <Text color={tone(version ? 'green' : 'red')}>● </Text>
         <Text bold>{LABEL[name]}</Text>
-        {usage?.plan ? <Text color={paint('cyan')}>{` ${usage.plan.toUpperCase()}`}</Text> : null}
+        {usage?.plan ? <Text color={tone('cyan')}>{` ${usage.plan.toUpperCase()}`}</Text> : null}
         <Text dimColor>{`  ${version ?? 'chưa kết nối'}`}</Text>
-        {usage ? <Text color={paint(live ? 'green' : 'gray')}>{`  [${sourceLabel(usage)}]`}</Text> : null}
+        {usage ? <Text color={tone(live ? 'green' : 'gray')}>{`  [${sourceLabel(usage)}]`}</Text> : null}
       </Box>
       {usage?.error ? <Notice error={usage.error} /> : null}
       {usage?.fiveHour ? <BarRow label="5 giờ" window={usage.fiveHour} live={live} left={name === 'codex'} /> : null}

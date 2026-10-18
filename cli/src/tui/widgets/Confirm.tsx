@@ -1,5 +1,5 @@
 import { Box, Text, useInput } from 'ink';
-import { paint } from '../util.ts';
+import { tone } from '../theme.ts';
 
 /** y/Enter confirms, n/Esc declines. */
 export default function Confirm({ message, onYes, onNo }: Readonly<{ message: string; onYes: () => void; onNo: () => void }>) {
@@ -9,7 +9,7 @@ export default function Confirm({ message, onYes, onNo }: Readonly<{ message: st
   });
   return (
     <Box flexDirection="column">
-      <Text color={paint('yellow')}>{message}</Text>
+      <Text color={tone('yellow')}>{message}</Text>
       <Text dimColor>y đồng ý · n / Esc huỷ</Text>
     </Box>
   );
