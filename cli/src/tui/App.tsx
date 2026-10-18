@@ -1,5 +1,6 @@
 import { Box, Static, Text, useApp, useInput, useWindowSize } from 'ink';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { expandCommand, listCommands, type SlashCommand as CustomCommand } from '../../../server/src/extensions.ts';
 import { useInterrupt, usePreflight, useRoutePreview } from './appHooks.ts';
 import { Composer } from './Composer.tsx';
 import { PairDecisionPrompt, PlanDecisionPrompt } from './DecisionPrompt.tsx';
@@ -126,12 +127,25 @@ export function App(props: Readonly<AppProps>) {
   const [history, setHistory] = useState(props.history);
   const [draft, setDraft] = useState('');
   const [shellMode, setShellMode] = useState(false);
+  const [custom, setCustom] = useState<CustomCommand[]>([]);
   const [followTick, setFollowTick] = useState(0);
   const { onRunChange } = props;
   const runId = session.run?.id;
   useEffect(() => {
     onRunChange?.(runId);
   }, [onRunChange, runId]);
+
+  useEffect(() => {
+    let alive = true;
+    listCommands(cwd).then((found) => alive && setCustom(found), () => undefined);
+    return () => {
+      alive = false;
+    };
+  }, [cwd]);
+  const menuCommands = useMemo(
+    () => [...SLASH_COMMANDS, ...custom.filter((c) => !findCommand(SLASH_COMMANDS, c.name)).map((c) => ({ name: c.name.toLowerCase(), description: c.description || 'Custom command' }))],
+    [custom],
+  );
 
   const problems = usePreflight(service, cwd, selection.selection.skipAuthCheck === true, !props.skipPreflight);
   const autoRouted = !selection.selection.role && !selection.selection.pipelineId && !selection.selection.overrides.agent && !selection.selection.overrides.reviewer;
@@ -162,13 +176,19 @@ export function App(props: Readonly<AppProps>) {
     return null;
   };
 
-  const submit = async (text: string, images: readonly ImageAttachment[] = []): Promise<string | null> => {
-    if (text.startsWith('/')) return runSlash(text, shell);
+  const submit = async (typed: string, images: readonly ImageAttachment[] = []): Promise<string | null> => {
+    let text = typed;
+    if (text.startsWith('/')) {
+      const word = (/^\/(\S*)/.exec(text)?.[1] ?? '').toLowerCase();
+      const found = findCommand(SLASH_COMMANDS, word) ? undefined : custom.find((c) => c.name.toLowerCase() === word);
+      if (!found) return runSlash(text, shell);
+      text = expandCommand(found, text.slice(1 + word.length));
+    }
     if (session.phase !== 'idle') return 'A run is in progress. Wait for it, or press Ctrl+C to stop it.';
     if (shellRun.running) return 'A shell command is running. Wait for it, or press Ctrl+C to stop it.';
     setFollowTick((t) => t + 1);
     const failure = await session.send(buildRequest(selection.selection, text, cwd, images), text);
-    if (!failure && text) rememberPrompt(historyText(text));
+    if (!failure && text) rememberPrompt(historyText(typed));
     return failure;
   };
 
@@ -202,7 +222,7 @@ export function App(props: Readonly<AppProps>) {
         history={history}
         roles={selection.roles}
         role={selection.selection.role}
-        commands={SLASH_COMMANDS}
+        commands={menuCommands}
         cwd={cwd}
         readClipboard={props.readClipboard}
         borderTone={effectiveMode(selection.selection) === 'plan' ? 'yellow' : 'cyan'}
@@ -211,8 +231,9 @@ export function App(props: Readonly<AppProps>) {
         shellBlocked={() => (session.phase === 'idle' ? null : SHELL_BLOCKED)}
         onShellMode={setShellMode}
         onCommand={(c) => {
-          const error = runSlash(`/${c.name}`, shell);
-          if (error) session.notice('error', error);
+          void submit(`/${c.name}`).then((error) => {
+            if (error) session.notice('error', error);
+          });
         }}
         onCycleRole={selection.cycleRole}
         onToggleMode={selection.toggleMode}

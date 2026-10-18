@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createElement } from 'react';
@@ -522,6 +522,30 @@ await step('startTui: renders, saves history, exits 0 on Ctrl+D and Ctrl+C twice
   }
   assert.deepEqual(await loadHistory(historyFile), ['remember me']);
   assert.ok((await readFile(historyFile, 'utf8')).includes('remember me'));
+});
+
+await step('custom slash commands from .ai-duo/commands expand into the prompt; built-ins win', async () => {
+  const dir = path.join(temp, '.ai-duo', 'commands');
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, 'greet.md'), '---\ndescription: Say hello\n---\nHello $ARGUMENTS!');
+  await writeFile(path.join(dir, 'help.md'), 'must not replace the built-in /help');
+  const t = open();
+  await t.seeing('Ask anything');
+  await sleep(100);
+  await t.type('/gre');
+  await t.seeing('Say hello');
+  await t.type('et Bob');
+  await t.type(KEY.enter);
+  await until(() => t.service.seen.length === 1, 'the expanded prompt is sent');
+  assert.equal((t.service.seen[0] as { request: RunRequest }).request.prompt, 'Hello Bob!');
+  const h = open();
+  await h.seeing('Ask anything');
+  await sleep(100);
+  await h.type('/help');
+  await h.type(KEY.enter);
+  await h.seeing('Commands:');
+  assert.equal(h.service.seen.length, 0, 'the custom /help did not replace the built-in');
+  await rm(dir, { recursive: true, force: true });
 });
 
 await rm(temp, { recursive: true, force: true }).catch(() => {});
