@@ -339,7 +339,7 @@ await step('slash menu: filter, choose, run /help, unknown command', async () =>
   for (let i = 0; i < 10; i++) await t.type(KEY.down);
   await t.seeing('› /usage');
   assert.ok(t.frame().includes('11/20 ↑ ↓'), 'the menu follows the selection past the first eight commands');
-  for (let i = 0; i < 7; i++) await t.type(KEY.down);
+  for (let i = 0; i < 9; i++) await t.type(KEY.down);
   await t.seeing('› /exit');
   assert.ok(t.frame().includes('20/20 ↑') && !t.frame().includes('20/20 ↑ ↓'), 'the last command has no items below');
   await t.type(KEY.down);
