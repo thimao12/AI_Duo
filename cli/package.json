@@ -5,9 +5,10 @@
   "private": true,
   "type": "module",
   "bin": {
-    "ai-duo": "dist/ai-duo.mjs"
+    "ai-duo": "bin/ai-duo.mjs"
   },
   "files": [
+    "bin",
     "dist"
   ],
   "engines": {
