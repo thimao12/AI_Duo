@@ -1,10 +1,10 @@
-import type { AgentName } from '../agents/types.ts';
+import { agentLabel } from '../agents/index.ts';
 import { gitRequiredMessage, isGitRepo } from '../git.ts';
 import type { RunContext } from '../run.ts';
 import type { Verdict } from '../types.ts';
 import { lastVerdict } from '../../../shared/text.ts';
 
-const label = (agent: AgentName) => agent === 'claude' ? 'Claude' : 'Codex';
+const label = agentLabel;
 
 export function parsePlanVerdict(text: string): Verdict {
   return lastVerdict(text, ['APPROVE', 'CHANGES_REQUESTED', 'REVISE'], true) === 'APPROVE' ? 'APPROVE' : 'CHANGES_REQUESTED';

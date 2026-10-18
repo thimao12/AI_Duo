@@ -61,21 +61,21 @@ async function main() {
   ]);
   const { lockTarget, readLockOwner, unlockRepo } = lockModule;
 
-  const originals = { claude: { ...agents.claude }, codex: { ...agents.codex } };
+  const originals = { claude: { ...agents.claude }, codex: { ...agents.codex }, antigravity: { ...agents.antigravity } };
   let check: (agent: AgentName) => AgentCheck = (agent) => ({ agent, path: agent, version: 'fake 1.0', auth: 'ok' });
   const checksRun: AgentName[] = [];
-  for (const agent of ['claude', 'codex'] as const) {
+  for (const agent of ['claude', 'codex', 'antigravity'] as const) {
     agents[agent].check = () => {
       checksRun.push(agent);
       return Promise.resolve(check(agent));
     };
   }
   type Script = (agent: AgentName, o: RunOptions) => Promise<RunResult>;
-  const calls: { agent: AgentName; role: string; prompt: string; allowUnverifiedAuth?: boolean }[] = [];
+  const calls: { agent: AgentName; role: string; prompt: string; allowUnverifiedAuth?: boolean; model?: string; sessionId?: string }[] = [];
   let script: Script = () => Promise.resolve({ finalText: 'unused' });
-  for (const agent of ['claude', 'codex'] as const) {
+  for (const agent of ['claude', 'codex', 'antigravity'] as const) {
     agents[agent].run = (o) => {
-      calls.push({ agent, role: o.role, prompt: o.prompt, allowUnverifiedAuth: o.allowUnverifiedAuth });
+      calls.push({ agent, role: o.role, prompt: o.prompt, allowUnverifiedAuth: o.allowUnverifiedAuth, model: o.model, sessionId: o.sessionId });
       return script(agent, o);
     };
   }
@@ -255,6 +255,48 @@ async function main() {
     assert.equal((await loadRun(limited.id))?.status, 'cancelled');
     assert.equal(existsSync(await lockFile(repo)), false);
 
+    // ---- Antigravity picked by hand: kept from Plan into Code and into follow-ups, with its model.
+    calls.length = 0;
+    script = async (agent, o) => ({ ...(await approveAll(agent, o)), sessionId: `${agent}-session` });
+    const agyPlan = await service.start({ mode: 'plan', prompt: PLAN, cwd: repo, coder: 'antigravity', models: { antigravity: 'gemini-x' } });
+    await waitFor(() => agyPlan.run.planDecision, 'Antigravity plan approval');
+    assert.deepEqual([...new Set(calls.map((c) => c.agent))], ['antigravity'], 'Plan: Antigravity plans and reviews its own plan');
+    assert.ok(calls.every((c) => c.model === 'gemini-x'), 'the Antigravity model is passed on');
+    assert.equal(agyPlan.run.config.route, undefined, 'no router');
+    await agyPlan.answerPlanDecision({ action: 'approve' });
+    const agyDone = await agyPlan.done;
+    assert.equal(agyDone.status, 'done', agyDone.error);
+    assert.equal(agyDone.config.mode, 'code');
+    assert.equal(agyDone.config.coder, 'antigravity', 'Plan → Code keeps the hand-picked coder');
+    assert.equal(agyDone.config.reviewer, 'claude', 'the side not chosen comes from the default pair');
+    assert.ok(calls.some((c) => c.agent === 'antigravity' && c.role === 'coder'));
+    assert.ok(calls.some((c) => c.agent === 'claude' && c.role === 'reviewer'));
+    assert.ok(calls.filter((c) => c.agent !== 'antigravity').every((c) => c.sessionId !== 'antigravity-session'), "no agent resumes Antigravity's conversation");
+
+    calls.length = 0;
+    const agyFollow = await service.continue(agyPlan.id, { prompt: 'One more fix.' });
+    const agyFollowDone = await agyFollow.done;
+    assert.equal(agyFollowDone.status, 'done', agyFollowDone.error);
+    assert.equal(agyFollowDone.config.coder, 'antigravity', 'a follow-up without agents keeps them');
+    assert.ok(calls.some((c) => c.agent === 'antigravity' && c.role === 'coder' && c.model === 'gemini-x' && c.sessionId === 'antigravity-session'), 'same agent, same model, its own conversation');
+
+    calls.length = 0;
+    const rerouted = await (await service.continue(agyPlan.id, { prompt: 'Rename the helper.', coder: 'auto' })).done;
+    assert.equal(rerouted.status, 'done', rerouted.error);
+    assert.ok(rerouted.config.route, "'auto' asks the router again");
+    assert.equal(rerouted.config.agentChoice, undefined);
+    assert.ok(!calls.some((c) => c.agent === 'antigravity'), 'the router never picks Antigravity');
+
+    // Images never reach Antigravity: refused before the run exists or the lock is taken.
+    const png = { name: 'a.png', dataUrl: `data:image/png;base64,${Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64')}` };
+    const before = (await service.list()).length;
+    await expectError(service.start({ mode: 'code', prompt: CODE, cwd: repo, coder: 'antigravity', images: [png] }), 'invalid', /chỉ nhận văn bản/);
+    await expectError(service.start({ mode: 'code', prompt: CODE, cwd: repo, coder: 'claude', reviewer: 'antigravity', images: [png] }), 'invalid', /chỉ nhận văn bản/);
+    assert.equal((await service.list()).length, before, 'no run was created');
+    assert.equal(existsSync(await lockFile(repo)), false, 'no lock left behind');
+    await expectError(service.start({ mode: 'code', prompt: CODE, cwd: repo, coder: 'gemini' as never }), 'invalid', /coder must be/);
+    await expectError(service.start({ mode: 'code', prompt: CODE, cwd: repo, coder: 'antigravity', models: { antigravity: 'bad model;' } }), 'invalid', /models\.antigravity/);
+
     // ---- One lock per repository, whatever path points into it; other folders are independent.
     script = hang;
     const holderRun = await service.start({ mode: 'code', prompt: CODE, cwd: repo });
@@ -310,6 +352,7 @@ async function main() {
     for (const child of children) if (child.exitCode === null) child.kill();
     Object.assign(agents.claude, originals.claude);
     Object.assign(agents.codex, originals.codex);
+    Object.assign(agents.antigravity, originals.antigravity);
     await service.abortAll();
     await rm(temp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }).catch(console.error);
   }

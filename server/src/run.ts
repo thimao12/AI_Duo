@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { agents, type AgentName, type Role, type Usage } from './agents/index.ts';
+import { agentLabel, agents, type AgentName, type Role, type Usage } from './agents/index.ts';
 import { AbortedError } from './agents/process.ts';
 import { saveRun } from './store.ts';
 import { paths } from './paths.ts';
@@ -43,7 +43,7 @@ export function classifyError(msg: string): string {
 
 export function validateTurnOutput(agent: AgentName, role: Role, finalText: string) {
   if ((role === 'thinker' || role === 'reviewer') && finalText.trim() === '') {
-    const name = agent === 'claude' ? 'Claude' : 'Codex';
+    const name = agentLabel(agent);
     throw new Error(`${name} trả về câu trả lời rỗng`);
   }
 }

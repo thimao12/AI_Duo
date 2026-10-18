@@ -58,6 +58,11 @@ export interface RunConfig {
   pipelineId?: string;
   /** Set when mode/agents/models were picked by the auto-router. */
   route?: RoutePlan;
+  /**
+   * The agents the user picked by hand (Code/Plan), kept for Plan → Code and for follow-ups that pick none;
+   * absent when the router chose. Each side is only what was asked: the other one comes from the default pair.
+   */
+  agentChoice?: { coder?: AgentName; reviewer?: AgentName };
   /** The user chose to run although an agent CLI could not report its login status. */
   skipAuthCheck?: boolean;
 }

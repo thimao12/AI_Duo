@@ -1,4 +1,4 @@
-import { other, type AgentName } from '../agents/index.ts';
+import { agentLabel, defaultPartner, type AgentName } from '../agents/index.ts';
 import type { Mode, ModelChoice, ModelRole, RoutePlan, TaskType, Tier } from '../types.ts';
 import type { Catalog } from './catalog.ts';
 
@@ -12,7 +12,7 @@ export interface Decision {
 }
 
 const down = (t: Tier): Tier => (t === 'heavy' ? 'standard' : 'light');
-const label = (a: AgentName) => (a === 'claude' ? 'Claude' : 'Codex');
+const label = agentLabel;
 
 export const TASK_LABEL: Record<TaskType, string> = {
   edit: 'sửa/thêm code',
@@ -38,7 +38,7 @@ export function decide(taskType: TaskType, complexity: Tier, catalog: Catalog, m
   };
 
   const coder: AgentName = taskType === 'refactor' || (complexity === 'heavy' && taskType !== 'bugfix') ? 'claude' : 'codex';
-  const reviewer = complexity === 'light' ? coder : other(coder);
+  const reviewer = complexity === 'light' ? coder : defaultPartner(coder);
   if (mode === 'plan') {
     set(coder, 'thinker', complexity);
     set(reviewer, 'thinker', reviewer === coder ? complexity : down(complexity));

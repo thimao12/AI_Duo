@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { agents, other, type AgentCheck, type AgentName, type Usage } from './agents/index.ts';
+import { AGENT_NAMES, agentLabel, agents, defaultPartner, type AgentCheck, type AgentName, type Usage } from './agents/index.ts';
+import { AGY_IMAGES_UNSUPPORTED } from './agents/antigravity.ts';
 import { resolveBin } from './agents/bins.ts';
 import { binVersion } from './agents/check.ts';
 import { gitRequiredMessage, isGitRepo } from './git.ts';
@@ -51,9 +52,12 @@ export interface RunRequest {
   images?: { name: string; dataUrl: string }[];
   models?: Partial<Record<AgentName, string | null>>;
   efforts?: Partial<Record<AgentName, string | null>>;
-  /** An explicit agent skips the auto-router (precedence: request fields > role > router). */
-  coder?: AgentName;
-  reviewer?: AgentName;
+  /**
+   * An explicit agent skips the auto-router (precedence: request fields > role > router). A follow-up without
+   * one keeps the run's hand-picked agents; 'auto' asks the router again.
+   */
+  coder?: AgentName | 'auto';
+  reviewer?: AgentName | 'auto';
   /** Run one turn shaped by this role (template, agent, model, permission). */
   roleId?: string;
   /** 'read' needs no Git repository; overrides the role's own permission. */
@@ -119,7 +123,7 @@ export function evaluatePreflight(checks: AgentCheck[], skipAuthCheck = false): 
 
 /** Agents a Code or Plan run will call, in order. */
 export function agentsFor(cfg: Pick<RunConfig, 'mode' | 'coder' | 'reviewer'>): AgentName[] {
-  const reviewer = cfg.reviewer ?? (cfg.mode === 'plan' ? cfg.coder : other(cfg.coder));
+  const reviewer = cfg.reviewer ?? (cfg.mode === 'plan' ? cfg.coder : defaultPartner(cfg.coder));
   return [...new Set([cfg.coder, reviewer])];
 }
 
@@ -162,12 +166,32 @@ export function parseImages(value: unknown): ParsedImages | string {
 const isAgent = (x: unknown): x is AgentName => x === 'claude' || x === 'codex' || x === 'antigravity';
 
 function modelProblem(body: any): string | undefined {
-  return modelNameProblem(body.models?.claude, 'models.claude') ?? modelNameProblem(body.models?.codex, 'models.codex');
+  for (const agent of AGENT_NAMES) {
+    const problem = modelNameProblem(body.models?.[agent], `models.${agent}`);
+    if (problem) return problem;
+  }
+  return undefined;
 }
 
 function effortProblem(body: any): string | undefined {
-  return effortNameProblem(body.efforts?.claude, 'efforts.claude') ?? effortNameProblem(body.efforts?.codex, 'efforts.codex');
+  for (const agent of AGENT_NAMES) {
+    const problem = effortNameProblem(body.efforts?.[agent], `efforts.${agent}`);
+    if (problem) return problem;
+  }
+  return undefined;
 }
+
+/** coder / reviewer: an agent name, 'auto' or nothing. */
+function agentFieldProblem(body: any): string | undefined {
+  for (const key of ['coder', 'reviewer'] as const) {
+    const value = body[key];
+    if (value !== undefined && value !== 'auto' && !isAgent(value)) return `${key} must be claude, codex, antigravity or auto`;
+  }
+  return undefined;
+}
+
+const perAgent = (values: any): Partial<Record<AgentName, string>> =>
+  Object.fromEntries(AGENT_NAMES.map((agent) => [agent, String(values?.[agent] ?? '').trim() || undefined]));
 
 const MODES: ReadonlySet<string> = new Set(['code', 'plan', 'pipeline']);
 
@@ -186,7 +210,7 @@ function selectionProblem(body: any): string | undefined {
 function validateRequest(body: any, prompt: string): { mode: Mode; cwd: string } | string {
   if (typeof body?.mode !== 'string' || !MODES.has(body.mode)) return 'mode must be "code", "plan" or "pipeline"';
   if (!prompt) return 'prompt is required';
-  const problem = modelProblem(body) ?? effortProblem(body) ?? selectionProblem(body);
+  const problem = modelProblem(body) ?? effortProblem(body) ?? agentFieldProblem(body) ?? selectionProblem(body);
   if (problem) return problem;
   try {
     const cwd = authorizeDirectory(String(body.cwd ?? '').trim() || paths.defaultCwd);
@@ -207,18 +231,13 @@ function manualConfig(body: any, prompt: string, cwd: string): RunConfig {
     maxRounds,
     judge: isAgent(body.judge) ? body.judge : 'claude',
     coder,
-    reviewer: isAgent(body.reviewer) ? body.reviewer : other(coder),
+    reviewer: isAgent(body.reviewer) ? body.reviewer : defaultPartner(coder),
     testCommand: String(body.testCommand ?? '').trim() || cli.testCommand || undefined,
     turnTimeoutMin: Math.min(Math.max(Number(body.turnTimeoutMin) || cli.turnTimeoutMin || 30, 1), MAX_TURN_TIMEOUT_MIN),
     ...(Number(body.tokenBudget) > 0 && { tokenBudget: Math.floor(Number(body.tokenBudget)) }),
-    models: {
-      claude: String(body.models?.claude ?? '').trim() || undefined,
-      codex: String(body.models?.codex ?? '').trim() || undefined,
-    },
-    efforts: {
-      claude: String(body.efforts?.claude ?? '').trim() || undefined,
-      codex: String(body.efforts?.codex ?? '').trim() || undefined,
-    },
+    models: perAgent(body.models),
+    efforts: perAgent(body.efforts),
+    ...(body.agentChoice && { agentChoice: body.agentChoice }),
     skipAuthCheck: body.skipAuthCheck === true || undefined,
     // Always present (possibly undefined) so a follow-up replaces the previous run's values.
     roleId: body.mode === 'plan' ? undefined : validId(body.roleId),
@@ -292,6 +311,46 @@ function selectPipeline(body: any, settings: Settings): Selection {
   return { body: { ...body, coder: agents[0], reviewer: agents[0], permission: undefined }, manual: true, agents, readOnly: steps.every((s) => s.role.permission === 'read') };
 }
 
+/**
+ * Both sides of a hand-picked pair. A missing coder is the reviewer's default partner; a missing reviewer is the
+ * coder itself in Plan (it reviews its own plan) and the coder's default partner in Code.
+ */
+export function pairFor(choice: NonNullable<RunConfig['agentChoice']>, mode: 'code' | 'plan'): { coder: AgentName; reviewer: AgentName } {
+  const coder = choice.coder ?? defaultPartner(choice.reviewer ?? 'codex');
+  const reviewer = choice.reviewer ?? (mode === 'plan' ? coder : defaultPartner(coder));
+  return { coder, reviewer };
+}
+
+/**
+ * A follow-up that names no agent, role or pipeline keeps what the run had: its hand-picked agents (unless it
+ * asks for 'auto') and its models and efforts (a value in the request wins). A run the router placed is routed
+ * again. Session ids are stored per agent, so a different agent never resumes another one's conversation.
+ */
+export function inheritFollowUp(body: RunRequest, previous: RunConfig): RunRequest {
+  const picksAgents = body.coder !== undefined || body.reviewer !== undefined || body.roleId !== undefined || body.pipelineId !== undefined;
+  const choice = picksAgents || previous.roleId || previous.pipelineId ? undefined : previous.agentChoice;
+  const merged = (saved: Partial<Record<AgentName, string>> | undefined, asked: RunRequest['models']) => {
+    const out: Partial<Record<AgentName, string | null>> = {};
+    for (const agent of AGENT_NAMES) {
+      const value = asked?.[agent] || saved?.[agent];
+      if (value) out[agent] = value;
+    }
+    return out;
+  };
+  return {
+    ...body,
+    ...(choice?.coder && { coder: choice.coder }),
+    ...(choice?.reviewer && { reviewer: choice.reviewer }),
+    models: merged(previous.models, body.models),
+    efforts: merged(previous.efforts, body.efforts),
+  };
+}
+
+/** Antigravity's headless input takes text only: a run with images that would reach it stops before it starts. */
+function assertImagesSupported(images: ParsedImages, used: AgentName[]) {
+  if (images.images.length && used.includes('antigravity')) throw new ServiceError('invalid', AGY_IMAGES_UNSUPPORTED);
+}
+
 /** Precedence: explicit request fields > role > router. */
 async function selectAgents(body: any, mode: Mode): Promise<Selection> {
   if (mode === 'pipeline') return selectPipeline(body, await loadSettings());
@@ -305,10 +364,9 @@ async function selectAgents(body: any, mode: Mode): Promise<Selection> {
     return { body: { ...body, coder: agent, reviewer: agent }, manual: true, agents: [agent], readOnly: true };
   }
   if (isAgent(body.coder) || isAgent(body.reviewer)) {
-    const coder: AgentName = isAgent(body.coder) ? body.coder : other(body.reviewer);
-    const fallback = mode === 'plan' ? coder : other(coder);
-    const reviewer: AgentName = isAgent(body.reviewer) ? body.reviewer : fallback;
-    return { body: { ...body, coder, reviewer }, manual: true, readOnly: false };
+    const agentChoice = { ...(isAgent(body.coder) && { coder: body.coder }), ...(isAgent(body.reviewer) && { reviewer: body.reviewer }) };
+    const { coder, reviewer } = pairFor(agentChoice, mode === 'plan' ? 'plan' : 'code');
+    return { body: { ...body, coder, reviewer, agentChoice }, manual: true, readOnly: false };
   }
   return { body, manual: false, readOnly: false };
 }
@@ -508,6 +566,7 @@ export class RunService {
     try {
       const checks: Checks = new Map();
       const { cfg, routeUsage } = await this.configure(sel, valid.mode, prompt, valid.cwd, checks);
+      assertImagesSupported(images, sel.agents ?? agentsFor(cfg));
       await this.saveImages(id, undefined, images);
       if (images.images.length) cfg.images = images.images;
       const ctx = new RunContext(cfg, undefined, id);
@@ -535,7 +594,7 @@ export class RunService {
       const owner = await this.activeElsewhere(id);
       if (owner) throw new ServiceError('conflict', `Phiên đang chạy ở tiến trình khác: ${describeOwner(owner)}. Hãy đợi hoàn tất.`);
       const nextPrompt = prompt || IMAGE_ONLY_PROMPT;
-      const request = { ...body, mode: followMode(body), cwd: previous.config.cwd };
+      const request = { ...inheritFollowUp(body, previous.config), mode: followMode(body), cwd: previous.config.cwd };
       const valid = validateRequest(request, nextPrompt);
       if (typeof valid === 'string') throw new ServiceError('invalid', valid);
       const sel = await selectAgents(request, valid.mode);
@@ -547,7 +606,9 @@ export class RunService {
       if (!run) throw new ServiceError('not_found', 'not found');
       const checks: Checks = new Map();
       const { cfg, routeUsage } = await this.configure(sel, valid.mode, nextPrompt, valid.cwd, checks);
-      run.config = { ...run.config, ...cfg, prompt: run.config.prompt, cwd: run.config.cwd, images: run.config.images };
+      assertImagesSupported(images, sel.agents ?? agentsFor(cfg));
+      // Always present, so a routed follow-up drops the previous hand-picked agents (and the reverse).
+      run.config = { ...run.config, ...cfg, agentChoice: cfg.agentChoice, route: cfg.route, prompt: run.config.prompt, cwd: run.config.cwd, images: run.config.images };
       const messageId = randomUUID();
       await this.saveImages(id, messageId, images);
       const ctx = new RunContext(run.config, run);
@@ -576,10 +637,17 @@ export class RunService {
     const task = ctx.run.config.prompt;
     const implementationPrompt = `Implement the approved plan for this task. Follow the plan and verify the changes.\n\nOriginal task:\n${task}\n\nUser-approved plan:\n${approvedPlan}`;
     ctx.followUp(implementationPrompt);
-    // Same order as a new run: no model call before the agents it needs have passed preflight.
-    const { route, usage, mode, coder, reviewer, judge } = await this.routeChecked(implementationPrompt, 'code', cfg.cwd, cfg.skipAuthCheck, checks, ctx.abort.signal);
-    Object.assign(ctx.run.config, { mode, coder, reviewer, judge, maxRounds: 2, route });
-    ctx.note('Đã duyệt kế hoạch · bắt đầu Code', route.reason, 'info', 0, usage);
+    if (cfg.agentChoice) {
+      // Hand-picked agents stay: only a side that was not chosen falls back to the default Code pair.
+      const { coder, reviewer } = pairFor(cfg.agentChoice, 'code');
+      Object.assign(ctx.run.config, { mode: 'code', coder, reviewer, maxRounds: 2 });
+      ctx.note('Đã duyệt kế hoạch · bắt đầu Code', `Giữ agent đã chọn: ${agentLabel(coder)} viết code, ${agentLabel(reviewer)} review.`, 'info', 0);
+    } else {
+      // Same order as a new run: no model call before the agents it needs have passed preflight.
+      const { route, usage, mode, coder, reviewer, judge } = await this.routeChecked(implementationPrompt, 'code', cfg.cwd, cfg.skipAuthCheck, checks, ctx.abort.signal);
+      Object.assign(ctx.run.config, { mode, coder, reviewer, judge, maxRounds: 2, route });
+      ctx.note('Đã duyệt kế hoạch · bắt đầu Code', route.reason, 'info', 0, usage);
+    }
     // Code may route to an agent the plan did not use.
     const report = await this.checked(agentsFor(ctx.run.config), cfg.cwd, cfg.skipAuthCheck, checks);
     if (!report.ok) throw new Error(`Kiểm tra agent trước khi Code thất bại:\n${report.problems.join('\n')}`);

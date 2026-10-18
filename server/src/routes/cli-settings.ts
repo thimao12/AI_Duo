@@ -1,6 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { binVersion } from '../agents/check.ts';
 import { resolveBin, type BinSource } from '../agents/bins.ts';
+import type { AgentName } from '../agents/types.ts';
 import { getCliSettings, setCliSettings } from '../settings.ts';
 
 /**
@@ -33,7 +34,7 @@ async function readJson(c: Context): Promise<Body> {
 }
 
 export interface CliDetection {
-  name: 'claude' | 'codex';
+  name: AgentName;
   resolvedPath: string | null;
   source: BinSource;
   version: string | null;
@@ -41,7 +42,7 @@ export interface CliDetection {
 }
 
 /** What would be launched for `name` right now; runs nothing but `--version`. */
-export async function detectCli(name: 'claude' | 'codex'): Promise<CliDetection> {
+export async function detectCli(name: AgentName): Promise<CliDetection> {
   try {
     const bin = resolveBin(name);
     if (bin.source === 'none') {
@@ -68,7 +69,7 @@ export function cliSettingsRoutes(): Hono {
 
   routes.get('/api/cli-settings/detect/:name', async (c) => {
     const name = c.req.param('name');
-    if (name !== 'claude' && name !== 'codex') return c.json({ error: 'name must be claude or codex' }, 400);
+    if (name !== 'claude' && name !== 'codex' && name !== 'antigravity') return c.json({ error: 'name must be claude, codex or antigravity' }, 400);
     return c.json(await detectCli(name));
   });
 

@@ -3,7 +3,7 @@ import { chmod, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { findExecutable } from '../../shared/exe.ts';
-import { agentEnv, antigravityAuthStatus } from './agents/billing.ts';
+import { agentEnv } from './agents/billing.ts';
 import { resolveBin, type ResolvedBin } from './agents/bins.ts';
 import { binVersion } from './agents/check.ts';
 import type { ConnectionStatus } from './types.ts';
@@ -75,18 +75,14 @@ function locate(agent: ConnectionAgent, deps: ConnectionDeps): ResolvedBin | und
   }
 }
 
-async function antigravityLogin(): Promise<Login> {
-  const status = await antigravityAuthStatus();
-  return status.state === 'ok' ? { loggedIn: true, method: 'Google', account: null } : UNKNOWN;
-}
-
 export async function getConnection(agent: ConnectionAgent, deps: ConnectionDeps = {}): Promise<ConnectionStatus> {
   const base: ConnectionStatus = { agent, installed: false, version: null, path: null, loggedIn: null, method: null, account: null, error: null };
   const bin = locate(agent, deps);
   if (!bin) return { ...base, error: 'CLI not found' };
   const { version } = await (deps.version ?? binVersion)(bin);
   if (!version) return { ...base, path: bin.resolvedFrom, error: 'CLI could not be run' };
-  const login = agent === 'antigravity' ? await antigravityLogin() : PARSERS[agent](await (deps.run ?? runStatus)(bin, STATUS_ARGS[agent]));
+  // agy has no login-status command (see antigravityAuthStatus): its login is shown as unverified, never assumed.
+  const login = agent === 'antigravity' ? UNKNOWN : PARSERS[agent](await (deps.run ?? runStatus)(bin, STATUS_ARGS[agent]));
   return { ...base, installed: true, version: short(version, 80), path: bin.resolvedFrom, ...login, error: login.loggedIn === null ? 'Login status unknown' : null };
 }
 

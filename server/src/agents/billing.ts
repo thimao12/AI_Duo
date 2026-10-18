@@ -93,12 +93,14 @@ export async function codexAuthStatus(bin: ResolvedBin, cwd: string): Promise<Au
 }
 
 /**
- * agy has no login-status command, so a signed-in CLI is recognised by the state folder it creates
- * on first sign-in. A missing folder means it never ran (or the user is not signed in).
+ * agy has no login-status command. The state folder it creates on first sign-in only shows it ran once, not
+ * that the login is still valid, so the login stays unverified either way (a turn that fails on auth says so).
  */
 export async function antigravityAuthStatus(home = path.join(homedir(), '.gemini', 'antigravity-cli')): Promise<AuthStatus> {
-  const signedIn = await stat(path.join(home, 'installation_id')).then(() => true, () => false);
-  return signedIn ? { state: 'ok' } : { state: 'unknown', error: 'Không xác minh được Antigravity đã đăng nhập. Chạy `agy` một lần và đăng nhập bằng tài khoản Google.' };
+  const ranOnce = await stat(path.join(home, 'installation_id')).then(() => true, () => false);
+  return ranOnce
+    ? { state: 'unknown', error: 'Antigravity: chưa xác minh đăng nhập (agy không có lệnh kiểm tra; chỉ thấy agy đã từng chạy). Nếu lượt chạy báo lỗi đăng nhập, chạy `agy` và đăng nhập lại bằng tài khoản Google.' }
+    : { state: 'unknown', error: 'Antigravity: chưa xác minh đăng nhập (chưa thấy agy từng chạy). Chạy `agy` một lần và đăng nhập bằng tài khoản Google.' };
 }
 
 /** Login status; only a good login is cached, so a fixed login or upgraded CLI is seen at once. */

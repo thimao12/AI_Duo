@@ -33,6 +33,13 @@ const PROTECTED_FLAGS = [
 ];
 /** `-c sandbox_mode=...` would override the sandbox that AI Duo passes the same way. */
 const PROTECTED_CONFIG_KEYS = ['sandbox_mode', 'approval_policy', 'sandbox_permissions'];
+/**
+ * Antigravity: AI Duo sets the mode (plan / accept-edits), the stream-json formats, the conversation and the
+ * prompt. Matched as the flag itself or `--flag=value` (a short flag also with its value attached).
+ */
+const AGENT_PROTECTED_FLAGS: Partial<Record<keyof CliSettings, readonly string[]>> = {
+  antigravity: ['--mode', '--approval-mode', '--input-format', '--output-format', '--conversation', '--resume', '--continue', '--prompt', '--prompt-interactive', '--print', '-p', '-o', '-r', '-y'],
+};
 
 type Obj = Record<string, unknown>;
 const isObj = (value: unknown): value is Obj => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -50,18 +57,24 @@ function binPathProblem(value: string, label: string): string | undefined {
   return `${label}: không tìm thấy file "${value}".`;
 }
 
-function protectedArg(arg: string): boolean {
+function agentFlag(lower: string, flag: string): boolean {
+  if (lower === flag || lower.startsWith(`${flag}=`)) return true;
+  return !flag.startsWith('--') && lower.startsWith(flag);
+}
+
+function protectedArg(arg: string, agent?: string): boolean {
   const lower = arg.toLowerCase();
   if (PROTECTED_FLAGS.some((flag) => lower === flag || lower.startsWith(flag))) return true;
+  if ((AGENT_PROTECTED_FLAGS[agent as keyof CliSettings] ?? []).some((flag) => agentFlag(lower, flag))) return true;
   return PROTECTED_CONFIG_KEYS.some((key) => lower.includes(key));
 }
 
-function extraArgsProblem(value: unknown, label: string): string | undefined {
+function extraArgsProblem(value: unknown, label: string, agent?: string): string | undefined {
   if (!Array.isArray(value) || value.length > MAX_EXTRA_ARGS) return `${label} phải là danh sách tối đa ${MAX_EXTRA_ARGS} chuỗi.`;
   for (const [index, arg] of value.entries()) {
     const at = `${label}[${index}]`;
     if (typeof arg !== 'string' || arg.length > MAX_ARG_LENGTH || hasNul(arg)) return `${at} phải là chuỗi tối đa ${MAX_ARG_LENGTH} ký tự, không chứa ký tự NUL.`;
-    if (protectedArg(arg)) return `${at} ("${arg}") không được phép: AI Duo tự đặt quyền và sandbox của CLI.`;
+    if (protectedArg(arg, agent)) return `${at} ("${arg}") không được phép: AI Duo tự đặt quyền, chế độ, định dạng vào/ra, hội thoại và prompt của CLI.`;
   }
   return undefined;
 }
@@ -104,7 +117,7 @@ function cliProblem(input: unknown, label: string, checkFile: boolean): CliConfi
   if (!isObj(input)) return `${label} phải là một đối tượng.`;
   const problem =
     binProblem(input.binPath, label, checkFile) ??
-    (input.extraArgs === undefined ? undefined : extraArgsProblem(input.extraArgs, `${label}.extraArgs`)) ??
+    (input.extraArgs === undefined ? undefined : extraArgsProblem(input.extraArgs, `${label}.extraArgs`, label)) ??
     (input.env === undefined ? undefined : envProblem(input.env, `${label}.env`)) ??
     modelNameProblem(input.defaultModel, `${label}.defaultModel`) ??
     effortNameProblem(input.defaultEffort, `${label}.defaultEffort`);

@@ -136,6 +136,15 @@ try {
   for (const arg of protectedArgs) bad({ codex: { extraArgs: ['--ok', arg] } }, /extraArgs\[1\].*không được phép/);
   assert.equal(typeof cli.validateCliSettings({ codex: { extraArgs: ['--model-provider', 'x', '--color', 'never'] } }), 'object');
 
+  // Antigravity: the mode, stream-json formats, conversation and prompt are AI Duo's too, as flag or flag=value.
+  const agyProtected = [
+    '--mode', '--mode=accept-edits', '--MODE=plan', '--approval-mode=yolo', '--input-format', '--output-format=text', '--conversation', '--conversation=c-1',
+    '--resume', '--continue', '--prompt', '--prompt=hi', '-p', '-p=', '-phi', '-y', '--yolo', '--dangerously-skip-permissions',
+  ];
+  for (const arg of agyProtected) bad({ antigravity: { extraArgs: ['--ok', arg] } }, /extraArgs\[1\].*không được phép/);
+  assert.equal(typeof cli.validateCliSettings({ antigravity: { extraArgs: ['--model', 'x', '--model=y', '--modes-help', '--verbose'] } }), 'object', '--model is not --mode');
+  assert.equal(typeof cli.validateCliSettings({ claude: { extraArgs: ['-p', '--continue'] }, codex: { extraArgs: ['--resume'] } }), 'object', 'the Antigravity list applies to Antigravity only');
+
   /* ---- Old files and persistence ---- */
   assert.deepEqual(settings.getCliSettingsSync(), base, 'no file: defaults');
   await mkdir(path.dirname(settingsPath), { recursive: true });

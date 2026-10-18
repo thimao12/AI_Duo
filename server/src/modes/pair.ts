@@ -1,11 +1,11 @@
-import { other, type AgentName } from '../agents/index.ts';
+import { agentLabel, defaultPartner, type AgentName } from '../agents/index.ts';
 import { diffSince, diffTreeSummary, isGitRepo, snapshotTree } from '../git.ts';
 import { render } from '../prompts/index.ts';
 import type { RunContext } from '../run.ts';
 import type { Verdict } from '../types.ts';
 import { fencedBlocks } from '../../../shared/text.ts';
 
-const label = (a: AgentName) => (a === 'claude' ? 'Claude' : 'Codex');
+const label = agentLabel;
 const MAX_DIFF_CHARS = 60_000;
 
 export interface ReviewResult {
@@ -190,7 +190,7 @@ async function nextStep(
 export async function runPair(ctx: RunContext) {
   const { cwd, maxRounds, coder, testCommand } = ctx.run.config;
   const prompt = ctx.prompt;
-  const reviewer = ctx.run.config.reviewer ?? other(coder);
+  const reviewer = ctx.run.config.reviewer ?? defaultPartner(coder);
 
   if (!(await isGitRepo(cwd))) {
     throw new Error(`Pair mode needs a git repository so changes can be diffed and reverted. "${cwd}" is not one (run \`git init\` there first).`);

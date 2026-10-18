@@ -1,10 +1,10 @@
-import { other, type AgentName } from '../agents/index.ts';
+import { agentLabel, other, type AgentName } from '../agents/index.ts';
 import { render } from '../prompts/index.ts';
 import type { RunContext } from '../run.ts';
 import type { Verdict } from '../types.ts';
 import { lastVerdict } from '../../../shared/text.ts';
 
-const label = (a: AgentName) => (a === 'claude' ? 'Claude' : 'Codex');
+const label = agentLabel;
 
 export function parseAgreeVerdict(text: string): Verdict | undefined {
   return lastVerdict(text, ['AGREE', 'REVISE']) as Verdict | undefined;
