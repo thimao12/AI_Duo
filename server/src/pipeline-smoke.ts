@@ -123,6 +123,21 @@ try {
   ]);
   assert.ok(Array.isArray(saved));
 
+  // Disabled role agents move to an enabled AI; forcing a disabled AI is rejected.
+  await settings.setCliSettings({ claude: { enabled: false }, antigravity: { enabled: false } });
+  calls.length = 0;
+  script = () => reply('VERDICT: PASS');
+  const movedAsk = await runToEnd({ mode: 'code', roleId: 'ask', prompt: 'q', cwd: plain });
+  assert.equal(movedAsk.status, 'done', movedAsk.error);
+  assert.equal(calls[0].agent, 'codex');
+  await expectError(service.start({ mode: 'code', roleId: 'ask', coder: 'claude', prompt: 'q', cwd: plain }), 'preflight', /Claude.*đã tắt/);
+  calls.length = 0;
+  const movedPipeline = await runToEnd({ mode: 'pipeline', pipelineId: 'no-loop', prompt: 'q', cwd: plain });
+  assert.equal(movedPipeline.status, 'done', movedPipeline.error);
+  assert.equal(calls.length, 3);
+  assert.ok(calls.every((c) => c.agent === 'codex'));
+  await settings.setCliSettings({});
+
   calls.length = 0;
   let reviews = 0;
   script = (_agent, o, n) => {

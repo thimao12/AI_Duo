@@ -11,7 +11,7 @@ import { planPipeline, runPipeline, runRole } from './modes/pipeline.ts';
 import { runPlan } from './modes/plan.ts';
 import { MAX_TURN_TIMEOUT_MIN } from './cli-settings.ts';
 import { effortNameProblem, modelNameProblem } from './models.ts';
-import { getCliSettingsSync, getRoles, ID_PATTERN, loadSettings, type Settings } from './settings.ts';
+import { getCliSettings, getCliSettingsSync, getRoles, ID_PATTERN, loadSettings, type Settings } from './settings.ts';
 import { paths } from './paths.ts';
 import { isDataId, writeRunImages } from './data-path.ts';
 import { authorizeDirectory, projectDirectories } from './project-directories.ts';
@@ -99,8 +99,22 @@ export interface RunHandle {
   answerPairDecision(continueRun: boolean): boolean;
 }
 
-/** Agent checks made while handling one request, so each agent is checked once. */
-type Checks = Map<AgentName, AgentCheck>;
+/** Checks and enabled agents belong to one request, including its Plan → Code transition. */
+interface Checks {
+  results: Map<AgentName, AgentCheck>;
+  enabled: ReadonlySet<AgentName>;
+}
+
+async function requestChecks(images = false): Promise<Checks> {
+  const cli = await getCliSettings();
+  const enabled = new Set(AGENT_NAMES.filter((name) => cli[name].enabled !== false));
+  if (![...enabled].some((name) => !images || name !== 'antigravity')) {
+    throw new ServiceError('preflight', images
+      ? 'Không có AI đang bật hỗ trợ ảnh. Hãy bật Claude hoặc Codex trong cài đặt.'
+      : 'Không có AI đang bật. Hãy bật ít nhất một AI trong cài đặt.');
+  }
+  return { results: new Map(), enabled };
+}
 
 export interface PreflightReport {
   ok: boolean;
@@ -129,7 +143,8 @@ export function evaluatePreflight(checks: AgentCheck[], skipAuthCheck = false): 
 }
 
 /** Agents a Code or Plan run will call, in order. */
-export function agentsFor(cfg: Pick<RunConfig, 'mode' | 'coder' | 'reviewer'>): AgentName[] {
+export function agentsFor(cfg: Pick<RunConfig, 'mode' | 'coder' | 'reviewer' | 'roleRoutes'>): AgentName[] {
+  if (cfg.roleRoutes) return [...new Set(Object.values(cfg.roleRoutes).map((route) => route.agent))];
   const reviewer = cfg.reviewer ?? (cfg.mode === 'plan' ? cfg.coder : defaultPartner(cfg.coder));
   return [...new Set([cfg.coder, reviewer])];
 }
@@ -331,9 +346,13 @@ function selectPipeline(body: any, settings: Settings): Selection {
  * Both sides of a hand-picked pair. A missing coder is the reviewer's default partner; a missing reviewer is the
  * coder itself in Plan (it reviews its own plan) and the coder's default partner in Code.
  */
-export function pairFor(choice: NonNullable<RunConfig['agentChoice']>, mode: 'code' | 'plan'): { coder: AgentName; reviewer: AgentName } {
-  const coder = choice.coder ?? defaultPartner(choice.reviewer ?? 'codex');
-  const reviewer = choice.reviewer ?? (mode === 'plan' ? coder : defaultPartner(coder));
+export function pairFor(choice: NonNullable<RunConfig['agentChoice']>, mode: 'code' | 'plan', enabled?: ReadonlySet<AgentName>): { coder: AgentName; reviewer: AgentName } {
+  const partner = (agent: AgentName): AgentName => {
+    const preferred = defaultPartner(agent);
+    return !enabled || enabled.has(preferred) ? preferred : (AGENT_NAMES.find((name) => name !== agent && enabled.has(name)) ?? agent);
+  };
+  const coder = choice.coder ?? partner(choice.reviewer ?? 'codex');
+  const reviewer = choice.reviewer ?? (mode === 'plan' ? coder : partner(coder));
   return { coder, reviewer };
 }
 
@@ -368,7 +387,7 @@ function assertImagesSupported(images: ParsedImages, used: AgentName[]) {
 }
 
 /** Precedence: explicit request fields > role > router. */
-async function selectAgents(body: any, mode: Mode): Promise<Selection> {
+async function selectAgents(body: any, mode: Mode, enabled: ReadonlySet<AgentName>): Promise<Selection> {
   if (mode === 'pipeline') return selectPipeline(body, await loadSettings());
   if (body.roleId) {
     const role = (await getRoles()).find((r) => r.id === body.roleId);
@@ -376,12 +395,12 @@ async function selectAgents(body: any, mode: Mode): Promise<Selection> {
     return selectRole(body, role);
   }
   if (mode === 'code' && body.permission === 'read') {
-    const agent: AgentName = isAgent(body.coder) ? body.coder : 'claude';
+    const agent: AgentName = isAgent(body.coder) ? body.coder : (AGENT_NAMES.find((name) => enabled.has(name)) ?? 'claude');
     return { body: { ...body, coder: agent, reviewer: agent }, manual: true, agents: [agent], readOnly: true };
   }
   if (isAgent(body.coder) || isAgent(body.reviewer)) {
     const agentChoice = { ...(isAgent(body.coder) && { coder: body.coder }), ...(isAgent(body.reviewer) && { reviewer: body.reviewer }) };
-    const { coder, reviewer } = pairFor(agentChoice, mode === 'plan' ? 'plan' : 'code');
+    const { coder, reviewer } = pairFor(agentChoice, mode === 'plan' ? 'plan' : 'code', enabled);
     return { body: { ...body, coder, reviewer, agentChoice }, manual: true, readOnly: false };
   }
   return { body, manual: false, readOnly: false };
@@ -516,8 +535,14 @@ export class RunService {
     const selected: Mode = mode === 'plan' ? 'plan' : 'code';
     // Only what an earlier start measured: a preview must stay instant, so it never checks the CLIs itself.
     const recent = this.lastAvailability && Date.now() - this.lastAvailability.at < AVAILABILITY_MAX_AGE_MS ? this.lastAvailability.value : undefined;
-    const { route, coder, reviewer, maxRounds } = await autoRoute(text, { classify: false, mode: selected, availability: recent });
-    return { mode: selected, coder, reviewer, maxRounds, route, askHaiku: classifyByRules(text).confidence < CONFIDENT };
+    const { enabled } = await requestChecks();
+    const availability: Availability = {};
+    for (const name of AGENT_NAMES) {
+      availability[name] = !enabled.has(name) ? evaluateAvailability(name, undefined, undefined, false)
+        : recent?.[name]?.enabled === false ? { usable: true } : (recent?.[name] ?? { usable: true });
+    }
+    const { route, coder, reviewer, maxRounds } = await autoRoute(text, { classify: false, mode: selected, availability });
+    return { mode: selected, coder, reviewer, maxRounds, route, askHaiku: enabled.has('claude') && classifyByRules(text).confidence < CONFIDENT };
   }
 
   /** Version and path of both CLIs, without the login check (cheap enough for page load). */
@@ -552,8 +577,12 @@ export class RunService {
   /** Check the agents not in `checks` yet (one check per agent per request) and report on `names`. */
   private async checked(names: AgentName[], cwd: string, skipAuthCheck: boolean | undefined, checks: Checks): Promise<PreflightReport> {
     const unique = [...new Set(names)];
-    await Promise.all(unique.filter((name) => !checks.has(name)).map(async (name) => checks.set(name, await this.checkAgent(name, cwd))));
-    return evaluatePreflight(unique.map((name) => checks.get(name)!), skipAuthCheck);
+    await Promise.all(unique.filter((name) => !checks.results.has(name)).map(async (name) => {
+      const check: AgentCheck = checks.enabled.has(name) ? await this.checkAgent(name, cwd)
+        : { agent: name, path: null, version: null, auth: 'skipped', error: `${agentLabel(name)} đã tắt trong cài đặt. Hãy bật lại để sử dụng.` };
+      checks.results.set(name, check);
+    }));
+    return evaluatePreflight(unique.map((name) => checks.results.get(name)!), skipAuthCheck);
   }
 
   /**
@@ -568,7 +597,7 @@ export class RunService {
     if (classifyByRules(prompt).confidence < CONFIDENT) {
       const all = await this.checked(['claude', 'codex'], cwd, skipAuthCheck, checks);
       // The classifier itself never runs on an unverified login (see assertPlanOnly), so require 'ok'.
-      if (all.ok && checks.get('claude')?.auth === 'ok') classify = this.options.classify ?? classifyWithHaiku;
+      if (all.ok && checks.results.get('claude')?.auth === 'ok') classify = this.options.classify ?? classifyWithHaiku;
     }
     return autoRoute(prompt, { mode, classify, signal, availability, images });
   }
@@ -578,7 +607,7 @@ export class RunService {
     await this.checked([...AGENT_NAMES], cwd, skipAuthCheck, checks);
     const usage = await getUsage(await this.list().catch(() => []), Date.now(), { live: false }).catch(() => undefined);
     const value: Availability = {};
-    for (const name of AGENT_NAMES) value[name] = evaluateAvailability(name, checks.get(name), usage?.[name]);
+    for (const name of AGENT_NAMES) value[name] = evaluateAvailability(name, checks.results.get(name), usage?.[name], checks.enabled.has(name));
     this.lastAvailability = { at: Date.now(), value };
     return value;
   }
@@ -671,15 +700,15 @@ export class RunService {
     const prompt = String(body?.prompt ?? '').trim() || (images.images.length ? IMAGE_ONLY_PROMPT : '');
     const valid = validateRequest(body, prompt);
     if (typeof valid === 'string') throw new ServiceError('invalid', valid);
-    const sel = await selectAgents(body, valid.mode);
+    const checks = await requestChecks(images.images.length > 0);
+    const sel = await selectAgents(body, valid.mode, checks.enabled);
     await this.requireGit(sel, valid.mode, valid.cwd);
 
     const id = newRunId();
     const lock = await this.lockFor(sel, valid.cwd, id);
     try {
-      const checks: Checks = new Map();
       const { cfg, routeUsage } = await this.configure(sel, valid.mode, prompt, valid.cwd, checks);
-      assertImagesSupported(images, sel.agents ?? agentsFor(cfg));
+      assertImagesSupported(images, agentsFor(cfg));
       await this.saveImages(id, undefined, images);
       if (images.images.length) cfg.images = images.images;
       const ctx = new RunContext(cfg, undefined, id);
@@ -710,16 +739,16 @@ export class RunService {
       const request = { ...inheritFollowUp(body, previous.config), mode: followMode(body), cwd: previous.config.cwd };
       const valid = validateRequest(request, nextPrompt);
       if (typeof valid === 'string') throw new ServiceError('invalid', valid);
-      const sel = await selectAgents(request, valid.mode);
+      const checks = await requestChecks(images.images.length > 0);
+      const sel = await selectAgents(request, valid.mode, checks.enabled);
       await this.requireGit(sel, valid.mode, valid.cwd);
 
       lock = await this.lockFor(sel, valid.cwd, id);
       // Read again under the lock: another process may have just finished writing this run.
       const run = await loadRun(id);
       if (!run) throw new ServiceError('not_found', 'not found');
-      const checks: Checks = new Map();
       const { cfg, routeUsage } = await this.configure(sel, valid.mode, nextPrompt, valid.cwd, checks);
-      assertImagesSupported(images, sel.agents ?? agentsFor(cfg));
+      assertImagesSupported(images, agentsFor(cfg));
       // Always present, so a routed follow-up drops the previous hand-picked agents (and the reverse).
       run.config = { ...run.config, ...cfg, agentChoice: cfg.agentChoice, route: cfg.route, prompt: run.config.prompt, cwd: run.config.cwd, images: run.config.images };
       const messageId = randomUUID();
@@ -752,7 +781,7 @@ export class RunService {
     ctx.followUp(implementationPrompt);
     if (cfg.agentChoice) {
       // Hand-picked agents stay: only a side that was not chosen falls back to the default Code pair.
-      const { coder, reviewer } = pairFor(cfg.agentChoice, 'code');
+      const { coder, reviewer } = pairFor(cfg.agentChoice, 'code', checks.enabled);
       Object.assign(ctx.run.config, { mode: 'code', coder, reviewer, maxRounds: 2 });
       ctx.note('Đã duyệt kế hoạch · bắt đầu Code', `Giữ agent đã chọn: ${agentLabel(coder)} viết code, ${agentLabel(reviewer)} review.`, 'info', 0);
     } else {

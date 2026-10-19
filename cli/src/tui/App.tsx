@@ -175,7 +175,7 @@ export function App(props: Readonly<AppProps>) {
   const problems = usePreflight(service, cwd, selection.selection.skipAuthCheck === true, !props.skipPreflight);
   const autoRouted = !selection.selection.role && !selection.selection.pipelineId && !selection.selection.overrides.agent && !selection.selection.overrides.reviewer;
   const shellRun = useShell(cwd, session.push, session.notice);
-  const route = useRoutePreview(service, draft, selection.selection.mode, autoRouted && session.phase === 'idle' && !shellMode);
+  const route = useRoutePreview(service, draft, selection.selection.mode, autoRouted && session.phase === 'idle' && !shellMode && !panel);
   useInterrupt({ phase: session.phase, shellRunning: shellRun.running, killShell: shellRun.kill, cancel: session.cancel, exit, notice: (t) => session.notice('warn', t) });
 
   const awaiting = session.phase === 'running' && !!(session.run?.planDecision || session.run?.pairDecision);

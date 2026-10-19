@@ -290,6 +290,8 @@ export type UsageReport = Record<AgentName, AgentUsage>;
 /* ---- Per-CLI manual configuration (kept in settings.json) ---- */
 
 export interface CliConfig {
+  /** Whether new requests may use this AI; omitted means enabled. */
+  enabled?: boolean;
   /** Absolute path to the CLI executable; empty = find it on PATH. */
   binPath?: string;
   /** Extra arguments appended to the CLI's own arguments. */

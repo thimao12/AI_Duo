@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { agentEnv } from './agents/billing.ts';
 import { resolveBin, type ResolvedBin } from './agents/bins.ts';
+import type { AgentName } from './agents/types.ts';
 import type { AgentUsage, UsageResetCredit, UsageWindow } from './types.ts';
 
 /** Live plan usage, straight from the account behind each CLI login. */
@@ -25,8 +26,8 @@ export interface LiveDeps {
   /** Bypass the 30 second cache. */
   force?: boolean;
   timeoutMs?: number;
-  spawn?: (command: string, args: string[], options: { env: NodeJS.ProcessEnv; stdio: ['pipe', 'pipe', 'ignore']; windowsHide: boolean }) => ChildProcess;
-  resolveBin?: (name: 'codex') => ResolvedBin;
+  spawn?: (command: string, args: string[], options: { env: NodeJS.ProcessEnv; stdio: any; windowsHide: boolean }) => ChildProcess;
+  resolveBin?: (name: AgentName) => ResolvedBin;
   fetch?: typeof fetch;
   readFile?: (file: string) => Promise<string>;
   /** Folder holding .credentials.json; defaults to CLAUDE_CONFIG_DIR or ~/.claude. */
@@ -299,3 +300,158 @@ async function loadClaude(deps: LiveDeps): Promise<LiveResult> {
 export function fetchClaudeLive(deps: LiveDeps = {}): Promise<LiveResult> {
   return cachedLive('claude', deps, () => loadClaude(deps));
 }
+
+/* ---- Antigravity: `agy -p /usage --output-format json` ---- */
+
+const AGY_USAGE_TIMEOUT_MS = 12_000;
+const AGY_AUTH_FAILURE = /not (logged|signed) in|unauthenticated|unauthori[sz]ed|\b401\b|(login|sign[- ]?in) (is )?required|please (log|sign) ?in|(credentials|token) (have |has )?expired/i;
+
+function parseAgyJson(text: string): Record<string, unknown> | undefined {
+  try {
+    const trimmed = text.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (isRecord(parsed)) return parsed;
+    }
+  } catch {
+    // try finding by line
+  }
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+      try {
+        const parsed: unknown = JSON.parse(trimmed);
+        if (isRecord(parsed)) return parsed;
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return undefined;
+}
+
+export function antigravityUsageFromOutput(output: string, now: number): AgentUsage | undefined {
+  const usage: AgentUsage = { source: 'live', live: true, updatedAt: new Date(now).toISOString() };
+  const parsed = parseAgyJson(output);
+
+  // 1. Prefer command.data.groups from --output-format json
+  if (parsed) {
+    const cmd = isRecord(parsed.command) ? parsed.command : undefined;
+    const data = isRecord(cmd?.data) ? cmd.data : undefined;
+    const groups = Array.isArray(data?.groups) ? data.groups : undefined;
+    if (groups && groups.length > 0) {
+      const gemini = groups.find((g) => isRecord(g) && typeof g.name === 'string' && /gemini/i.test(g.name));
+      const chosen = gemini ?? groups.find((g) => isRecord(g) && Array.isArray(g.buckets) && g.buckets.length > 0);
+      if (isRecord(chosen) && Array.isArray(chosen.buckets)) {
+        for (const bucket of chosen.buckets) {
+          if (!isRecord(bucket)) continue;
+          const rem = finite(bucket.remaining_fraction);
+          if (rem === undefined) continue;
+          const usedPercent = Math.max(0, Math.min(100, (1 - rem) * 100));
+          const resetIso = text(bucket.reset_time);
+          const resetsAtSeconds = resetIso ? Math.round(Date.parse(resetIso) / 1000) : undefined;
+          const window = text(bucket.window);
+          const id = text(bucket.id);
+          const name = text(bucket.name);
+          const is5h = window === '5h' || id?.includes('5h') || (name ? /(5|five)[- ]?hour/i.test(name) : false);
+          const isWeekly = window === 'weekly' || id?.includes('weekly') || (name ? /week/i.test(name) : false);
+          if (is5h) {
+            usage.fiveHour = buildWindow(usedPercent, resetsAtSeconds, FIVE_HOUR_MINUTES, now);
+          } else if (isWeekly) {
+            usage.weekly = buildWindow(usedPercent, resetsAtSeconds, WEEK_MINUTES, now);
+          }
+        }
+      }
+    }
+    if (usage.fiveHour || usage.weekly) return usage;
+  }
+
+  // 2. Fallback: Parse TSV lines (from parsed.response or raw output)
+  const textContent = (parsed && typeof parsed.response === 'string' ? parsed.response : output);
+  const lines = textContent.split(/\r?\n/);
+  for (const line of lines) {
+    const parts = line.split(/\t|\\t/);
+    if (parts.length >= 3) {
+      const groupName = parts[0]?.trim() ?? '';
+      const bucketName = parts[1]?.trim() ?? '';
+      const percentMatch = /(\d+(?:\.\d+)?)%/.exec(parts[2] ?? '');
+      const resetIso = parts[3]?.trim();
+      if (percentMatch) {
+        const remainingPercent = parseFloat(percentMatch[1]);
+        const usedPercent = Math.max(0, Math.min(100, 100 - remainingPercent));
+        const resetsAtSeconds = resetIso && !Number.isNaN(Date.parse(resetIso)) ? Math.round(Date.parse(resetIso) / 1000) : undefined;
+        const isGemini = /gemini/i.test(groupName);
+        if (/(5|five)[- ]?hour|5h/i.test(bucketName) && (!usage.fiveHour || isGemini)) {
+          usage.fiveHour = buildWindow(usedPercent, resetsAtSeconds, FIVE_HOUR_MINUTES, now);
+        } else if (/week/i.test(bucketName) && (!usage.weekly || isGemini)) {
+          usage.weekly = buildWindow(usedPercent, resetsAtSeconds, WEEK_MINUTES, now);
+        }
+      }
+    }
+  }
+
+  if (usage.fiveHour || usage.weekly) return usage;
+  return undefined;
+}
+
+async function loadAntigravity(deps: LiveDeps): Promise<LiveResult> {
+  let bin: ResolvedBin;
+  try {
+    bin = (deps.resolveBin ?? resolveBin)('antigravity');
+    if (bin.source === 'none') return { ok: false, error: 'unavailable' };
+  } catch {
+    return { ok: false, error: 'unavailable' };
+  }
+
+  const child = (deps.spawn ?? nodeSpawn)(bin.cmd, [...bin.prefixArgs, '-p', '/usage', '--output-format', 'json'], {
+    env: agentEnv(bin),
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+
+  const kill = () => {
+    try {
+      child.kill();
+    } catch {
+      // already gone
+    }
+  };
+
+  try {
+    const { stdout, stderr, code } = await withTimeout(
+      new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve, reject) => {
+        let stdout = '';
+        let stderr = '';
+        child.stdout?.on('data', (d: Buffer) => { stdout += d.toString('utf8'); });
+        child.stderr?.on('data', (d: Buffer) => { stderr += d.toString('utf8'); });
+        child.on('error', (err) => reject(err));
+        child.on('close', (code) => resolve({ stdout, stderr, code }));
+      }),
+      deps.timeoutMs ?? AGY_USAGE_TIMEOUT_MS,
+      kill,
+    );
+
+    const combined = `${stdout}\n${stderr}`;
+    if (code !== 0 && AGY_AUTH_FAILURE.test(combined)) {
+      return { ok: false, error: 'needsLogin' };
+    }
+
+    const usage = antigravityUsageFromOutput(stdout, (deps.now ?? Date.now)());
+    if (usage) return { ok: true, usage };
+
+    if (AGY_AUTH_FAILURE.test(combined)) {
+      return { ok: false, error: 'needsLogin' };
+    }
+    return { ok: false, error: 'unavailable' };
+  } catch {
+    return { ok: false, error: 'unavailable' };
+  } finally {
+    kill();
+  }
+}
+
+/** Ask `agy -p /usage --output-format json` for Antigravity's quota windows. Never throws. */
+export function fetchAntigravityLive(deps: LiveDeps = {}): Promise<LiveResult> {
+  return cachedLive('antigravity', deps, () => loadAntigravity(deps));
+}
+

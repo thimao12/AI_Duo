@@ -45,6 +45,7 @@ async function main() {
   execFileSync(gitBin, ['init', '-q'], { cwd: repo });
   await writeFile(path.join(repo, 'baseline.txt'), 'baseline\n');
   process.env.AI_DUO_DATA_DIR = dataDir;
+  process.env.AI_DUO_SETTINGS_FILE = path.join(temp, 'settings.json');
   process.env.AI_DUO_ALLOWED_ROOTS = JSON.stringify([temp]);
   // Nothing in this test may reach a real CLI (the router's Haiku call falls back to rules).
   process.env.CLAUDE_BIN = path.join(temp, 'missing-claude.exe');
@@ -60,6 +61,7 @@ async function main() {
     import('./run.ts'),
   ]);
   const { lockTarget, readLockOwner, unlockRepo } = lockModule;
+  const settings = await import('./settings.ts');
 
   const originals = { claude: { ...agents.claude }, codex: { ...agents.codex }, antigravity: { ...agents.antigravity } };
   let check: (agent: AgentName) => AgentCheck = (agent) => ({ agent, path: agent, version: 'fake 1.0', auth: 'ok' });
@@ -199,6 +201,53 @@ async function main() {
     classified.cancel();
     await classified.done;
 
+    // ---- A settings change from another process is read even after the sync cache was populated.
+    const onlyCodex = { claude: { enabled: false }, codex: {}, antigravity: { enabled: false } };
+    const allOff = { ...onlyCodex, codex: { enabled: false } };
+    execFileSync(process.execPath, ['-e', "require('node:fs').writeFileSync(process.argv[1], process.argv[2])", process.env.AI_DUO_SETTINGS_FILE!, JSON.stringify({ ...await settings.loadSettings(), cli: onlyCodex })]);
+    const preview = await service.previewRoute(UNCLEAR, 'plan');
+    assert.deepEqual([preview.coder, preview.reviewer, preview.askHaiku], ['codex', 'codex', false]);
+    assert.match(preview.route.reason, /đã tắt/);
+    calls.length = 0;
+    checksRun.length = 0;
+    script = approveAll;
+    const toggled = await (await service.start({ mode: 'code', prompt: UNCLEAR, cwd: repo })).done;
+    assert.equal(toggled.status, 'done', toggled.error);
+    assert.ok(calls.length > 0 && calls.every((c) => c.agent === 'codex'));
+    assert.deepEqual(checksRun, ['codex'], 'disabled agents are not checked while routing');
+    assert.equal(classifyCalls, 1, 'disabled Claude cannot be used as the classifier');
+    const manualCodex = await (await service.start({ mode: 'code', prompt: CODE, cwd: repo, coder: 'codex' })).done;
+    assert.equal(manualCodex.status, 'done', manualCodex.error);
+    assert.deepEqual([manualCodex.config.coder, manualCodex.config.reviewer], ['codex', 'codex'], 'an unspecified partner also respects disabled settings');
+    const reviewerOnly = await (await service.start({ mode: 'code', prompt: CODE, cwd: repo, reviewer: 'codex' })).done;
+    assert.deepEqual([reviewerOnly.config.coder, reviewerOnly.config.reviewer], ['codex', 'codex']);
+    const readOnly = await (await service.start({ mode: 'code', permission: 'read', prompt: CODE, cwd: plain })).done;
+    assert.equal(readOnly.config.coder, 'codex', 'an implicit read-only agent also respects disabled settings');
+    assert.ok(calls.every((c) => c.agent === 'codex'));
+    calls.length = 0;
+    await expectError(service.start({ mode: 'code', permission: 'read', prompt: CODE, cwd: repo, coder: 'claude', skipAuthCheck: true }), 'preflight', /Claude.*đã tắt/);
+    assert.equal(calls.length, 0, 'an explicit disabled agent never receives a turn');
+    assert.equal((await service.preflight(['claude'], repo)).ok, true, 'connection diagnostics still work for disabled agents');
+    check = (agent) => ({ agent, path: agent, version: 'fake', auth: 'failed', authError: `${agent} not logged in` });
+    await expectError(service.start({ mode: 'code', prompt: CODE, cwd: repo }), 'preflight', /codex not logged in/);
+    assert.equal(calls.length, 0, 'fallback cannot call a disabled agent when the enabled AI fails preflight');
+    check = (agent) => ({ agent, path: agent, version: 'fake 1.0', auth: 'ok' });
+    await settings.setCliSettings({});
+    const enabledAgain = await service.previewRoute('Refactor toàn bộ module auth, tách file và migrate sang kiến trúc mới', 'plan');
+    assert.equal(enabledAgain.coder, 'claude', 're-enabling clears cached disabled availability');
+
+    await settings.setCliSettings(allOff);
+    await expectError(service.previewRoute(CODE, 'code'), 'preflight', /Không có AI đang bật/);
+    await expectError(service.start({ mode: 'code', prompt: CODE, cwd: repo }), 'preflight', /Không có AI đang bật/);
+    assert.equal(existsSync(await lockFile(repo)), false);
+    await settings.setCliSettings({});
+
+    await settings.setCliSettings({ claude: { enabled: false }, codex: { enabled: false } });
+    const agyOnlyImage = { name: 'a.png', dataUrl: `data:image/png;base64,${Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex').toString('base64')}` };
+    await expectError(service.start({ mode: 'code', prompt: CODE, cwd: repo, images: [agyOnlyImage] }), 'preflight', /bật Claude hoặc Codex/);
+    assert.equal(calls.length, 0);
+    await settings.setCliSettings({});
+
     // ---- Plan outside Git: approval is flagged when offered, refused with a fix, and accepted after `git init`.
     script = approveAll;
     const late = path.join(temp, 'late repo');
@@ -228,6 +277,7 @@ async function main() {
     assert.ok(events.some((e) => e.type === 'message.end'));
     assert.ok(events.some((e) => e.type === 'run.update' && e.patch.planDecision));
     await expectError(service.start({ mode: 'code', prompt: CODE, cwd: path.join(repo, 'sub') }), 'conflict', /already active/);
+    await settings.setCliSettings(allOff);
     await plan.answerPlanDecision({ action: 'approve' });
     const implemented = await plan.done;
     assert.equal(implemented.status, 'done', implemented.error);
@@ -237,6 +287,8 @@ async function main() {
     assert.equal(existsSync(await lockFile(repo)), false, 'the lock is released after the run is saved');
     assert.equal((await loadRun(plan.id))?.status, 'done');
     assert.equal(active.has(plan.id), false);
+    await expectError(service.continue(plan.id, { prompt: CODE }), 'preflight', /Không có AI đang bật/);
+    await settings.setCliSettings({});
 
     // ---- Review limit: each decision grants 2 more rounds.
     calls.length = 0;

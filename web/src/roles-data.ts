@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, type PipelineDef, type RoleDef } from './api.ts';
 
-const CHANGED = 'ai-duo:settings-changed';
+export const SETTINGS_CHANGED = 'ai-duo:settings-changed';
 
-/** Tell every open composer/modal that roles or pipelines were saved. */
+/** Tell every open composer/modal that settings were saved. */
 export function notifySettingsChanged(): void {
-  window.dispatchEvent(new Event(CHANGED));
+  window.dispatchEvent(new Event(SETTINGS_CHANGED));
 }
 
 /** Roles and pipelines from the server; reloads whenever a modal saves. */
@@ -20,8 +20,8 @@ export function useSettingsData(): { roles: RoleDef[]; pipelines: PipelineDef[] 
 
   useEffect(() => {
     load();
-    window.addEventListener(CHANGED, load);
-    return () => window.removeEventListener(CHANGED, load);
+    window.addEventListener(SETTINGS_CHANGED, load);
+    return () => window.removeEventListener(SETTINGS_CHANGED, load);
   }, [load]);
 
   return { roles, pipelines };

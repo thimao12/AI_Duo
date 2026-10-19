@@ -107,8 +107,8 @@ function AgentCard({ name, usage, version }: Readonly<CardProps>) {
         {usage ? <Text color={tone(live ? 'green' : 'gray')}>{`  [${sourceLabel(usage)}]`}</Text> : null}
       </Box>
       {usage?.error ? <Notice error={usage.error} /> : null}
-      {usage?.fiveHour ? <BarRow label="5 giờ" window={usage.fiveHour} live={live} left={name === 'codex'} /> : null}
-      {usage?.weekly ? <BarRow label="Tuần" window={usage.weekly} live={live} left={name === 'codex'} /> : null}
+      {usage?.fiveHour ? <BarRow label="5 giờ" window={usage.fiveHour} live={live} left={name === 'codex' || name === 'antigravity'} /> : null}
+      {usage?.weekly ? <BarRow label="Tuần" window={usage.weekly} live={live} left={name === 'codex' || name === 'antigravity'} /> : null}
       {usage && !hasWindows ? <Text dimColor>{'  Chưa có dữ liệu quota.'}</Text> : null}
       {usage?.resetCredits ? <ResetCredits credits={usage.resetCredits} /> : null}
       {usage ? null : <Text dimColor>{'  Đang tải…'}</Text>}

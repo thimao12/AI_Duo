@@ -149,6 +149,11 @@ function CliCard(props: Readonly<CliCardProps>) {
   return (
     <fieldset className="min-w-0 space-y-3 rounded-xl border border-line bg-surface/40 p-4">
       <legend className="px-1.5 text-[13.5px] font-semibold text-fg">{AGENT_LABEL[name]}</legend>
+      <label className="flex items-center gap-2 text-[13px] text-fg">
+        <input type="checkbox" role="switch" checked={draft.enabled} onChange={(e) => onChange({ enabled: e.target.checked })} className="size-4" />
+        Sử dụng {AGENT_LABEL[name]} · {draft.enabled ? 'Bật' : 'Tắt'}
+      </label>
+      <p className="text-[11.5px] text-faint">Áp dụng sau khi Lưu, từ yêu cầu tiếp theo. Phiên đang chạy vẫn hoàn tất.</p>
       <CliCardHeader name={name} detect={detect} testing={testing} onTest={runTest} />
       {dirty && <p className="text-[11.5px] text-faint">Test dùng cấu hình đã lưu. Nhấn Lưu trước để áp dụng thay đổi.</p>}
       {result && <TestResult result={result} />}

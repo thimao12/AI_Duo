@@ -81,6 +81,19 @@ try {
   const base = { claude: {}, codex: {}, antigravity: {} };
   assert.deepEqual(cli.validateCliSettings(base), base);
   assert.deepEqual(cli.validateCliSettings({}), base, 'missing sections default to empty');
+  const { draftFromSettings, settingsFromDraft } = await import('../../web/src/cli-settings.ts');
+  const webDraft = draftFromSettings(base);
+  assert.ok(webDraft.claude.enabled && webDraft.codex.enabled && webDraft.antigravity.enabled);
+  webDraft.claude.enabled = false;
+  webDraft.claude.model = 'haiku';
+  const fromWeb = settingsFromDraft(webDraft).cli;
+  assert.deepEqual(fromWeb.claude, { enabled: false, defaultModel: 'haiku' });
+  assert.equal(draftFromSettings(fromWeb).claude.enabled, false);
+  webDraft.claude.enabled = true;
+  assert.deepEqual(settingsFromDraft(webDraft).cli.claude, { defaultModel: 'haiku' }, 're-enabling keeps the saved model');
+  assert.deepEqual(cli.validateCliSettings({ claude: { enabled: true } }), base, 'enabled is the backward-compatible default');
+  assert.deepEqual(cli.validateCliSettings({ claude: { enabled: false } }), { ...base, claude: { enabled: false } });
+  for (const enabled of ['false', 0, null, {}]) bad({ claude: { enabled } }, /claude\.enabled/);
   assert.deepEqual(cli.validateCliSettings({ claude: { binPath: '  ', extraArgs: [], env: {}, defaultModel: ' ' } }), base, 'empty values are dropped');
   bad(null, /đối tượng/);
   bad({ claude: { binPath: 'relative/claude' } }, /tuyệt đối/);
@@ -280,6 +293,13 @@ try {
   assert.equal((await put({ cli: { testCommand: 'x'.repeat(70 * 1024) } })).status, 413);
   assert.equal((await put({ cli: base }, { 'content-type': 'text/plain' })).status, 415);
   assert.equal((await put({ cli: base }, {})).status, 415);
+
+  const off = { ...base, claude: { enabled: false, defaultModel: 'haiku' } };
+  assert.deepEqual(await (await put({ cli: off })).json(), { cli: off });
+  assert.deepEqual(await (await app.request('/api/cli-settings')).json(), { cli: off });
+  assert.deepEqual(JSON.parse(await readFile(settingsPath, 'utf8')).cli, off);
+  assert.equal((await put({ cli: { claude: { enabled: 'false' } } })).status, 400);
+  assert.deepEqual(await settings.getCliSettings(), off, 'a rejected toggle does not change saved settings');
 
   /* ---- Defaults for runs ---- */
   await settings.setCliSettings({ claude: { defaultModel: 'opus', defaultEffort: 'high' }, codex: { defaultModel: 'gpt-x' }, turnTimeoutMin: 90, testCommand: 'npm run check' });

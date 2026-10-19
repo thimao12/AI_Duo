@@ -96,6 +96,7 @@ function envProblem(value: unknown, label: string): string | undefined {
 
 function cleanCli(input: Obj): CliConfig {
   const config: CliConfig = {};
+  if (input.enabled === false) config.enabled = false;
   const binPath = typeof input.binPath === 'string' ? input.binPath.trim() : '';
   if (binPath) config.binPath = binPath;
   if (Array.isArray(input.extraArgs) && input.extraArgs.length) config.extraArgs = [...input.extraArgs] as string[];
@@ -120,6 +121,7 @@ function cliProblem(input: unknown, label: string, checkFile: boolean): CliConfi
   if (input === undefined || input === null) return {};
   if (!isObj(input)) return `${label} phải là một đối tượng.`;
   const problem =
+    (input.enabled === undefined || typeof input.enabled === 'boolean' ? undefined : `${label}.enabled phải là true hoặc false.`) ??
     binProblem(input.binPath, label, checkFile) ??
     (input.extraArgs === undefined ? undefined : extraArgsProblem(input.extraArgs, `${label}.extraArgs`, label)) ??
     (input.env === undefined ? undefined : envProblem(input.env, `${label}.env`)) ??

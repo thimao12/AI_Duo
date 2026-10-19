@@ -7,7 +7,7 @@ import { getConnection, openLogin, parseClaudeStatus, parseCodexStatus } from '.
 import { usageRoutes } from './routes/usage.ts';
 import type { RunService } from './service.ts';
 import { getUsage } from './usage.ts';
-import { clearLiveCache, fetchClaudeLive, fetchCodexLive, type LiveDeps } from './usage-live.ts';
+import { clearLiveCache, fetchAntigravityLive, fetchClaudeLive, fetchCodexLive, type LiveDeps } from './usage-live.ts';
 
 const root = await mkdtemp(path.join(tmpdir(), 'ai-duo-usage-live-'));
 process.env.CODEX_HOME = path.join(root, 'no-codex-home');
@@ -57,6 +57,43 @@ readline.createInterface({ input: process.stdin }).on('line', (line) => {
 
 const codexDeps = (mode: string, extra: LiveDeps = {}): LiveDeps => ({ now: () => NOW, resolveBin: () => fakeBin(appServer, { MODE: mode }), timeoutMs: 4000, ...extra });
 
+// Fake `agy`: handles `['-p', '/usage', '--output-format', 'json']`
+const agyScript = path.join(root, 'agy.mjs');
+await writeFile(agyScript, String.raw`
+const args = process.argv.slice(2);
+const mode = process.env.MODE;
+if (args.includes('/usage')) {
+  if (mode === 'hang') {
+    setTimeout(() => {}, 10000);
+  } else if (mode === 'error') {
+    process.stderr.write('Error: Antigravity: Not logged in. Login is required.\n');
+    process.exit(1);
+  } else if (mode === 'tsv') {
+    process.stdout.write('Gemini Models\tWeekly Limit Remaining\t95%\t${new Date((nowSec + 86400) * 1000).toISOString()}\nGemini Models\tFive Hour Limit Remaining\t80%\t${new Date((nowSec + 3600) * 1000).toISOString()}\n');
+  } else {
+    process.stdout.write(JSON.stringify({
+      status: 'SUCCESS',
+      command: {
+        name: 'usage',
+        data: {
+          groups: [
+            {
+              name: 'Gemini Models',
+              buckets: [
+                { id: 'gemini-5h', window: '5h', remaining_fraction: 0.8, reset_time: '${new Date((nowSec + 3600) * 1000).toISOString()}' },
+                { id: 'gemini-weekly', window: 'weekly', remaining_fraction: 0.95, reset_time: '${new Date((nowSec + 86400) * 1000).toISOString()}' },
+              ]
+            }
+          ]
+        }
+      }
+    }) + '\n');
+  }
+}
+`);
+
+const agyDeps = (mode: string, extra: LiveDeps = {}): LiveDeps => ({ now: () => NOW, resolveBin: () => fakeBin(agyScript, { MODE: mode }), timeoutMs: 4000, ...extra });
+
 try {
   // ---- Codex live ----
   const ok = await fetchCodexLive(codexDeps('basic'));
@@ -94,6 +131,38 @@ try {
   assert.deepEqual(await fetchCodexLive(missing), { ok: false, error: 'unavailable' }, 'a process that exits early is unavailable');
   clearLiveCache();
   assert.deepEqual(await fetchCodexLive({ ...missing, resolveBin: () => ({ ...fakeBin('x'), cmd: path.join(root, 'no-such-binary') }) }), { ok: false, error: 'unavailable' });
+
+  // ---- Antigravity live ----
+  clearLiveCache();
+  const agyOk = await fetchAntigravityLive(agyDeps('basic'));
+  assert.ok(agyOk.ok);
+  if (agyOk.ok) {
+    assert.equal(agyOk.usage.live, true);
+    assert.equal(agyOk.usage.source, 'live');
+    assert.equal(agyOk.usage.fiveHour?.usedPercent, 20);
+    assert.equal(agyOk.usage.weekly?.usedPercent, 5);
+    assert.equal(agyOk.usage.fiveHour?.windowMinutes, 300);
+    assert.equal(agyOk.usage.weekly?.windowMinutes, 10080);
+    assert.equal(agyOk.usage.fiveHour?.resetsAt, new Date((nowSec + 3600) * 1000).toISOString());
+    assert.equal(agyOk.usage.weekly?.resetsAt, new Date((nowSec + 86400) * 1000).toISOString());
+  }
+
+  clearLiveCache();
+  const agyTsv = await fetchAntigravityLive(agyDeps('tsv'));
+  assert.ok(agyTsv.ok);
+  if (agyTsv.ok) {
+    assert.equal(agyTsv.usage.fiveHour?.usedPercent, 20);
+    assert.equal(agyTsv.usage.weekly?.usedPercent, 5);
+  }
+
+  clearLiveCache();
+  assert.deepEqual(await fetchAntigravityLive(agyDeps('error')), { ok: false, error: 'needsLogin' });
+
+  clearLiveCache();
+  assert.deepEqual(await fetchAntigravityLive(agyDeps('hang', { timeoutMs: 300 })), { ok: false, error: 'unavailable' });
+
+  clearLiveCache();
+  assert.deepEqual(await fetchAntigravityLive({ now: () => NOW, resolveBin: () => fakeBin(path.join(root, 'nope.mjs')), timeoutMs: 2000 }), { ok: false, error: 'unavailable' });
 
   // ---- Claude live ----
   const creds = (extra: Record<string, unknown> = {}) => JSON.stringify({ claudeAiOauth: { accessToken: TOKEN, expiresAt: NOW + 3_600_000, subscriptionType: 'max', ...extra } });
@@ -160,12 +229,23 @@ try {
 
   // ---- getUsage: live preferred, fallback flagged ----
   clearLiveCache();
-  const liveUsage = await getUsage(undefined, NOW, { deps: { ...claudeDeps(), ...codexDeps('basic') } });
+  const allLiveDeps: LiveDeps = {
+    ...claudeDeps(),
+    resolveBin: (name) => {
+      if (name === 'antigravity') return fakeBin(agyScript, { MODE: 'basic' });
+      return fakeBin(appServer, { MODE: 'basic' });
+    },
+  };
+  const liveUsage = await getUsage(undefined, NOW, { deps: allLiveDeps });
   assert.equal(liveUsage.claude.live, true);
   assert.equal(liveUsage.claude.source, 'live');
   assert.equal(liveUsage.codex.live, true);
   assert.equal(liveUsage.codex.plan, 'plus');
   assert.equal(liveUsage.codex.resetCredits?.availableCount, 1);
+  assert.equal(liveUsage.antigravity.live, true);
+  assert.equal(liveUsage.antigravity.source, 'live');
+  assert.equal(liveUsage.antigravity.fiveHour?.usedPercent, 20);
+  assert.equal(liveUsage.antigravity.weekly?.usedPercent, 5);
 
   clearLiveCache();
   const runs = [{ id: 'r', mode: 'code' as const, agent: 'claude' as const, prompt: '', cwd: '', status: 'done' as const, createdAt: 1000, claudeLimits: { seven_day: { utilization: 0.5, resetsAt: nowSec + 60 } } }];

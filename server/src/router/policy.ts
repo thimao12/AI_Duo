@@ -44,7 +44,7 @@ export interface DecideOptions {
  * - The coder is the first usable agent in the task's affinity order. The reviewer is its usual
  *   partner (Claude and Codex review each other) when usable, else the next usable agent; light work
  *   can use one agent for both roles, larger work reviews one tier lower. When no CLI is usable the
- *   plain affinity order applies and preflight reports the problem.
+ *   enabled agents' affinity order applies and preflight reports the problem.
  */
 export function decide(taskType: TaskType, complexity: Tier, catalog: Catalog, mode: Mode = 'code', { availability, images }: DecideOptions = {}): Decision {
   const pick = (agent: AgentName, tier: Tier): ModelChoice => ({ ...catalog[agent][tier], tier });
@@ -54,10 +54,10 @@ export function decide(taskType: TaskType, complexity: Tier, catalog: Catalog, m
     models[agent][role] = pick(agent, tier);
   };
 
-  const order = affinity(taskType, complexity);
-  const allowed = (agent: AgentName) => isUsable(availability, agent) && !(images && agent === 'antigravity');
-  // Nothing usable: keep the plain order, so the failure is reported by preflight, not hidden by the router.
-  const usable = order.filter(allowed);
+  const order = affinity(taskType, complexity).filter((agent) => availability?.[agent]?.enabled !== false && !(images && agent === 'antigravity'));
+  if (!order.length) throw new Error('Không có AI đang bật phù hợp. Hãy bật ít nhất một AI trong cài đặt.');
+  // Preflight reports failures of enabled agents; disabled ones are never fallback candidates.
+  const usable = order.filter((agent) => isUsable(availability, agent));
   const candidates = usable.length ? usable : order;
   const coder: AgentName = candidates[0];
   const partner = defaultPartner(coder);

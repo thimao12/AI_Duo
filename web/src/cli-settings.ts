@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type AgentName, type CliConfig, type CliSettings } from './api.ts';
+import { notifySettingsChanged } from './roles-data.ts';
 
 /** Text-field form of one CLI's settings. */
 export interface CliDraft {
+  enabled: boolean;
   binPath: string;
   /** One argument per line. */
   args: string;
@@ -20,7 +22,7 @@ export interface SettingsDraft {
   testCommand: string;
 }
 
-export const EMPTY_CLI_DRAFT: CliDraft = { binPath: '', args: '', env: '', model: '', effort: '' };
+export const EMPTY_CLI_DRAFT: CliDraft = { enabled: true, binPath: '', args: '', env: '', model: '', effort: '' };
 export const EMPTY_DRAFT: SettingsDraft = { claude: EMPTY_CLI_DRAFT, codex: EMPTY_CLI_DRAFT, antigravity: EMPTY_CLI_DRAFT, timeout: '', testCommand: '' };
 
 const ENV_KEY = /^[A-Za-z_]\w*$/;
@@ -55,6 +57,7 @@ function configFromDraft(d: CliDraft): { config: CliConfig; envErrors: string[] 
   const { env, errors } = parseEnv(d.env);
   const args = parseArgs(d.args);
   const config: CliConfig = {};
+  if (!d.enabled) config.enabled = false;
   if (d.binPath.trim()) config.binPath = d.binPath.trim();
   if (args.length) config.extraArgs = args;
   if (Object.keys(env).length) config.env = env;
@@ -92,6 +95,7 @@ export function settingsFromDraft(draft: SettingsDraft): DraftResult {
 
 function draftFromConfig(c: CliConfig | undefined): CliDraft {
   return {
+    enabled: c?.enabled !== false,
     binPath: c?.binPath ?? '',
     args: (c?.extraArgs ?? []).join('\n'),
     env: Object.entries(c?.env ?? {}).map(([k, v]) => `${k}=${v}`).join('\n'),
@@ -114,6 +118,7 @@ const canonical = (d: SettingsDraft) => JSON.stringify(settingsFromDraft(d).cli)
 
 /** Loads the CLI settings while `open`, tracks edits against the saved copy and saves them. */
 export function useCliSettings(open: boolean) {
+  const savedCli = useRef<CliSettings | undefined>(undefined);
   const [baseline, setBaseline] = useState<SettingsDraft>(EMPTY_DRAFT);
   const [draft, setDraft] = useState<SettingsDraft>(EMPTY_DRAFT);
   const [error, setError] = useState<string | null>(null);
@@ -121,6 +126,7 @@ export function useCliSettings(open: boolean) {
   const [revision, setRevision] = useState(0);
 
   const adopt = useCallback((cli: CliSettings) => {
+    savedCli.current = cli;
     const next = draftFromSettings(cli);
     setBaseline(next);
     setDraft(next);
@@ -139,9 +145,10 @@ export function useCliSettings(open: boolean) {
     setBusy(true);
     setError(null);
     try {
-      const saved = await api.saveCliSettings(result.cli);
+      const saved = await api.saveCliSettings({ ...savedCli.current, ...result.cli, turnTimeoutMin: result.cli.turnTimeoutMin, testCommand: result.cli.testCommand });
       adopt(saved.cli);
       setRevision((n) => n + 1);
+      notifySettingsChanged();
     } catch (err) {
       setError((err as Error).message);
     } finally {

@@ -125,6 +125,9 @@ try {
   const { evaluateAvailability, avoidedReasons, QUOTA_LIMIT_PERCENT } = availabilityModule;
   const ok = { agent: 'codex' as const, path: 'x', version: '1', auth: 'ok' as const };
   assert.deepEqual(evaluateAvailability('codex', ok, undefined), { usable: true });
+  const disabled = evaluateAvailability('codex', ok, undefined, false);
+  assert.equal(disabled.enabled, false);
+  assert.match(disabled.reason ?? '', /đã tắt/);
   assert.equal(evaluateAvailability('codex', { ...ok, error: 'not found' }, undefined).usable, false);
   assert.match(evaluateAvailability('codex', { ...ok, auth: 'failed' }, undefined).reason ?? '', /chưa đăng nhập/);
   assert.equal(evaluateAvailability('antigravity', { ...ok, agent: 'antigravity', auth: 'unknown' }, { source: 'unavailable' }).usable, true, 'an unreadable login does not block');
@@ -143,6 +146,14 @@ try {
   assert.deepEqual(coderOf(decide('edit', 'standard', cat, 'code', { availability: only('claude', 'antigravity') })), ['codex', 'codex'], 'one usable CLI reviews itself');
   assert.deepEqual(coderOf(decide('edit', 'standard', cat, 'code', { availability: only('claude', 'codex') })), ['antigravity', 'antigravity'], 'only Antigravity left');
   assert.deepEqual(coderOf(decide('edit', 'standard', cat, 'code', { availability: only('claude', 'codex', 'antigravity') })), ['codex', 'claude'], 'nothing usable: plain order, preflight reports it');
+  const disabledExceptCodex = {
+    claude: evaluateAvailability('claude', undefined, undefined, false),
+    antigravity: evaluateAvailability('antigravity', undefined, undefined, false),
+    codex: { usable: false, reason: 'not logged in' },
+  };
+  assert.deepEqual(coderOf(decide('refactor', 'heavy', cat, 'code', { availability: disabledExceptCodex })), ['codex', 'codex'], 'fallback never selects a disabled agent');
+  const allDisabled = { ...disabledExceptCodex, codex: disabled };
+  assert.throws(() => decide('edit', 'light', cat, 'code', { availability: allDisabled }), /Không có AI đang bật/);
   assert.deepEqual(coderOf(decide('edit', 'standard', cat, 'code', { availability: only('codex'), images: true })), ['claude', 'claude'], 'images exclude Antigravity');
   const agyReview = decide('edit', 'standard', cat, 'code', { availability: only('codex') });
   assert.equal(agyReview.models.antigravity?.reviewer?.model, cat.antigravity.light.model, 'the reviewer runs one tier below');
@@ -172,6 +183,8 @@ try {
   assert.equal(roleTier(role({ permission: 'read' }), 'heavy'), 'standard', 'a read-only answer never goes above standard');
   assert.equal(roleTier(role({ permission: 'edit' }), 'heavy'), 'heavy', 'an editing role follows the task');
   const own = resolveRole(role({}), base);
+  assert.equal(resolveRole(role({ agent: 'claude' }), { ...base, availability: disabledExceptCodex }).agent, 'codex', 'role fallback also excludes disabled agents');
+  assert.throws(() => resolveRole(role({}), { ...base, availability: allDisabled }), /Không có AI đang bật/);
   assert.deepEqual([own.agent, own.model, own.effort], ['codex', cat.codex.standard.model, 'medium']);
   assert.match(own.note ?? '', /R: model/);
   const moved = resolveRole(role({}), { ...base, availability: only('codex') });

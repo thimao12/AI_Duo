@@ -5,7 +5,7 @@ import ModelPicker from './ModelPicker.tsx';
 import { AGENT_LABEL, basename, MenuItem, MenuLabel, MODE_LABEL, Popover, Spinner, useInputFocus } from './ui.tsx';
 import { loadDraftImages, saveDraftImages, type DraftImage } from '../draft-images.ts';
 import { applyMode, buildRunRequest, currentModeId, modeChoices, normalizeForm, parseStoredForm, stepModeChoice, type ComposerForm as Form } from '../composer-form.ts';
-import { useSettingsData } from '../roles-data.ts';
+import { SETTINGS_CHANGED, useSettingsData } from '../roles-data.ts';
 import { ModeChips, PipelinePicker } from './ComposerRoles.tsx';
 import { PipelinesModal } from './PipelinesModal.tsx';
 import { RolesModal } from './RolesModal.tsx';
@@ -79,11 +79,20 @@ function useNewRunForm(onCreated: (id: string) => void, threadCwd?: string, thre
     const prompt = form.prompt.trim();
     // The router only decides for plain Code/Plan runs; a role, agent or pipeline is explicit.
     if (!prompt || form.mode === 'pipeline' || form.roleId || form.agent) return setPreview(null);
-    const ctl = new AbortController();
-    const t = setTimeout(() => api.previewRoute(prompt, form.mode, ctl.signal).then(setPreview, () => {}), 400);
+    let ctl: AbortController | undefined;
+    const refresh = () => {
+      ctl?.abort();
+      ctl = new AbortController();
+      const signal = ctl.signal;
+      setPreview(null);
+      void api.previewRoute(prompt, form.mode, signal).then((value) => { if (!signal.aborted) setPreview(value); }, () => {});
+    };
+    const t = setTimeout(refresh, 400);
+    window.addEventListener(SETTINGS_CHANGED, refresh);
     return () => {
       clearTimeout(t);
-      ctl.abort();
+      ctl?.abort();
+      window.removeEventListener(SETTINGS_CHANGED, refresh);
     };
   }, [form.mode, form.prompt, form.roleId, form.agent]);
 

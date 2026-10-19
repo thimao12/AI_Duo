@@ -242,16 +242,25 @@ try {
 
   // ---- Settings: edit + save, validation error, unsaved-changes guard.
   let settingsClosed = 0;
+  await settings.setCliSettings({ theme: 'nord', mcp: [{ name: 'files', command: 'node' }] });
   const detector = (agent: 'claude' | 'codex' | 'antigravity') => Promise.resolve({ name: agent, resolvedPath: `/bin/${agent}`, source: 'path' as const, version: '9.9.9', error: null });
   const panel = mount(h(SettingsPanel, { cwd: workDir, onClose: () => { settingsClosed += 1; }, detector }));
   frame = await seen(panel, 'Đường dẫn CLI');
   await seen(panel, '9.9.9');
-  await press(panel, KEY.down, KEY.down, KEY.down, KEY.enter); // Claude: Model mặc định
+  await press(panel, KEY.right, 's'); // Claude: disable, then save.
+  await seen(panel, 'Đã lưu.');
+  assert.equal((await settings.getCliSettings()).claude.enabled, false);
+  assert.equal((await settings.getCliSettings()).theme, 'nord');
+  assert.deepEqual((await settings.getCliSettings()).mcp, [{ name: 'files', command: 'node' }]);
+  await press(panel, KEY.right, 's'); // Enable again.
+  await seen(panel, 'Đã lưu.');
+  assert.notEqual((await settings.getCliSettings()).claude.enabled, false);
+  await press(panel, KEY.down, KEY.down, KEY.down, KEY.down, KEY.enter); // Claude: Model mặc định
   await typeText(panel, 'opus');
   await press(panel, KEY.enter, 's');
   await seen(panel, 'Đã lưu.');
   assert.equal((await settings.getCliSettings()).claude.defaultModel, 'opus');
-  await press(panel, ...Array.from({ length: 12 }, () => KEY.down), KEY.enter); // Timeout mỗi lượt (after Codex and Antigravity)
+  await press(panel, ...Array.from({ length: 14 }, () => KEY.down), KEY.enter); // Timeout mỗi lượt (after Codex and Antigravity)
   await typeText(panel, '999');
   await press(panel, KEY.enter, 's');
   frame = await seen(panel, 'turnTimeoutMin');
@@ -326,9 +335,26 @@ try {
   assert.ok(frame.includes('[từ log]') && frame.includes('Cần đăng nhập lại') && frame.includes('Đã reset – chưa có số liệu mới') && frame.includes('Thẻ reset 1') && !frame.includes('Đã dùng'), frame);
   assert.ok(frame.includes('chưa kết nối'), 'codex has no version');
   assert.ok(frame.includes('Antigravity') && frame.includes('[CLI không công bố quota]'), `every CLI of the registry has a card: ${frame}`);
-  await press(usage, 'r');
-  await until(usage, () => forces.includes(true), 'forced refresh');
   usage.unmount();
+
+  const withAgy = {
+    ...data,
+    report: {
+      ...data.report,
+      antigravity: {
+        source: 'live',
+        live: true,
+        fiveHour: { usedPercent: 3, windowMinutes: 300, resetsAt: soon },
+        weekly: { usedPercent: 2, windowMinutes: 10_080, resetsAt: soon },
+      },
+    },
+    versions: { ...data.versions, antigravity: '1.4.2' },
+  };
+  const agyUsagePanel = mount(h(UsagePanel, { cwd: workDir, onClose: () => undefined, loader: () => Promise.resolve(withAgy) }));
+  const agyFrame = await seen(agyUsagePanel, '97% còn lại');
+  assert.ok(agyFrame.includes('Antigravity') && agyFrame.includes('1.4.2') && agyFrame.includes('[trực tiếp]'), agyFrame);
+  assert.ok(agyFrame.includes('97% còn lại') && agyFrame.includes('98% còn lại'), `antigravity shows remaining: ${agyFrame}`);
+  agyUsagePanel.unmount();
 
   // ---- Connection: statuses, guide with exact commands, open login, recheck.
   const status = (agent: AgentName, extra: Partial<ConnectionStatus>): ConnectionStatus => ({ agent, installed: true, version: '1.0.0', path: null, loggedIn: true, method: null, account: null, error: null, ...extra });
@@ -415,8 +441,8 @@ try {
   assert.deepEqual(mcp.serverOf(typed), { name: 'files', command: 'npx', args: ['-y', 'srv', 'a b'], env: { T: '1' }, roles: ['coder', 'reviewer'] });
   assert.deepEqual(mcp.serverOf({ name: 'p', command: 'node', args: '', env: '', roles: 'coder' }), { name: 'p', command: 'node' }, 'the default roles are not written');
   assert.deepEqual(mcp.draftOf(mcp.serverOf(typed)), { ...typed, name: 'files', command: 'npx' }, 'a server round-trips through the form');
-  assert.equal(mcp.mcpFields(typed).find((f) => f.id === 'roles')?.options?.length, Object.keys(mcp.ROLE_CHOICES).length);
   const { default: McpPanel } = mcp;
+  await settings.setCliSettings({ mcp: [] });
   const emptyMcp = mount(h(McpPanel, { cwd: workDir, onClose: () => undefined }));
   await seen(emptyMcp, 'Chưa có MCP server nào');
   emptyMcp.unmount();

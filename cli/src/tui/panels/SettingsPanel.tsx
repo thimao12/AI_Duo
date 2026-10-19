@@ -28,6 +28,7 @@ export function toValues(cli: CliSettings): SettingsValues {
   };
   for (const agent of AGENTS) {
     const config = cli[agent];
+    values[`${agent}.enabled`] = String(config.enabled !== false);
     values[`${agent}.binPath`] = config.binPath ?? '';
     values[`${agent}.extraArgs`] = (config.extraArgs ?? []).join(', ');
     values[`${agent}.env`] = Object.entries(config.env ?? {}).map(([key, value]) => `${key}=${value}`).join('\n');
@@ -55,6 +56,7 @@ export function toInput(values: SettingsValues): { cli: Record<string, unknown> 
     const env = parseEnv(values[`${agent}.env`] ?? '');
     if (typeof env === 'string') return `${LABEL[agent]}: ${env}`;
     cli[agent] = {
+      enabled: values[`${agent}.enabled`] !== 'false',
       binPath: values[`${agent}.binPath`].trim(),
       extraArgs: splitList(values[`${agent}.extraArgs`]),
       env,
@@ -71,7 +73,8 @@ export function toInput(values: SettingsValues): { cli: Record<string, unknown> 
 function agentFields(agent: Agent, values: SettingsValues, models: string): FormField[] {
   const at = (name: string) => values[`${agent}.${name}`] ?? '';
   return [
-    { id: `${agent}.binPath`, label: 'Đường dẫn CLI', kind: 'text', value: at('binPath'), placeholder: 'tự tìm trên PATH', section: LABEL[agent], hint: 'Đường dẫn tuyệt đối tới file chạy được; để trống = tự tìm.' },
+    { id: `${agent}.enabled`, label: 'Sử dụng AI', kind: 'cycle', value: at('enabled'), options: ['true', 'false'], optionLabels: ['Bật', 'Tắt'], section: LABEL[agent], hint: 'Lưu để áp dụng từ yêu cầu tiếp theo; phiên đang chạy vẫn hoàn tất.' },
+    { id: `${agent}.binPath`, label: 'Đường dẫn CLI', kind: 'text', value: at('binPath'), placeholder: 'tự tìm trên PATH', hint: 'Đường dẫn tuyệt đối tới file chạy được; để trống = tự tìm.' },
     { id: `${agent}.extraArgs`, label: 'Tham số thêm', kind: 'text', value: at('extraArgs'), placeholder: 'không có', hint: 'Cách nhau bằng dấu phẩy.' },
     { id: `${agent}.env`, label: 'Biến môi trường', kind: 'multiline', value: at('env'), placeholder: 'không có', hint: 'Mỗi dòng một KEY=VALUE.' },
     { id: `${agent}.defaultModel`, label: 'Model mặc định', kind: 'text', value: at('defaultModel'), placeholder: 'theo CLI', hint: `Gợi ý: ${models || 'không có'}` },
@@ -147,7 +150,7 @@ function SettingsEditor({ initial, detector, onClose }: Readonly<EditorProps>) {
       return;
     }
     try {
-      const saved = await setCliSettings(input.cli);
+      const saved = await setCliSettings({ ...await getCliSettings(), ...input.cli, turnTimeoutMin: input.cli.turnTimeoutMin });
       if (typeof saved === 'string') {
         setError(saved);
         return;

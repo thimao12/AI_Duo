@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { RunSummary } from './store.ts';
 import { AGENT_NAMES, type AgentName } from './agents/index.ts';
 import type { AgentUsage, UsageReport } from './types.ts';
-import { buildWindow, fetchClaudeLive, fetchCodexLive, FIVE_HOUR_MINUTES, WEEK_MINUTES, type LiveDeps, type LiveResult } from './usage-live.ts';
+import { buildWindow, fetchAntigravityLive, fetchClaudeLive, fetchCodexLive, FIVE_HOUR_MINUTES, WEEK_MINUTES, type LiveDeps, type LiveResult } from './usage-live.ts';
 
 export type { AgentUsage, UsageReport, UsageWindow } from './types.ts';
 
@@ -147,7 +147,7 @@ interface UsageContext {
   deps: LiveDeps;
 }
 
-/** Where each agent's numbers come from. An agent missing here (agy, a CLI added later) reports `unavailable`. */
+/** Where each agent's numbers come from. An agent missing here (a CLI added later) reports `unavailable`. */
 const SOURCES: Partial<Record<AgentName, (ctx: UsageContext) => Promise<AgentUsage>>> = {
   claude: async ({ runs, now, live, deps }) => {
     const disk = claudeUsage(runs, now);
@@ -156,6 +156,10 @@ const SOURCES: Partial<Record<AgentName, (ctx: UsageContext) => Promise<AgentUsa
   codex: async ({ now, live, deps }) => {
     const [disk, liveResult] = await Promise.all([codexUsage(now), live ? fetchCodexLive(deps) : undefined]);
     return liveResult ? withLive(disk, liveResult) : disk;
+  },
+  antigravity: async ({ live, deps }) => {
+    const disk: AgentUsage = { source: 'unavailable' };
+    return live ? withLive(disk, await fetchAntigravityLive(deps)) : disk;
   },
 };
 

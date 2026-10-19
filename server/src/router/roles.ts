@@ -47,7 +47,10 @@ export interface ResolvedRole extends RoleRoute {
  */
 export function resolveRole(role: RoleDef, o: RoleRouteOptions): ResolvedRole {
   const allowed = (agent: AgentName) => isUsable(o.availability, agent) && !(o.images && agent === 'antigravity');
-  const agent = o.agent ?? (allowed(role.agent) ? role.agent : (affinity(o.taskType, o.complexity).find(allowed) ?? role.agent));
+  const order = affinity(o.taskType, o.complexity).filter((agent) => o.availability?.[agent]?.enabled !== false && !(o.images && agent === 'antigravity'));
+  const fallback = order.includes(role.agent) ? role.agent : order[0];
+  const agent = o.agent ?? (allowed(role.agent) ? role.agent : (order.find(allowed) ?? fallback));
+  if (!agent) throw new Error('Không có AI đang bật phù hợp. Hãy bật ít nhất một AI trong cài đặt.');
   const moved = agent !== role.agent;
   const tier = roleTier(role, o.complexity);
   const picked = o.catalog[agent][tier];

@@ -178,8 +178,8 @@ function UsageBars({ name, usage }: Readonly<{ name: AgentName; usage: AgentUsag
       {usage.error && <UsageNotice name={name} error={usage.error} />}
       {hasWindows ? (
         <div className="space-y-2.5">
-          {usage.fiveHour && <UsageBar label="5 giờ" window={usage.fiveHour} live={live} left={name === 'codex'} />}
-          {usage.weekly && <UsageBar label="Tuần" window={usage.weekly} live={live} left={name === 'codex'} />}
+          {usage.fiveHour && <UsageBar label="5 giờ" window={usage.fiveHour} live={live} left={name === 'codex' || name === 'antigravity'} />}
+          {usage.weekly && <UsageBar label="Tuần" window={usage.weekly} live={live} left={name === 'codex' || name === 'antigravity'} />}
         </div>
       ) : (
         <p className="text-[11.5px] leading-snug text-faint">Chưa có dữ liệu quota.</p>
