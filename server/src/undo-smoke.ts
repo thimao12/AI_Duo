@@ -97,12 +97,55 @@ try {
   await assert.rejects(undoSince(repo, 'not-a-tree', after), /Invalid Git tree ID/);
   await assert.rejects(undoSince(temp, base, after), /Git repository/);
 
-  // Service level: unknown run.
+  // Service level: unknown run, a run without checkpoints, then commit and undo of saved runs.
   const { RunService, ServiceError } = await import('./service.ts');
+  const { saveRun } = await import('./store.ts');
   const service = new RunService({ app: 'cli' });
   await assert.rejects(service.undo('missing'), (e) => e instanceof ServiceError && e.code === 'not_found');
+  await assert.rejects(service.commit('missing'), (e) => e instanceof ServiceError && e.code === 'not_found');
 
-  console.log('PASS undo: edit, create, delete, binary, kept work, repeat, conflict, service errors');
+  const savedRun = async (id: string, trees?: { baseTree: string; afterTree: string }) => {
+    await saveRun({
+      id,
+      title: 'Fix the footer',
+      config: { mode: 'code', prompt: 'Fix the footer\nplease', cwd: repo, maxRounds: 2, judge: 'claude', coder: 'claude', turnTimeoutMin: 30 },
+      status: 'done',
+      createdAt: Date.now(),
+      messages: [],
+      ...trees,
+    });
+  };
+  await savedRun('plain-run');
+  await assert.rejects(service.undo('plain-run'), /không có điểm khôi phục/);
+  await assert.rejects(service.commit('plain-run'), /không có thay đổi file/);
+
+  await write('a.txt', 'one\ntwo\nthree\n');
+  await write('made.txt', '');
+  git('add', '-A');
+  git('commit', '-qm', 'clean slate');
+  const start = await snapshotTree(repo);
+  await write('a.txt', 'one\nSERVICE\nthree\n');
+  await write('svc.txt', 'new\n');
+  const end = await snapshotTree(repo);
+  await savedRun('commit-run', { baseTree: start, afterTree: end });
+  assert.equal(await service.commitMessage('commit-run'), 'Fix the footer');
+  const committed = await service.commit('commit-run');
+  assert.deepEqual([committed.message, committed.files.sort()], ['Fix the footer', ['a.txt', 'svc.txt']]);
+  assert.equal((await service.get('commit-run'))?.commit, committed.commit, 'the commit is remembered on the run');
+  await assert.rejects(service.commit('commit-run'), /đã được commit/);
+
+  await write('a.txt', 'one\nSERVICE2\nthree\n');
+  const start2 = await snapshotTree(repo);
+  await write('a.txt', 'one\nAGAIN\nthree\n');
+  await savedRun('undo-run', { baseTree: start2, afterTree: await snapshotTree(repo) });
+  const undone = await service.undo('undo-run');
+  assert.deepEqual(undone, { files: ['a.txt'], reverted: true });
+  assert.equal(await read('a.txt'), 'one\nSERVICE2\nthree\n');
+  assert.ok((await service.get('undo-run'))?.undoneAt);
+  await assert.rejects(service.undo('undo-run'), /đã được hoàn tác/);
+  await assert.rejects(service.commit('undo-run'), /đã được hoàn tác/);
+
+  console.log('PASS undo: edit, create, delete, binary, kept work, commit, repeat, conflict, service');
 } finally {
   await rm(temp, { recursive: true, force: true });
 }

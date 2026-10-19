@@ -96,6 +96,9 @@ export const api = {
   list: () => fetch('/api/runs').then((r) => json<RunSummary[]>(r)),
   rename: (id: string, title: string) => fetch(`/api/runs/${id}`, { method: 'PATCH', headers: JSON_HEADERS, body: JSON.stringify({ title }) }).then((r) => json<{ title: string }>(r)),
   delete: (id: string) => fetch(`/api/runs/${id}`, { method: 'DELETE' }).then((r) => json<{ ok: boolean }>(r)),
+  undoRun: (id: string) => fetch(`/api/runs/${id}/undo`, { method: 'POST', headers: JSON_HEADERS, body: '{}' }).then((r) => json<{ files: string[]; reverted: boolean }>(r)),
+  commitRun: (id: string, message?: string) =>
+    fetch(`/api/runs/${id}/commit`, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ message }) }).then((r) => json<{ commit: string; files: string[]; message: string }>(r)),
   getRun: async (id: string) => {
     const res = await fetch(`/api/runs/${id}`, { cache: 'no-store' });
     if (res.status === 404) return null;

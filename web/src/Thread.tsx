@@ -502,7 +502,7 @@ export default function Thread({ id, title, projects, onCreated, onMenu, sidebar
           {explorerOpen ? (
             <ExplorerPanel cwd={run.config.cwd} onClose={() => setExplorerOpen(false)} tabs={<PanelTabs active="explorer" changesAvailable={run.diff !== undefined} onSelect={selectTab} />} />
           ) : (
-            <ChangesPanel files={files} diff={run.diff ?? ''} onClose={() => setPanelOpen(false)} tabs={<PanelTabs active="changes" changesAvailable onSelect={selectTab} />} />
+            <ChangesPanel files={files} diff={run.diff ?? ''} run={run} onChanged={() => setRevision((n) => n + 1)} onClose={() => setPanelOpen(false)} tabs={<PanelTabs active="changes" changesAvailable onSelect={selectTab} />} />
           )}
         </div>
       )}
