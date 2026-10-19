@@ -11,14 +11,17 @@ const temp = await mkdtemp(path.join(tmpdir(), 'ai duo hooks smoke '));
 process.env.AI_DUO_SETTINGS_FILE = path.join(temp, 'settings.json');
 process.env.AI_DUO_DATA_DIR = path.join(temp, 'runs');
 try {
-  const [{ validateCliSettings }, settings, { runHook }] = await Promise.all([import('./cli-settings.ts'), import('./settings.ts'), import('./hooks.ts')]);
+  const [{ validateCliSettings }, settings, { runHook, editedFiles }] = await Promise.all([import('./cli-settings.ts'), import('./settings.ts'), import('./hooks.ts')]);
   const bad = (input: unknown, pattern: RegExp) => {
     const result = validateCliSettings(input);
     assert.equal(typeof result, 'string');
     assert.match(result as string, pattern);
   };
   bad({ hooks: 'x' }, /đối tượng/);
-  bad({ hooks: { afterEdit: 'x' } }, /không hợp lệ/);
+  bad({ hooks: { afterSave: 'x' } }, /không hợp lệ/);
+  bad({ hooksBlock: 'yes' }, /hooksBlock/);
+  assert.equal((validateCliSettings({ hooks: { afterEdit: 'npm run format' }, hooksBlock: true }) as { hooksBlock?: boolean }).hooksBlock, true);
+  assert.equal((validateCliSettings({ hooksBlock: false }) as { hooksBlock?: boolean }).hooksBlock, undefined);
   bad({ hooks: { beforeTurn: 1 } }, /chuỗi/);
   bad({ hooks: { beforeTurn: 'x'.repeat(501) } }, /tối đa 500/);
   assert.deepEqual((validateCliSettings({ hooks: { beforeTurn: ' echo hi ', afterTurn: '  ' } }) as { hooks: unknown }).hooks, { beforeTurn: 'echo hi' });
@@ -43,6 +46,16 @@ try {
   const after = await runHook('afterTurn', temp, {});
   assert.equal(after?.ok, false);
   assert.match(after?.output ?? '', /boom/);
+
+  // afterEdit waits for a file edit: Claude's Edit family, Codex's file changes, or an edit record.
+  const tool = (content: string, edit?: unknown) => ({ kind: 'tool', content, ...(edit ? { edit } : {}) });
+  assert.equal(editedFiles([tool('Edit: a.ts'), { kind: 'text', content: 'x' }]), true);
+  assert.equal(editedFiles([tool('MultiEdit: a.ts')]), true);
+  assert.equal(editedFiles([tool('Write: a.ts')]), true);
+  assert.equal(editedFiles([tool('Edit files:\nupdate a.ts')]), true);
+  assert.equal(editedFiles([tool('Bash: ls', { path: 'a' })]), true);
+  assert.equal(editedFiles([tool('Read: a.ts'), tool('Bash: npm test'), tool('Editor: x')]), false);
+  assert.equal(editedFiles([]), false);
 
   console.log('PASS hooks: validation, cwd and variables, failure output');
 } finally {

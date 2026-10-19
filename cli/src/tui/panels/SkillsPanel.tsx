@@ -40,7 +40,7 @@ export default function SkillsPanel({ cwd, onClose }: Readonly<PanelProps>) {
           emptyText={loaded.loading ? 'Đang tải…' : 'Chưa có skill hay lệnh nào.'}
           maxHeight={10}
         />
-        <Text dimColor>Skill: thư mục có SKILL.md trong .claude/skills, .agents/skills (dự án hoặc ~). Lệnh: file .md trong .ai-duo/commands, dùng $ARGUMENTS cho phần gõ thêm.</Text>
+        <Text dimColor>Skill: thư mục có SKILL.md trong .claude/skills, .agents/skills (dự án hoặc ~); gõ $tên trong tin nhắn để đính kèm cho mọi agent. Lệnh: file .md trong .ai-duo/commands, dùng $ARGUMENTS cho phần gõ thêm.</Text>
       </Box>
     </Panel>
   );

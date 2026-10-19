@@ -43,7 +43,18 @@ try {
   assert.equal(expandCommand(commands[0], 'now'), 'Fix the bug\n\nnow');
   assert.equal(expandCommand(commands[0], ''), 'Fix the bug');
 
-  console.log('PASS extensions: front matter, skills, custom commands, precedence');
+  // $skill mentions attach the skill's instructions; other $words are left alone.
+  const { expandSkills } = await import('./extensions.ts');
+  const prompt = 'Ship it with $deploy now, costs $5 and $HOME, again $deploy';
+  const withSkill = expandSkills(prompt, project, home);
+  assert.ok(withSkill.startsWith(`${prompt}\n\nSkills named with $`), withSkill);
+  assert.ok(withSkill.endsWith('### Skill deploy\nSteps'), withSkill);
+  assert.equal((withSkill.match(/### Skill/g) ?? []).length, 1, 'a repeated mention is attached once');
+  assert.equal(expandSkills('costs $5 and $HOME', project, home), 'costs $5 and $HOME');
+  assert.equal(expandSkills('no dollar', project, home), 'no dollar');
+  assert.equal(expandSkills('$deploy', path.join(temp, 'missing'), path.join(temp, 'nohome')), '$deploy', 'no skills found: unchanged');
+
+  console.log('PASS extensions: front matter, skills, custom commands, precedence, $skill mentions');
 } finally {
   await rm(temp, { recursive: true, force: true });
 }

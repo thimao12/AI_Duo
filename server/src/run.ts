@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { agentLabel, agents, type AgentName, type Role, type Usage } from './agents/index.ts';
 import { AbortedError } from './agents/process.ts';
-import { runHook } from './hooks.ts';
+import { editedFiles, runHook } from './hooks.ts';
+import { getCliSettingsSync } from './settings.ts';
+import { expandSkills } from './extensions.ts';
 import { expandMentions, projectContext } from './mentions.ts';
 import { saveRun } from './store.ts';
 import { paths } from './paths.ts';
@@ -84,7 +86,8 @@ export class RunContext {
   get prompt() {
     const typed = [...this.run.messages].reverse().find((m) => m.agent === 'user')?.parts[0]?.content ?? this.run.config.prompt;
     // @file mentions travel to the agents with the file's text; the thread keeps what the user typed.
-    return expandMentions(typed, authorizeDirectory(this.run.config.cwd));
+    const cwd = authorizeDirectory(this.run.config.cwd);
+    return expandSkills(expandMentions(typed, cwd), cwd);
   }
 
   followUp(prompt: string, images: NonNullable<Message['images']> = [], messageId = randomUUID()) {
@@ -252,6 +255,7 @@ export class RunContext {
       const verdict = await t.parseVerdict?.(res.finalText);
       this.endMessage(m, 'done', verdict, res.usage);
       await this.hook('afterTurn', t);
+      if (editedFiles(m.parts)) await this.hook('afterEdit', t);
       return { text: res.finalText, verdict };
     } catch (err) {
       this.failTurn(m, err);
@@ -265,10 +269,13 @@ export class RunContext {
     return context ? [context, '---', prompt].join('\n\n') : prompt;
   }
 
-  /** A failing hook is reported in the thread and never stops the turn. */
+  /** A failing hook is reported in the thread; only a failing beforeTurn hook with `hooksBlock` stops the turn. */
   private async hook(name: HookName, t: TurnOptions) {
     const result = await runHook(name, authorizeDirectory(this.run.config.cwd), { agent: t.agent, role: t.role, phase: t.phase, run: this.run.id }, this.abort.signal);
-    if (result && !result.ok) this.note(`Hook ${name} lỗi`, result.output || 'Lệnh kết thúc với mã lỗi.');
+    if (!result || result.ok) return;
+    const detail = result.output || 'Lệnh kết thúc với mã lỗi.';
+    this.note(`Hook ${name} lỗi`, detail);
+    if (name === 'beforeTurn' && getCliSettingsSync().hooksBlock) throw new Error(`Hook beforeTurn lỗi nên lượt bị chặn: ${detail}`);
   }
 
   private imagePaths(): string[] | undefined {

@@ -160,7 +160,7 @@ function mcpProblem(value: unknown): McpServer[] | string {
   return servers;
 }
 
-const HOOK_NAMES: readonly HookName[] = ['beforeTurn', 'afterTurn'];
+const HOOK_NAMES: readonly HookName[] = ['beforeTurn', 'afterTurn', 'afterEdit'];
 
 function hooksProblem(value: unknown): Partial<Record<HookName, string>> | string {
   if (value === undefined || value === null) return {};
@@ -198,6 +198,7 @@ export function validateCliSettings(input: unknown, checkFile = true): CliSettin
   const problem = timeoutProblem(input.turnTimeoutMin) ?? testCommandProblem(input.testCommand);
   if (problem) return problem;
   if (input.theme !== undefined && input.theme !== null && (typeof input.theme !== 'string' || (input.theme !== '' && !THEME_ID.test(input.theme)))) return 'theme phải là mã dạng tokyo-night (chữ thường, số, gạch ngang).';
+  if (input.hooksBlock !== undefined && input.hooksBlock !== null && typeof input.hooksBlock !== 'boolean') return 'hooksBlock phải là true hoặc false.';
   const hooks = hooksProblem(input.hooks);
   if (typeof hooks === 'string') return hooks;
   const mcp = mcpProblem(input.mcp);
@@ -206,6 +207,7 @@ export function validateCliSettings(input: unknown, checkFile = true): CliSettin
   if (typeof input.theme === 'string' && input.theme) settings.theme = input.theme;
   if (mcp.length) settings.mcp = mcp;
   if (Object.keys(hooks).length) settings.hooks = hooks;
+  if (input.hooksBlock === true) settings.hooksBlock = true;
   if (typeof input.turnTimeoutMin === 'number') settings.turnTimeoutMin = input.turnTimeoutMin;
   const testCommand = typeof input.testCommand === 'string' ? input.testCommand.trim() : '';
   if (testCommand) settings.testCommand = testCommand;

@@ -25,3 +25,10 @@ export function runHook(name: HookName, cwd: string, context: Record<string, str
     });
   });
 }
+
+/** Tool calls that write files: Claude's Edit family and Write, Codex's file changes. */
+const EDIT_TOOL = /^(Edit|MultiEdit|Write|NotebookEdit|Edit files)\b/;
+
+/** Whether a turn's parts contain a file edit (what the afterEdit hook waits for). */
+export const editedFiles = (parts: readonly { kind: string; content: string; edit?: unknown }[]): boolean =>
+  parts.some((p) => p.kind === 'tool' && (p.edit !== undefined || EDIT_TOOL.test(p.content)));

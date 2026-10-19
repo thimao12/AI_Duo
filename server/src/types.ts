@@ -302,7 +302,8 @@ export interface CliConfig {
   defaultEffort?: string;
 }
 
-export type HookName = 'beforeTurn' | 'afterTurn';
+/** afterEdit runs after a turn in which the agent edited files. */
+export type HookName = 'beforeTurn' | 'afterTurn' | 'afterEdit';
 
 /** An MCP server AI Duo hands to the agent CLIs (stdio transport). */
 export interface McpServer {
@@ -326,6 +327,8 @@ export interface CliSettings {
   theme?: string;
   /** Shell commands run in the project folder around every agent turn; a failure is noted in the thread. */
   hooks?: Partial<Record<HookName, string>>;
+  /** A failing beforeTurn hook stops the turn (and the run) instead of only being noted. */
+  hooksBlock?: boolean;
   /** MCP servers added to Claude and Codex turns (Antigravity has no MCP flag). */
   mcp?: McpServer[];
 }
