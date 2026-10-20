@@ -263,6 +263,8 @@ export function App(props: Readonly<AppProps>) {
     overrides: selection.selection.overrides,
     role: selection.selection.role,
     pipelineId: selection.selection.pipelineId,
+    modeId: selection.modeId,
+    modeLabel: selection.modes.find((m) => m.id === selection.modeId)?.label,
   };
 
   const decision = awaiting && session.handle && session.run ? <DecisionArea session={session} /> : null;

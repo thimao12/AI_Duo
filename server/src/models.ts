@@ -29,12 +29,38 @@ export function effortNameProblem(value: unknown, label: string): string | undef
 
 const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
 
-// Claude Code takes stable aliases that follow the newest version of each family.
+/** Models that are never offered, routed to or accepted from a CLI's own list (Fable is not used). */
+const EXCLUDED_MODELS: readonly RegExp[] = [/fable/i];
+
+export const isExcludedModel = (id: string): boolean => EXCLUDED_MODELS.some((pattern) => pattern.test(id));
+
+// Claude Code has no command that lists its models: the current versions are named here, in one place.
 const CLAUDE_MODELS: ModelInfo[] = [
-  { id: 'opus', name: 'Opus', description: 'Mạnh nhất, cho việc khó và dài.', efforts: CLAUDE_EFFORTS },
-  { id: 'sonnet', name: 'Sonnet', description: 'Cân bằng tốc độ và chất lượng.', efforts: CLAUDE_EFFORTS },
-  { id: 'haiku', name: 'Haiku', description: 'Nhanh và rẻ, cho việc nhỏ.', efforts: [] },
+  { id: 'claude-opus-5-5', name: 'Opus 5.5', description: 'Mạnh nhất, cho việc khó và dài.', efforts: CLAUDE_EFFORTS },
+  { id: 'claude-sonnet-5-5', name: 'Sonnet 5.5', description: 'Cân bằng tốc độ và chất lượng.', efforts: CLAUDE_EFFORTS },
+  { id: 'claude-haiku-5-5', name: 'Haiku 5.5', description: 'Nhanh và rẻ, cho việc nhỏ.', efforts: [] },
 ];
+
+const claudeHome = (env: NodeJS.ProcessEnv) => env.CLAUDE_CONFIG_DIR || path.join(homedir(), '.claude');
+
+/** "claude-sonnet-4-6" → "Sonnet 4.6"; anything else is shown as it is. */
+function claudeName(id: string): string {
+  const match = /^claude-([a-z]+)-(\d+)-(\d+)(?:-.*)?$/.exec(id);
+  return match ? `${match[1][0].toUpperCase()}${match[1].slice(1)} ${match[2]}.${match[3]}` : id;
+}
+
+/** Full Claude model ids named in Claude Code's own settings (`model`, `availableModels`), minus the ones in CLAUDE_MODELS. */
+export function claudeLocalModels(env = process.env): ModelInfo[] {
+  try {
+    const settings = JSON.parse(readFileSync(path.join(claudeHome(env), 'settings.json'), 'utf8'));
+    const named: unknown[] = [settings.model, ...(Array.isArray(settings.availableModels) ? settings.availableModels : [])];
+    const known = new Set(CLAUDE_MODELS.map((m) => m.id));
+    const ids = named.filter((id): id is string => typeof id === 'string' && /^claude-/.test(id) && MODEL_ID.test(id) && !isExcludedModel(id) && !known.has(id));
+    return [...new Set(ids)].map((id) => ({ id, name: claudeName(id), efforts: CLAUDE_EFFORTS }));
+  } catch {
+    return [];
+  }
+}
 
 const codexHome = (env: NodeJS.ProcessEnv) => env.CODEX_HOME || path.join(homedir(), '.codex');
 
@@ -76,7 +102,7 @@ export function codexModels(env = process.env): ModelInfo[] {
     const cache = JSON.parse(readFileSync(path.join(codexHome(env), 'models_cache.json'), 'utf8'));
     if (!Array.isArray(cache.models)) return [];
     return cache.models
-      .filter((m: any) => typeof m?.slug === 'string' && m.visibility !== 'hide')
+      .filter((m: any) => typeof m?.slug === 'string' && m.visibility !== 'hide' && !isExcludedModel(m.slug))
       .map((m: any) => ({
         id: m.slug,
         name: typeof m.display_name === 'string' ? m.display_name : m.slug,
@@ -91,7 +117,7 @@ export function codexModels(env = process.env): ModelInfo[] {
   }
 }
 
-/** Models `agy models` lists. Gemini slugs carry their effort in the name, so no separate effort applies. */
+/** Models `agy models` listed last time it could be asked; the table below is the fallback. Gemini slugs carry their effort in the name, so no separate effort applies. */
 const ANTIGRAVITY_MODELS: ModelInfo[] = [
   ['gemini-3.8-flash-high', 'Gemini 3.8 Flash (High)'],
   ['gemini-3.8-flash-medium', 'Gemini 3.8 Flash (Medium)'],
@@ -109,10 +135,69 @@ const ANTIGRAVITY_MODELS: ModelInfo[] = [
   ['gpt-oss-120b-medium', 'GPT-OSS 120B (Medium)'],
 ].map(([id, name]) => ({ id, name, efforts: [] }));
 
+/** The models `agy models` printed: one `id<TAB>name` per line after a progress line. */
+export function parseAgyModels(output: string): ModelInfo[] {
+  const models: ModelInfo[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    const [id, name] = line.split('\t').map((part) => part.trim());
+    if (id && name && MODEL_ID.test(id) && !isExcludedModel(id) && !models.some((m) => m.id === id)) models.push({ id, name, efforts: [] });
+  }
+  return models;
+}
+
+/** Runs `agy models`; rejects when the CLI cannot be started or answers nothing in time. */
+async function runAgyModels(): Promise<string> {
+  const [{ execFile }, { resolveBin }, { agentEnv }] = await Promise.all([import('node:child_process'), import('./agents/bins.ts'), import('./agents/billing.ts')]);
+  const bin = resolveBin('antigravity');
+  return new Promise((resolve, reject) => {
+    execFile(bin.cmd, [...bin.prefixArgs, 'models'], { timeout: 20_000, windowsHide: true, shell: false, env: agentEnv(bin) }, (err, out) => (err ? reject(err) : resolve(out)));
+  });
+}
+
+const REFRESH_MS = 10 * 60_000;
+let live: { at: number; antigravity: ModelInfo[] } | undefined;
+let pending: Promise<void> | undefined;
+
+/** Forgets what `agy models` answered (tests). */
+export const resetModelCache = () => {
+  live = undefined;
+  pending = undefined;
+};
+
+/** Asks the CLIs what they offer now (at most every ten minutes) and returns the catalog; a CLI that cannot answer keeps its last list. */
+export async function refreshModels(env = process.env, run: () => Promise<string> = runAgyModels): Promise<ModelCatalog> {
+  if (!live || Date.now() - live.at > REFRESH_MS) {
+    pending ??= run().then(
+      (out) => {
+        const found = parseAgyModels(out);
+        live = { at: Date.now(), antigravity: found.length ? found : (live?.antigravity ?? []) };
+      },
+      () => {
+        live = { at: Date.now(), antigravity: live?.antigravity ?? [] };
+      },
+    ).finally(() => {
+      pending = undefined;
+    });
+    await pending;
+  }
+  return listModels(env);
+}
+
+/** refreshModels for a run that is about to start: waits at most `ms` for the CLIs, then goes on with the last known lists. */
+export async function warmModels(ms = 3000): Promise<void> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, ms);
+    timer.unref();
+  });
+  await Promise.race([refreshModels().then(() => undefined, () => undefined), late]);
+  clearTimeout(timer);
+}
+
 export function listModels(env = process.env): ModelCatalog {
   return {
-    claude: { models: CLAUDE_MODELS, default: {} },
+    claude: { models: [...CLAUDE_MODELS, ...claudeLocalModels(env)], default: {} },
     codex: { models: codexModels(env), default: codexDefaults(env) },
-    antigravity: { models: ANTIGRAVITY_MODELS, default: {} },
+    antigravity: { models: live?.antigravity.length ? live.antigravity : ANTIGRAVITY_MODELS, default: {} },
   };
 }

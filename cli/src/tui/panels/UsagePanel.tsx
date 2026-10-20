@@ -136,7 +136,7 @@ export default function UsagePanel({ onClose, loader = loadUsage }: Readonly<Usa
   const refreshing = loading ? 'Đang làm mới… ' : '';
   const updated = updatedAt ? `Cập nhật lúc ${clock(updatedAt)} · ` : '';
   return (
-    <Panel title="Usage" onClose={onClose} error={error} hints={[['r', 'làm mới'], ['Esc', 'đóng']]}>
+    <Panel title="Usage" scrollArrows onClose={onClose} error={error} hints={[['r', 'làm mới'], ['Esc', 'đóng']]}>
       {AGENT_NAMES.map((name) => (
         <AgentCard key={name} name={name} usage={data?.report[name]} version={data?.versions[name]} />
       ))}

@@ -1,6 +1,6 @@
 /** Offline checks for the auto-router: rules, policy, Haiku fallback and model precedence. */
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import type { Classifier } from './router/classify.ts';
@@ -8,6 +8,15 @@ import type { RunConfig } from './types.ts';
 
 const dataDir = await mkdtemp(path.join(tmpdir(), 'ai-duo-router-runs-'));
 process.env.AI_DUO_DATA_DIR = dataDir;
+// The models the CLIs list are read from these folders, so the catalog does not depend on this machine's CLIs.
+const codexHome = path.join(dataDir, 'codex');
+await mkdir(codexHome);
+await writeFile(
+  path.join(codexHome, 'models_cache.json'),
+  JSON.stringify({ models: ['luna', 'sol', 'astra'].map((name) => ({ slug: `gpt-6-${name}`, supported_reasoning_levels: [{ effort: 'low' }, { effort: 'medium' }, { effort: 'high' }] })) }),
+);
+process.env.CODEX_HOME = codexHome;
+process.env.CLAUDE_CONFIG_DIR = path.join(dataDir, 'claude');
 
 try {
   const [catalogModule, classifyModule, routerModule, policyModule, rulesModule, { RunContext }] = await Promise.all([
@@ -55,7 +64,7 @@ try {
 
   const refactor = decide('refactor', 'heavy', cat);
   assert.equal(refactor.coder, 'claude');
-  assert.equal(refactor.models.claude?.coder?.model, 'opus');
+  assert.equal(refactor.models.claude?.coder?.model, 'claude-opus-5-5');
   assert.equal(refactor.models.codex?.reviewer?.tier, 'standard', 'reviewer runs one tier below the coder');
   assert.equal(decide('bugfix', 'heavy', cat).coder, 'codex');
 
@@ -80,6 +89,26 @@ try {
   assert.equal(checked.codex.light.model, undefined);
   assert.equal(checked.codex.light.effort, 'low');
   assert.equal(loadCatalog({}, null).codex.heavy.model, 'gpt-6-astra', 'no cache: trust the catalog');
+
+  // The catalog is built from the models the CLIs list: the newest of each weight, Fable never.
+  const { tierOf, buildCatalog } = await import('./router/tiers.ts');
+  const m = (id: string, efforts: string[] = [], defaultEffort?: string) => ({ id, name: id, efforts, defaultEffort });
+  assert.deepEqual(['claude-haiku-5-5', 'claude-sonnet-5-5', 'claude-opus-5-5', 'gpt-6-luna', 'gpt-6.1-sol', 'gpt-6-astra', 'gemini-3.8-flash-low', 'gemini-3.8-flash-high', 'gemini-3.1-pro-high', 'claude-opus-4-6-thinking'].map((id) => tierOf({ id })), ['light', 'standard', 'heavy', 'light', 'standard', 'heavy', 'light', 'standard', 'heavy', 'heavy']);
+  const levels = ['low', 'medium', 'high'];
+  const built = buildCatalog({
+    claude: { models: [m('claude-haiku-5-5'), m('claude-sonnet-4-6', levels), m('claude-sonnet-5-5', levels), m('claude-opus-5-5', levels)], default: {} },
+    codex: { models: [m('gpt-6-sol', levels), m('gpt-6.1-sol', levels), m('gpt-6-luna', levels)], default: {} },
+    antigravity: { models: [m('gemini-3.8-flash-high'), m('gemini-3.8-flash-medium'), m('gemini-3.8-flash-low')], default: {} },
+  });
+  assert.deepEqual(built.claude, { light: { model: 'claude-haiku-5-5', effort: undefined }, standard: { model: 'claude-sonnet-5-5', effort: 'medium' }, heavy: { model: 'claude-opus-5-5', effort: 'high' } });
+  assert.deepEqual([built.codex?.standard?.model, built.codex?.light?.model, built.codex?.heavy?.model], ['gpt-6.1-sol', 'gpt-6-luna', 'gpt-6.1-sol'], 'no heavy model: the nearest weight is used');
+  assert.deepEqual([built.antigravity?.light?.model, built.antigravity?.standard?.model], ['gemini-3.8-flash-low', 'gemini-3.8-flash-medium'], 'the tier\'s own effort wins a tie');
+
+  // Antigravity writes light reading work (cheap Flash) when it is usable; heavier or code-writing work is not given to it.
+  const { affinity } = policyModule;
+  assert.equal(affinity('explain', 'light')[0], 'antigravity');
+  assert.notEqual(affinity('explain', 'standard')[0], 'antigravity');
+  assert.notEqual(affinity('edit', 'light')[0], 'antigravity');
 
   // Haiku reply parsing.
   assert.deepEqual(parseClassification('ok\n```json\n{"taskType":"design","complexity":"heavy"}\n```'), { taskType: 'design', complexity: 'heavy' });
@@ -113,11 +142,11 @@ try {
   const routed = await autoRoute('Refactor toàn bộ module auth, tách file và migrate sang kiến trúc mới', { classify: false, catalog: cat, mode: 'code' });
   const config: RunConfig = { ...routed, prompt: 'x', cwd: '.', turnTimeoutMin: 1, models: {}, route: routed.route };
   const ctx = new RunContext(config);
-  assert.deepEqual(ctx.modelFor('claude', 'coder'), { model: 'opus', effort: 'high' });
+  assert.deepEqual(ctx.modelFor('claude', 'coder'), { model: 'claude-opus-5-5', effort: 'high' });
   assert.deepEqual(ctx.modelFor('codex', 'reviewer'), { model: cat.codex.standard.model, effort: 'medium' });
   assert.deepEqual(ctx.modelFor('codex', 'thinker'), { model: undefined, effort: undefined });
-  config.models = { claude: 'sonnet' };
-  assert.deepEqual(ctx.modelFor('claude', 'coder'), { model: 'sonnet' });
+  config.models = { claude: 'claude-sonnet-5-5' };
+  assert.deepEqual(ctx.modelFor('claude', 'coder'), { model: 'claude-sonnet-5-5' });
   await ctx.finish('done');
 
   // Availability: a CLI that is missing, logged out or nearly out of quota is avoided.
@@ -188,7 +217,7 @@ try {
   assert.deepEqual([own.agent, own.model, own.effort], ['codex', cat.codex.standard.model, 'medium']);
   assert.match(own.note ?? '', /R: model/);
   const moved = resolveRole(role({}), { ...base, availability: only('codex') });
-  assert.deepEqual([moved.agent, moved.model], ['claude', 'sonnet']);
+  assert.deepEqual([moved.agent, moved.model], ['claude', 'claude-sonnet-5-5']);
   assert.match(moved.note ?? '', /Codex không dùng được → Claude/);
   const noClaude = resolveRole(role({ agent: 'claude' }), { ...base, availability: only('claude', 'codex') });
   assert.equal(noClaude.agent, 'antigravity');
@@ -196,7 +225,7 @@ try {
   const pinned = resolveRole(role({ model: 'gpt-x', effort: 'high' }), base);
   assert.deepEqual([pinned.model, pinned.effort, pinned.note], ['gpt-x', 'high', undefined], 'a model named in the role is kept when its agent is usable');
   const pinnedMoved = resolveRole(role({ model: 'gpt-x', effort: 'high' }), { ...base, availability: only('codex') });
-  assert.equal(pinnedMoved.model, 'sonnet', 'a model name does not travel to another CLI');
+  assert.equal(pinnedMoved.model, 'claude-sonnet-5-5', 'a model name does not travel to another CLI');
   const forced = resolveRole(role({}), { ...base, availability: only('codex'), agent: 'codex' });
   assert.deepEqual([forced.agent, forced.model], ['codex', cat.codex.standard.model], 'an agent named in the request is used as given');
   const nothing = resolveRole(role({}), { ...base, availability: only('claude', 'codex', 'antigravity') });

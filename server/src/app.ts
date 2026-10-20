@@ -5,7 +5,7 @@ import { createAdaptorServer } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono, type Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
-import { listModels } from './models.ts';
+import { refreshModels } from './models.ts';
 import { paths } from './paths.ts';
 import { isDataId, readRunImage } from './data-path.ts';
 import { IMAGE_TYPES, RunService, ServiceError, type ServiceErrorCode } from './service.ts';
@@ -76,7 +76,7 @@ app.use('/api/*', async (c, next) => {
 });
 
 // Models and reasoning levels for the composer's pickers (read fresh: the Codex cache updates itself).
-app.get('/api/models', (c) => c.json(listModels()));
+app.get('/api/models', async (c) => c.json(await refreshModels()));
 app.route('/', rolesRoutes());
 app.route('/', cliSettingsRoutes());
 app.route('/', usageRoutes(service));

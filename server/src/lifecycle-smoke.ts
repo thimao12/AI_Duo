@@ -102,6 +102,7 @@ try {
   };
   agents.codex.run = mockPlanAgent('codex');
   agents.claude.run = mockPlanAgent('claude');
+  agents.antigravity.run = mockPlanAgent('antigravity');
   const firstResponse = await postRun({ mode: 'plan', cwd: dataDir, prompt: 'Implement and add a settings panel to app.tsx.' });
   assert.equal(firstResponse.status, 200);
   const { id: threadId } = await firstResponse.json();

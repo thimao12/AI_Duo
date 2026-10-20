@@ -356,6 +356,27 @@ try {
   assert.ok(agyFrame.includes('97% còn lại') && agyFrame.includes('98% còn lại'), `antigravity shows remaining: ${agyFrame}`);
   agyUsagePanel.unmount();
 
+  // A panel taller than the screen scrolls: wheel, PageDown and the arrows move it, Home goes back to the top.
+  const { PanelRowsContext } = await import('./tui/widgets/rows.ts');
+  const { WheelContext } = await import('./tui/Viewport.tsx');
+  const wheelListeners = new Set<(direction: 'up' | 'down') => void>();
+  const wheelSource = { onWheel: (l: (direction: 'up' | 'down') => void) => (wheelListeners.add(l), () => wheelListeners.delete(l)) };
+  const spin = async (direction: 'up' | 'down') => {
+    for (const l of wheelListeners) l(direction);
+    await new Promise((r) => setTimeout(r, 60));
+  };
+  const short = mount(h(WheelContext.Provider, { value: wheelSource }, h(PanelRowsContext.Provider, { value: 14 }, h(UsagePanel, { cwd: workDir, onClose: () => undefined, loader: () => Promise.resolve(withAgy) }))));
+  frame = await seen(short, 'Claude');
+  assert.ok(frame.includes('Claude') && !frame.includes('tự làm mới mỗi 60 giây') && frame.includes('PgUp/PgDn'), `top of a short panel: ${frame}`);
+  for (let i = 0; i < 12; i++) await spin('down');
+  frame = frameOf(short);
+  assert.ok(frame.includes('tự làm mới mỗi 60 giây') && !frame.includes('● Claude'), `wheel reached the end: ${frame}`);
+  await press(short, KEY.home);
+  frame = await until(short, (f) => f.includes('● Claude'), 'Home returns to the top');
+  await press(short, KEY.down, KEY.down);
+  assert.ok(!frameOf(short).includes('● Claude'), 'arrow down scrolls a read-only panel');
+  short.unmount();
+
   // ---- Connection: statuses, guide with exact commands, open login, recheck.
   const status = (agent: AgentName, extra: Partial<ConnectionStatus>): ConnectionStatus => ({ agent, installed: true, version: '1.0.0', path: null, loggedIn: true, method: null, account: null, error: null, ...extra });
   let checks = 0;
@@ -416,7 +437,10 @@ try {
   const fresh = mount(h(ModelPanel, { cwd: workDir, onClose: () => undefined, onPickOverrides: (o: object) => overridesPicked.push(o) }));
   await seen(fresh, 'Tự động');
   await press(fresh, KEY.right); // agent: Claude
-  await press(fresh, KEY.down, KEY.right); // model: first of the catalog
+  await press(fresh, KEY.down, KEY.right); // model: "Tự động (theo task)" comes first
+  assert.ok(frameOf(fresh).includes('Tự động (theo task)') && frameOf(fresh).includes('claude-opus-5-5'), frameOf(fresh));
+  await press(fresh, KEY.right); // model: first of the catalog
+  await until(fresh, (f) => f.includes(model0.id), 'model0 selected');
   await press(fresh, KEY.down, KEY.right); // effort: first of that model
   await press(fresh, KEY.down, KEY.right, KEY.right); // permission: Chỉ đọc then Sửa file
   await press(fresh, KEY.left, 's');

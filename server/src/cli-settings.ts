@@ -1,7 +1,10 @@
 import { statSync } from 'node:fs';
 import path from 'node:path';
 import { effortNameProblem, modelNameProblem } from './models.ts';
-import type { CliConfig, CliSettings, HookName, McpServer } from './types.ts';
+import type { CliConfig, CliSettings, HookName, McpServer, ModeModel } from './types.ts';
+
+type AgentName = NonNullable<ModeModel['agent']>;
+const AGENT_NAMES: readonly string[] = ['claude', 'codex', 'antigravity'];
 
 /** Validation of the per-CLI manual configuration; pure apart from checking that binPath is a file. */
 
@@ -188,6 +191,34 @@ function timeoutProblem(value: unknown): string | undefined {
   return ok ? undefined : `turnTimeoutMin phải là số nguyên từ 1 đến ${MAX_TURN_TIMEOUT_MIN}.`;
 }
 
+const MODE_ID = /^[a-z0-9:_-]{1,64}$/;
+
+/** The cleaned per-mode model choices, or the first problem found. */
+function modeModelsProblem(value: unknown): Record<string, ModeModel> | string {
+  if (value === undefined || value === null) return {};
+  if (!isObj(value)) return 'modeModels phải là một đối tượng.';
+  const out: Record<string, ModeModel> = {};
+  for (const [id, raw] of Object.entries(value)) {
+    if (!MODE_ID.test(id)) return `modeModels: mã mode "${id}" không hợp lệ.`;
+    if (!isObj(raw)) return `modeModels.${id} phải là một đối tượng.`;
+    const label = `modeModels.${id}`;
+    for (const key of ['agent', 'reviewer'] as const) {
+      if (raw[key] !== undefined && raw[key] !== '' && !AGENT_NAMES.includes(raw[key] as AgentName)) return `${label}.${key} phải là claude, codex hoặc antigravity.`;
+    }
+    if (raw.permission !== undefined && raw.permission !== '' && raw.permission !== 'read' && raw.permission !== 'edit') return `${label}.permission phải là read hoặc edit.`;
+    const problem = modelNameProblem(raw.model, `${label}.model`) ?? effortNameProblem(raw.effort, `${label}.effort`);
+    if (problem) return problem;
+    const mode: ModeModel = {};
+    if (raw.agent) mode.agent = raw.agent as AgentName;
+    if (typeof raw.model === 'string' && raw.model.trim()) mode.model = raw.model.trim();
+    if (typeof raw.effort === 'string' && raw.effort) mode.effort = raw.effort;
+    if (raw.reviewer) mode.reviewer = raw.reviewer as AgentName;
+    if (raw.permission) mode.permission = raw.permission as 'read' | 'edit';
+    if (Object.keys(mode).length) out[id] = mode;
+  }
+  return out;
+}
+
 /** The cleaned settings (empty values dropped), or the first problem found (in Vietnamese). */
 export function validateCliSettings(input: unknown, checkFile = true): CliSettings | string {
   if (!isObj(input)) return 'cli phải là một đối tượng.';
@@ -205,9 +236,12 @@ export function validateCliSettings(input: unknown, checkFile = true): CliSettin
   if (typeof hooks === 'string') return hooks;
   const mcp = mcpProblem(input.mcp);
   if (typeof mcp === 'string') return mcp;
+  const modeModels = modeModelsProblem(input.modeModels);
+  if (typeof modeModels === 'string') return modeModels;
   const settings: CliSettings = { claude, codex, antigravity };
   if (typeof input.theme === 'string' && input.theme) settings.theme = input.theme;
   if (mcp.length) settings.mcp = mcp;
+  if (Object.keys(modeModels).length) settings.modeModels = modeModels;
   if (Object.keys(hooks).length) settings.hooks = hooks;
   if (input.hooksBlock === true) settings.hooksBlock = true;
   if (typeof input.turnTimeoutMin === 'number') settings.turnTimeoutMin = input.turnTimeoutMin;

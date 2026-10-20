@@ -317,6 +317,18 @@ export interface McpServer {
   /** Roles whose turns may use it; default coder only, since AI Duo cannot know which tools only read. */
   roles?: Role[];
 }
+/** What a mode (Code, Plan) uses for its model; nothing set = the router decides everything. */
+export interface ModeModel {
+  /** Coder (Code) or planner (Plan) picked by hand. */
+  agent?: AgentName;
+  /** A model id, or "auto" = the router picks the one that fits the task. */
+  model?: string;
+  effort?: string;
+  /** Reviewer picked by hand. */
+  reviewer?: AgentName;
+  permission?: 'read' | 'edit';
+}
+
 export interface CliSettings {
   claude: CliConfig;
   codex: CliConfig;
@@ -333,4 +345,6 @@ export interface CliSettings {
   hooksBlock?: boolean;
   /** MCP servers added to Claude and Codex turns (Antigravity has no MCP flag). */
   mcp?: McpServer[];
+  /** Model choice kept per mode of the terminal UI, by mode id (`code`, `plan`, `role:<id>`). */
+  modeModels?: Record<string, ModeModel>;
 }

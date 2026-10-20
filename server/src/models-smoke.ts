@@ -25,14 +25,38 @@ await writeFile(
 );
 await writeFile(path.join(codexHome, 'config.toml'), 'model = "gpt-a"\nmodel_reasoning_effort = "high"\n\n[profiles.x]\nmodel = "ignored"\n');
 
-const [{ listModels, codexDefaults }, { RunContext }, { startServer }] = await Promise.all([import('./models.ts'), import('./run.ts'), import('./app.ts')]);
+const [{ listModels, codexDefaults, parseAgyModels, refreshModels, resetModelCache }, { RunContext }, { startServer }] = await Promise.all([import('./models.ts'), import('./run.ts'), import('./app.ts')]);
 
 try {
   const catalog = listModels({ ...process.env, CODEX_HOME: codexHome });
   assert.deepEqual(catalog.codex.models.map((m) => m.id), ['gpt-a'], 'hidden models are left out');
   assert.deepEqual(catalog.codex.models[0].efforts, ['low', 'medium', 'high'], 'invalid effort names are dropped');
   assert.deepEqual(catalog.codex.default, { model: 'gpt-a', effort: 'high' }, 'only top-level config keys count');
-  assert.ok(catalog.claude.models.some((m) => m.id === 'opus'));
+  assert.deepEqual(catalog.claude.models.map((m) => [m.id, m.name]), [['claude-opus-5-5', 'Opus 5.5'], ['claude-sonnet-5-5', 'Sonnet 5.5'], ['claude-haiku-5-5', 'Haiku 5.5']], 'Claude shows the exact versions');
+
+  // Claude's own settings add full ids; Fable is never offered, from any source.
+  const claudeHome = path.join(temp, 'claude');
+  await import('node:fs/promises').then((fs) => fs.mkdir(claudeHome));
+  await writeFile(path.join(claudeHome, 'settings.json'), JSON.stringify({ model: 'claude-fable-5-1', availableModels: ['claude-sonnet-4-6', 'opus', 'claude-fable-5-1', 'claude-sonnet-5-5'] }));
+  const withLocal = listModels({ ...process.env, CODEX_HOME: codexHome, CLAUDE_CONFIG_DIR: claudeHome });
+  assert.deepEqual(withLocal.claude.models.map((m) => m.id), ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-sonnet-4-6']);
+  assert.equal(withLocal.claude.models[3].name, 'Sonnet 4.6');
+  assert.ok(!Object.values(withLocal).some((a) => a.models.some((m) => /fable/i.test(m.id))));
+
+  // `agy models` output becomes the Antigravity list; a failing CLI keeps the fallback.
+  const agyOut = ['Fetching available models...', 'gemini-3.8-flash-high\tGemini 3.8 Flash (High)', 'claude-fable-5-1\tFable', 'gpt-oss-120b-medium\tGPT-OSS 120B (Medium)', ''].join('\r\n');
+  assert.deepEqual(parseAgyModels(agyOut).map((m) => m.id), ['gemini-3.8-flash-high', 'gpt-oss-120b-medium']);
+  resetModelCache();
+  const failing = await refreshModels({ ...process.env, CODEX_HOME: codexHome }, () => Promise.reject(new Error('no agy')));
+  assert.ok(failing.antigravity.models.length > 3, 'fallback list when agy cannot answer');
+  resetModelCache();
+  let asked = 0;
+  const ask = () => (asked++, Promise.resolve(agyOut));
+  const listed = await refreshModels({ ...process.env, CODEX_HOME: codexHome }, ask);
+  assert.deepEqual(listed.antigravity.models.map((m) => m.id), ['gemini-3.8-flash-high', 'gpt-oss-120b-medium']);
+  await refreshModels({ ...process.env, CODEX_HOME: codexHome }, ask);
+  assert.equal(asked, 1, 'the answer is kept for a while');
+  resetModelCache();
   assert.deepEqual(listModels({ ...process.env, CODEX_HOME: path.join(temp, 'missing') }).codex, { models: [], default: {} });
   await writeFile(path.join(codexHome, 'config.toml'), `${' '.repeat(200_000)}\n  model = "first" # comment\r\nmodel = "second"\nmodel_reasoning_effort = "medium"\n   [profiles.x]\nmodel = "ignored"\n`);
   assert.deepEqual(codexDefaults({ CODEX_HOME: codexHome }), { model: 'first', effort: 'medium' });

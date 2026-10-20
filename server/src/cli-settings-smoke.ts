@@ -93,6 +93,15 @@ try {
   assert.deepEqual(settingsFromDraft(webDraft).cli.claude, { defaultModel: 'haiku' }, 're-enabling keeps the saved model');
   assert.deepEqual(cli.validateCliSettings({ claude: { enabled: true } }), base, 'enabled is the backward-compatible default');
   assert.deepEqual(cli.validateCliSettings({ claude: { enabled: false } }), { ...base, claude: { enabled: false } });
+
+  // Model choice per mode: kept as cleaned, empty entries dropped, bad values refused.
+  assert.deepEqual(
+    cli.validateCliSettings({ modeModels: { code: { agent: 'codex', model: ' auto ', effort: '', permission: '' }, plan: {}, 'role:review': { agent: 'claude', model: 'claude-opus-5-5', effort: 'high', reviewer: 'codex' } } }),
+    { ...base, modeModels: { code: { agent: 'codex', model: 'auto' }, 'role:review': { agent: 'claude', model: 'claude-opus-5-5', effort: 'high', reviewer: 'codex' } } },
+  );
+  for (const bad of [{ code: { agent: 'gemini' } }, { code: { model: 'x; rm' } }, { 'bad id': {} }, { code: { permission: 'write' } }, { code: { effort: 'HIGH!' } }, 5]) {
+    assert.equal(typeof cli.validateCliSettings({ modeModels: bad }), 'string', JSON.stringify(bad));
+  }
   for (const enabled of ['false', 0, null, {}]) bad({ claude: { enabled } }, /claude\.enabled/);
   assert.deepEqual(cli.validateCliSettings({ claude: { binPath: '  ', extraArgs: [], env: {}, defaultModel: ' ' } }), base, 'empty values are dropped');
   bad(null, /đối tượng/);

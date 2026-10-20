@@ -13,7 +13,7 @@ const { activeTheme, setTheme, tone } = await import('./tui/theme.ts');
 const { LOGO_ROWS, LOGO_WIDTH, logoRow, plainLogoRow } = await import('./tui/Logo.tsx');
 const { parseDiff, diffTexts, countChanges } = await import('./tui/diff.ts');
 const { FileDiffView, DiffView } = await import('./tui/DiffView.tsx');
-const { toPartItems, MessageView } = await import('./tui/MessageView.tsx');
+const { toPartItems, MessageView, formatToolCall } = await import('./tui/MessageView.tsx');
 const { editsOf } = await import('../../server/src/agents/claude.ts');
 const { validateCliSettings } = await import('../../server/src/cli-settings.ts');
 
@@ -31,7 +31,7 @@ const step = async (name: string, fn: () => Promise<void> | void) => {
 };
 
 await step('themes: every theme fills every role with a hex colour and a logo gradient', () => {
-  assert.ok(THEMES.length >= 8);
+  assert.ok(THEMES.length >= 15);
   const hex = /^#[0-9a-f]{6}$/i;
   const ids = new Set<string>();
   for (const theme of THEMES) {
@@ -41,6 +41,8 @@ await step('themes: every theme fills every role with a hex colour and a logo gr
     for (const color of [...Object.values(theme.diff), ...theme.logo]) assert.match(color, hex, theme.id);
   }
   assert.equal(findTheme('dracula')?.label, 'Dracula');
+  assert.equal(findTheme('monokai')?.label, 'Monokai');
+  assert.equal(findTheme('github-dark')?.label, 'GitHub Dark');
   assert.equal(findTheme('nope'), undefined);
   assert.equal(findTheme('default'), ANSI_THEME);
   assert.equal(gradientAt(['#000000', '#ffffff'], 0.5), '#808080');
@@ -181,12 +183,23 @@ await step('tool output is shown under shell calls only, with the exit code', ()
     ],
   };
   const out = render(createElement(MessageView, { message, width: 80 })).lastFrame() ?? '';
-  assert.match(out, /\$ Bash: npm test/);
+  assert.match(out, /● Ran \(npm test\)/);
   assert.match(out, /│ out 0/);
   assert.match(out, /… 4 more line\(s\)/);
+  assert.match(out, /● Edited 1 file \(a\.ts\)/);
   assert.match(out, /a\.ts \+1 −1/);
   assert.match(out, /-\s+old line/);
   assert.match(out, /\+\s+new line/);
+});
+
+await step('formatToolCall: shell commands, file reads, edits, tasks, and compound actions', () => {
+  assert.deepEqual(formatToolCall('Bash: npm test'), { verb: 'Ran', detail: '(npm test)' });
+  assert.deepEqual(formatToolCall('Shell: git status'), { verb: 'Ran', detail: '(git status)' });
+  assert.deepEqual(formatToolCall('Read: src/a.ts'), { verb: 'Explored', detail: '1 file (a.ts)' });
+  assert.deepEqual(formatToolCall('Edit: src/a.ts', { path: 'src/a.ts', oldText: '', newText: '' }), { verb: 'Edited', detail: '1 file (a.ts)' });
+  assert.deepEqual(formatToolCall('Checked 1 task (task-108)'), { verb: 'Checked', detail: '1 task (task-108)' });
+  assert.deepEqual(formatToolCall('manage_task {"TaskId": "task-335"}'), { verb: 'Checked', detail: '1 task (task-335)' });
+  assert.deepEqual(formatToolCall('Ran 7 commands, checked 1 task (git status...)'), { verb: 'Ran', detail: '7 commands, checked 1 task (git status...)' });
 });
 
 await step('modeList: Code, Plan, role modes (not code/plan), pipelines; stepping wraps', async () => {

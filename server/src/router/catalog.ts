@@ -5,26 +5,27 @@ import { AGENT_NAMES } from '../agents/index.ts';
 import type { AgentName } from '../agents/types.ts';
 import { listModels } from '../models.ts';
 import type { ModelChoice, Tier } from '../types.ts';
+import { buildCatalog, overlayCatalog } from './tiers.ts';
 
 export type Catalog = Record<AgentName, Record<Tier, Omit<ModelChoice, 'tier'>>>;
 
 /**
- * Cheapest model that still does the job well, per tier. Claude uses CLI aliases so it
- * keeps working as model versions move; Codex slugs come from `codex` 0.155's model list.
+ * Cheapest model that still does the job well, per tier: what applies when a CLI's own model list
+ * cannot be read (see buildCatalog, which replaces these with the newest listed model of each tier).
  * Haiku gets no effort: effort only matters on the larger models.
  */
 export const DEFAULT_CATALOG: Catalog = {
   claude: {
-    light: { model: 'haiku' },
-    standard: { model: 'sonnet', effort: 'medium' },
-    heavy: { model: 'opus', effort: 'high' },
+    light: { model: 'claude-haiku-5-5' },
+    standard: { model: 'claude-sonnet-5-5', effort: 'medium' },
+    heavy: { model: 'claude-opus-5-5', effort: 'high' },
   },
   codex: {
     light: { model: 'gpt-6-luna', effort: 'low' },
     standard: { model: 'gpt-6-sol', effort: 'medium' },
     heavy: { model: 'gpt-6-astra', effort: 'high' },
   },
-  // Gemini slugs carry their effort in the name (see `agy models`); the router never picks Antigravity itself.
+  // Gemini slugs carry their effort in the name (see `agy models`).
   antigravity: {
     light: { model: 'gemini-3.8-flash-low' },
     standard: { model: 'gemini-3.8-flash-medium' },
@@ -48,7 +49,8 @@ function knownCodexModels(): Set<string> | undefined {
 }
 
 /**
- * DEFAULT_CATALOG, overlaid with the JSON file at AI_DUO_ROUTER_CATALOG (same shape, any
+ * The catalog the router picks from: DEFAULT_CATALOG, overlaid with the newest model of each tier the CLIs
+ * list, then with the JSON file at AI_DUO_ROUTER_CATALOG (same shape, any
  * subset of agents/tiers). Unsafe values are dropped, and a Codex model the local CLI doesn't
  * list falls back to the CLI default instead of failing the turn.
  */
@@ -90,6 +92,7 @@ function sanitizeCatalog(catalog: Catalog, codexModels: Set<string> | undefined)
 /** `codexModels`: the slugs Codex lists (read from its cache by default); null = there is no cache to check against. */
 export function loadCatalog(env = process.env, codexModels: Set<string> | null | undefined = knownCodexModels()): Catalog {
   const catalog: Catalog = structuredClone(DEFAULT_CATALOG);
+  overlayCatalog(catalog, buildCatalog(listModels({ ...process.env, ...env })));
   const file = env.AI_DUO_ROUTER_CATALOG;
   if (file && existsSync(file)) applyOverride(catalog, file);
   sanitizeCatalog(catalog, codexModels ?? undefined);

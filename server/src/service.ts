@@ -10,7 +10,7 @@ import { runPair } from './modes/pair.ts';
 import { planPipeline, runPipeline, runRole } from './modes/pipeline.ts';
 import { runPlan } from './modes/plan.ts';
 import { MAX_TURN_TIMEOUT_MIN } from './cli-settings.ts';
-import { effortNameProblem, modelNameProblem } from './models.ts';
+import { effortNameProblem, modelNameProblem, warmModels } from './models.ts';
 import { getCliSettings, getCliSettingsSync, getRoles, ID_PATTERN, loadSettings, type Settings } from './settings.ts';
 import { paths } from './paths.ts';
 import { isDataId, writeRunImages } from './data-path.ts';
@@ -19,6 +19,7 @@ import { classifyWithHaiku, type Classifier } from './router/classify.ts';
 import { evaluateAvailability, type Availability } from './router/availability.ts';
 import { loadCatalog } from './router/catalog.ts';
 import { autoRoute } from './router/index.ts';
+import { TASK_LABEL, TIER_LABEL } from './router/policy.ts';
 import { isAuto, resolveRole } from './router/roles.ts';
 import { classifyByRules, CONFIDENT } from './router/rules.ts';
 import { getUsage } from './usage.ts';
@@ -289,6 +290,29 @@ function withCliDefaults(cfg: RunConfig): RunConfig {
     if (!efforts[agent] && saved.defaultEffort) efforts[agent] = saved.defaultEffort;
   }
   return { ...cfg, models, efforts };
+}
+
+/**
+ * An agent picked by hand with its model left to the router ("auto"): the model and effort of the
+ * task's size come from the catalog of models the CLI lists. An effort named in the request stays.
+ */
+function withAutoModels(cfg: RunConfig, body: any, prompt: string): RunConfig {
+  const auto = agentsFor(cfg).filter((agent) => isAuto(String(body?.models?.[agent] ?? '').trim()));
+  if (!auto.length) return cfg;
+  const { taskType, complexity } = classifyByRules(prompt);
+  const catalog = loadCatalog();
+  const asked = perAgent(body?.efforts);
+  const models = { ...cfg.models };
+  const efforts = { ...cfg.efforts };
+  const picks: string[] = [];
+  for (const agent of auto) {
+    const pick = catalog[agent][complexity];
+    models[agent] = pick.model;
+    efforts[agent] = asked[agent] ?? pick.effort;
+    picks.push(`${agentLabel(agent)}: ${[pick.model ?? 'mặc định', efforts[agent]].filter(Boolean).join('/')}`);
+  }
+  const reason = `Model tự động theo task (${TASK_LABEL[taskType]}, độ phức tạp ${TIER_LABEL[complexity]}) → ${picks.join('; ')}`;
+  return { ...cfg, models, efforts, route: cfg.route ?? { taskType, complexity, source: 'rules', reason, models: {} } };
 }
 
 /** How a request picks agents: by router (`manual` false) or explicitly, through a role, a pipeline or an agent. */
@@ -676,9 +700,10 @@ export class RunService {
 
   /** The config for a request: routed, or built from an explicit agent, role or pipeline (no router, no model call). */
   private async configure(sel: Selection, mode: Mode, prompt: string, cwd: string, checks: Checks) {
+    await warmModels();
     if (!sel.manual && mode !== 'pipeline') return this.routeAndCheck(sel.body, mode, prompt, cwd, checks);
     if (sel.roles?.length) return this.configureRoles(sel, mode, prompt, cwd, checks);
-    const cfg = withCliDefaults(manualConfig({ ...sel.body, mode }, prompt, cwd));
+    const cfg = withAutoModels(withCliDefaults(manualConfig({ ...sel.body, mode }, prompt, cwd)), sel.body, prompt);
     await this.assertPreflight(sel.agents ?? agentsFor(cfg), cwd, sel.body?.skipAuthCheck === true, checks);
     return { cfg, routeUsage: undefined };
   }

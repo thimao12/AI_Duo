@@ -27,6 +27,9 @@ export interface PanelProps {
   role?: RoleDef | null;
   /** Active pipeline id, for display. */
   pipelineId?: string | null;
+  /** The mode in effect (Code, Plan, a role or a pipeline): its id and name, for the panels that act on it. */
+  modeId?: string;
+  modeLabel?: string;
 }
 
 export interface SessionOverrides {

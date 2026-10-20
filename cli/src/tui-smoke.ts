@@ -379,9 +379,53 @@ await step('modes: Tab walks Code, Plan, the role modes; the request follows', a
   await t.seeing('✓ done');
 });
 
+await step('model per mode: Code keeps its own choice, Plan stays automatic, and it is saved', async () => {
+  const t = open();
+  await t.type('/model');
+  await t.type(KEY.enter);
+  await t.seeing('Model & quyền · Code');
+  await t.type(KEY.right);
+  await t.type(KEY.down);
+  await t.type(KEY.right);
+  await t.seeing('Tự động (theo task)');
+  await t.type('s');
+  await t.seeing('claude/auto');
+  await t.type(KEY.tab);
+  await t.seeing('PLAN');
+  assert.ok(!t.frame().includes('claude/auto'), 'Plan has its own choice (none)');
+  await t.type(KEY.shiftTab);
+  await t.seeing('claude/auto');
+  await t.type('hello');
+  await t.type(KEY.enter);
+  await until(() => t.service.seen.length > 0, 'request');
+  const sent = t.service.seen.at(-1)!.request;
+  assert.equal(sent.coder, 'claude');
+  assert.deepEqual(sent.models, { claude: 'auto' });
+  let saved: any;
+  for (let tries = 0; tries < 100 && saved?.cli?.modeModels === undefined; tries++) {
+    await sleep(20);
+    saved = await readFile(process.env.AI_DUO_SETTINGS_FILE!, 'utf8').then((text) => JSON.parse(text), () => undefined);
+  }
+  assert.ok(saved?.cli?.modeModels, 'the choice is saved');
+  assert.deepEqual(saved.cli.modeModels, { code: { agent: 'claude', model: 'auto' } });
+  // A new window starts with the saved choice of the mode.
+  const again = open();
+  await again.seeing('claude/auto');
+  await again.type('/model');
+  await again.type(KEY.enter);
+  await again.type('x');
+  await again.seeing('auto-routed');
+  for (let tries = 0; tries < 100 && saved?.cli?.modeModels !== undefined; tries++) {
+    await sleep(20);
+    saved = await readFile(process.env.AI_DUO_SETTINGS_FILE!, 'utf8').then((text) => JSON.parse(text), () => undefined);
+  }
+  assert.equal(saved?.cli?.modeModels, undefined, 'clearing the choice removes it from the saved settings');
+});
+
 await step('modes: Shift+Tab goes back and wraps around', async () => {
   const t = open();
   await t.seeing('CODE');
+  await t.seeing(/Code\s+Plan\s+Review/);
   await t.type(KEY.tab);
   await t.seeing('PLAN');
   await t.type(KEY.shiftTab);

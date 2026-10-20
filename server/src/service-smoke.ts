@@ -318,6 +318,19 @@ async function main() {
     assert.equal((await loadRun(limited.id))?.status, 'cancelled');
     assert.equal(existsSync(await lockFile(repo)), false);
 
+    // ---- An agent by hand with its model on "auto": the model of the task's size comes from the catalog.
+    calls.length = 0;
+    script = async (agent, o) => ({ ...(await approveAll(agent, o)), sessionId: `${agent}-session` });
+    const autoModel = await service.start({ mode: 'plan', prompt: PLAN, cwd: repo, coder: 'claude', models: { claude: 'auto' } });
+    await waitFor(() => autoModel.run.planDecision, 'auto model plan approval');
+    const { loadCatalog } = await import('./router/catalog.ts');
+    const expected = loadCatalog().claude[classifyByRules(PLAN).complexity];
+    assert.ok(calls.length > 0 && calls.every((c) => c.agent === 'claude' && c.model === expected.model), `auto model: ${JSON.stringify(calls.map((c) => [c.agent, c.model]))}`);
+    assert.equal(autoModel.run.config.models?.claude, expected.model, 'the routed model is kept on the run');
+    assert.match(autoModel.run.config.route?.reason ?? '', /Model tự động theo task/);
+    await autoModel.answerPlanDecision({ action: 'approve' });
+    assert.equal((await autoModel.done).status, 'done');
+
     // ---- Antigravity picked by hand: kept from Plan into Code and into follow-ups, with its model.
     calls.length = 0;
     script = async (agent, o) => ({ ...(await approveAll(agent, o)), sessionId: `${agent}-session` });

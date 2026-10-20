@@ -46,7 +46,7 @@ export default function ThemePanel({ onClose, onPickTheme }: Readonly<PanelProps
           onClose();
         }}
         onCancel={onClose}
-        maxHeight={THEMES.length}
+        maxHeight={Math.min(12, THEMES.length)}
         labelWidth={20}
       />
       <Box marginTop={1}>

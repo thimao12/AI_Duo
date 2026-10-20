@@ -21,7 +21,7 @@ export interface PartItem {
 }
 
 /** Tools whose output is worth showing under the call; file reads would only add noise. */
-const SHOWS_OUTPUT = /^(Bash|Shell|MCP|PowerShell)\b/;
+const SHOWS_OUTPUT = /^(Bash|Shell|MCP|PowerShell|Ran|run_command)\b/i;
 
 /** Fold raw message parts into what is worth showing: text, one line per tool call, one line for reasoning. */
 export function toPartItems(parts: readonly Part[], running: boolean): PartItem[] {
@@ -126,26 +126,203 @@ function EditBlock({ edit, width }: Readonly<{ edit: EditInfo; width: number }>)
   );
 }
 
-function ToolLine({ item, width }: Readonly<{ item: PartItem; width: number }>) {
-  const mark = item.pending ? <Spinner /> : <Text color={tone('green')}>✓</Text>;
-  if (item.edit) {
-    return (
-      <Box flexDirection="column">
-        <Text dimColor>
-          {`  ${item.text.split(':')[0]} `}
-          {mark}
+function formatFileTarget(target: string): string {
+  const clean = target.trim();
+  if (/^\d+\s+files?\b/i.test(clean)) return clean;
+  const stripped = clean.replace(/^[("']+|[)"']+$/g, '');
+  const files = stripped.split(',').map((s) => s.trim()).filter(Boolean);
+  if (files.length > 1) {
+    const basenames = files.map((f) => f.split(/[/\\]/).filter(Boolean).pop() ?? f).join(', ');
+    return `${files.length} files (${basenames})`;
+  }
+  const base = stripped.split(/[/\\]/).filter(Boolean).pop() ?? stripped;
+  return `1 file (${base})`;
+}
+
+function formatTaskTarget(target: string): string {
+  const clean = target.trim();
+  if (/^\d+\s+tasks?\b/i.test(clean)) return clean;
+  const stripped = clean.replace(/^[("']+|[)"']+$/g, '');
+  return `1 task (${stripped})`;
+}
+
+export function formatToolCall(text: string, edit?: EditInfo): { verb: string; detail: string } {
+  const trimmed = text.trim();
+
+  if (edit?.path) {
+    return { verb: 'Edited', detail: formatFileTarget(edit.path) };
+  }
+
+  const knownMatch = /^(Ran|Checked|Explored|Edited|Searched)\s+(.+)$/s.exec(trimmed);
+  if (knownMatch) {
+    return { verb: knownMatch[1], detail: knownMatch[2].trim() };
+  }
+
+  const shellMatch = /^(?:Bash|Shell|PowerShell):\s*(.+)$/s.exec(trimmed);
+  if (shellMatch) {
+    const cmd = shellMatch[1].trim();
+    return { verb: 'Ran', detail: cmd.startsWith('(') && cmd.endsWith(')') ? cmd : `(${cmd})` };
+  }
+
+  if (/^run_command\b/i.test(trimmed)) {
+    try {
+      const jsonStr = trimmed.slice(trimmed.indexOf('{'));
+      const parsed = JSON.parse(jsonStr);
+      const cmd = parsed.CommandLine ?? parsed.command ?? parsed.cmd ?? '';
+      if (cmd) return { verb: 'Ran', detail: `(${cmd})` };
+    } catch {}
+    const remainder = trimmed.replace(/^run_command\s*/i, '').trim();
+    return { verb: 'Ran', detail: remainder ? `(${remainder})` : '' };
+  }
+
+  const editMatch = /^(?:Edit|Write):\s*(.+)$/s.exec(trimmed);
+  if (editMatch) {
+    return { verb: 'Edited', detail: formatFileTarget(editMatch[1]) };
+  }
+
+  if (/^(?:replace_file_content|write_to_file)\b/i.test(trimmed)) {
+    try {
+      const jsonStr = trimmed.slice(trimmed.indexOf('{'));
+      const parsed = JSON.parse(jsonStr);
+      const file = parsed.TargetFile ?? parsed.file_path ?? parsed.path ?? '';
+      if (file) return { verb: 'Edited', detail: formatFileTarget(file) };
+    } catch {}
+    return { verb: 'Edited', detail: '1 file' };
+  }
+
+  const readMatch = /^(?:Read|Glob):\s*(.+)$/s.exec(trimmed);
+  if (readMatch) {
+    const target = readMatch[1].trim();
+    return { verb: 'Explored', detail: target.includes('*') ? `(${target})` : formatFileTarget(target) };
+  }
+
+  if (/^(?:view_file|list_dir|find_files)\b/i.test(trimmed)) {
+    try {
+      const jsonStr = trimmed.slice(trimmed.indexOf('{'));
+      const parsed = JSON.parse(jsonStr);
+      const file = parsed.AbsolutePath ?? parsed.TargetFile ?? parsed.path ?? '';
+      if (file) return { verb: 'Explored', detail: formatFileTarget(file) };
+    } catch {}
+    return { verb: 'Explored', detail: '1 file' };
+  }
+
+  if (/^manage_task\b/i.test(trimmed)) {
+    try {
+      const jsonStr = trimmed.slice(trimmed.indexOf('{'));
+      const parsed = JSON.parse(jsonStr);
+      const taskId = parsed.TaskId ?? parsed.taskId ?? parsed.id ?? '';
+      if (taskId) return { verb: 'Checked', detail: formatTaskTarget(taskId) };
+    } catch {}
+    return { verb: 'Checked', detail: '1 task' };
+  }
+
+  const searchMatch = /^(?:Grep|WebSearch|WebFetch):\s*(.+)$/s.exec(trimmed);
+  if (searchMatch) {
+    const q = searchMatch[1].trim();
+    return { verb: 'Searched', detail: q.startsWith('(') && q.endsWith(')') ? q : `(${q})` };
+  }
+
+  if (/^search_web\b/i.test(trimmed)) {
+    try {
+      const jsonStr = trimmed.slice(trimmed.indexOf('{'));
+      const parsed = JSON.parse(jsonStr);
+      const q = parsed.query ?? '';
+      if (q) return { verb: 'Searched', detail: `(${q})` };
+    } catch {}
+    return { verb: 'Searched', detail: '' };
+  }
+
+  const colonMatch = /^([^:]+):\s*(.+)$/s.exec(trimmed);
+  if (colonMatch) {
+    return { verb: 'Ran', detail: `(${colonMatch[1]}: ${colonMatch[2].trim()})` };
+  }
+
+  return { verb: 'Ran', detail: trimmed.startsWith('(') && trimmed.endsWith(')') ? trimmed : `(${trimmed})` };
+}
+
+function renderDetail(detail: string, maxLen: number) {
+  const trimmed = detail.trim();
+  const compound = /^(\d+\s+commands?),\s*(checked)\s+(.+)$/i.exec(trimmed);
+  if (compound) {
+    const [, cmds, chk, rest] = compound;
+    const taskMatch = /^(\d+\s+tasks?)\s*(.*)$/i.exec(rest);
+    if (taskMatch) {
+      const [, tasks, parens] = taskMatch;
+      return (
+        <Text>
+          <Text>{` ${cmds}, `}</Text>
+          <Text bold color={tone('yellow')}>{chk}</Text>
+          <Text>{` ${tasks}`}</Text>
+          {parens ? <Text dimColor>{` ${oneLine(parens, Math.max(6, maxLen - cmds.length - chk.length - tasks.length - 4))}`}</Text> : null}
         </Text>
-        <EditBlock edit={item.edit} width={width} />
-      </Box>
+      );
+    }
+    return (
+      <Text>
+        <Text>{` ${cmds}, `}</Text>
+        <Text bold color={tone('yellow')}>{chk}</Text>
+        <Text dimColor>{` ${oneLine(rest, Math.max(6, maxLen - cmds.length - chk.length - 4))}`}</Text>
+      </Text>
     );
   }
+
+  const countMatch = /^(\d+\s+(?:files?|tasks?|commands?))\s*(.*)$/i.exec(trimmed);
+  if (countMatch) {
+    const [, count, parens] = countMatch;
+    return (
+      <Text>
+        <Text>{` ${count}`}</Text>
+        {parens ? <Text dimColor>{` ${oneLine(parens, Math.max(6, maxLen - count.length - 1))}`}</Text> : null}
+      </Text>
+    );
+  }
+
+  return <Text dimColor>{` ${oneLine(trimmed, maxLen)}`}</Text>;
+}
+
+function ToolLine({ item, width }: Readonly<{ item: PartItem; width: number }>) {
+  const { verb, detail } = formatToolCall(item.text, item.edit);
+  const mark = item.pending ? <Spinner /> : <Text color={tone('blue') ?? tone('cyan')}>●</Text>;
+
   return (
     <Box flexDirection="column">
-      <Text dimColor>
-        {`  $ ${oneLine(item.text, width - 8)} `}
+      <Box>
+        <Text>  </Text>
         {mark}
-      </Text>
+        <Text> </Text>
+        <Text bold color={tone('yellow')}>
+          {verb}
+        </Text>
+        {detail ? renderDetail(detail, Math.max(10, width - 8 - verb.length)) : null}
+      </Box>
+      {item.edit ? <EditBlock edit={item.edit} width={width} /> : null}
       {item.output ? <ToolOutput output={item.output} width={width} /> : null}
+    </Box>
+  );
+}
+
+function ReasoningLine({ item, width }: Readonly<{ item: PartItem; width: number }>) {
+  let display = item.text;
+  if (display.startsWith('reasoning · ')) {
+    display = `Thought (${display.slice(12)})`;
+  } else if (!/^thought\b/i.test(display)) {
+    display = `Thought (${display})`;
+  }
+  const match = /^(Thought(?:\s+for\s+[\d.]+s)?)\s*(.*)$/i.exec(display);
+  return (
+    <Box>
+      <Text>  </Text>
+      <Text color={tone('gray')}>○ </Text>
+      {match ? (
+        <Text italic>
+          <Text color={tone('gray')}>{match[1]}</Text>
+          {match[2] ? <Text dimColor color={tone('gray')}>{` ${oneLine(match[2], Math.max(6, width - 8 - match[1].length))}`}</Text> : null}
+        </Text>
+      ) : (
+        <Text italic dimColor color={tone('gray')}>
+          {oneLine(display, Math.max(10, width - 6))}
+        </Text>
+      )}
     </Box>
   );
 }
@@ -156,6 +333,8 @@ function PartLine({ item, width }: Readonly<{ item: PartItem; width: number }>) 
       return <Markdown text={item.text} />;
     case 'tool':
       return <ToolLine item={item} width={width} />;
+    case 'reasoning':
+      return <ReasoningLine item={item} width={width} />;
     case 'error':
       return <Text color={tone('red')}>{`  ✗ ${oneLine(item.text, width - 6)}`}</Text>;
     default:

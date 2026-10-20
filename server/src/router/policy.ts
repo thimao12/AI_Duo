@@ -24,10 +24,16 @@ export const TASK_LABEL: Record<TaskType, string> = {
 };
 export const TIER_LABEL: Record<Tier, string> = { light: 'nhẹ', standard: 'vừa', heavy: 'nặng' };
 
-/** Who does a kind of work best, in order; Antigravity follows the two it backs up. */
+/**
+ * Who does a kind of work best, in order. Light reading work (explain, design) goes to Antigravity's cheap
+ * Flash models first; otherwise it follows the two it backs up.
+ */
 export function affinity(taskType: TaskType, complexity: Tier): AgentName[] {
   const claudeFirst = taskType === 'refactor' || (complexity === 'heavy' && taskType !== 'bugfix');
-  const order: AgentName[] = claudeFirst ? ['claude', 'antigravity', 'codex'] : ['codex', 'claude', 'antigravity'];
+  const cheapReading = complexity === 'light' && (taskType === 'explain' || taskType === 'design');
+  const order: AgentName[] = cheapReading
+    ? (claudeFirst ? ['antigravity', 'claude', 'codex'] : ['antigravity', 'codex', 'claude'])
+    : (claudeFirst ? ['claude', 'antigravity', 'codex'] : ['codex', 'claude', 'antigravity']);
   return [...order, ...AGENT_NAMES.filter((a) => !order.includes(a))];
 }
 

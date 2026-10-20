@@ -1,9 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { PipelineDef, RoleDef } from '../../../server/src/types.ts';
-import { getPipelines, getRoles } from '../../../server/src/settings.ts';
+import type { ModeModel, PipelineDef, RoleDef } from '../../../server/src/types.ts';
+import { getCliSettings, getPipelines, getRoles, setCliSettings } from '../../../server/src/settings.ts';
 import { currentModeId, modeList, stepMode, type ModeEntry } from './modes.ts';
 import type { SessionOverrides } from './panel-types.ts';
 import type { ChatMode, Selection } from './requestBuilder.ts';
+
+type OverridesByMode = Record<string, SessionOverrides>;
+
+/** The stored model choice of a mode as the composer's overrides. */
+const toOverrides = (stored: ModeModel): SessionOverrides => ({ ...stored });
+
+/** What is kept of a mode's overrides: the choice itself (an "auto" mark is the default and is not stored). */
+function toStored(overrides: SessionOverrides): ModeModel {
+  const { agent, reviewer, model, effort, permission } = overrides;
+  return { ...(agent && { agent }), ...(reviewer && { reviewer }), ...(model && { model }), ...(effort && { effort }), ...(permission && { permission }) };
+}
 
 export interface SelectionApi {
   selection: Selection;
@@ -25,16 +36,30 @@ export interface SelectionApi {
   reload(): void;
 }
 
+const NO_OVERRIDES: SessionOverrides = {};
+
 /** Mode, role, pipeline and per-message overrides the composer sends with the next message. */
 export function useSelection(): SelectionApi {
   const [mode, setMode] = useState<ChatMode>('code');
   const [role, setRole] = useState<RoleDef | null>(null);
   const [pipelineId, setPipelineId] = useState<string | null>(null);
-  const [overrides, setOverrides] = useState<SessionOverrides>({});
+  // Model, agent and permission choices belong to a mode: Tab to another mode brings that mode's own back.
+  const [overridesByMode, setOverridesByMode] = useState<OverridesByMode>({});
   const [skipAuthCheck, setSkipAuthCheck] = useState(false);
   const [roles, setRoles] = useState<RoleDef[]>([]);
   const [pipelines, setPipelines] = useState<PipelineDef[]>([]);
   const [version, setVersion] = useState(0);
+
+  useEffect(() => {
+    let live = true;
+    void getCliSettings().then(
+      (cli) => live && setOverridesByMode((cur) => ({ ...Object.fromEntries(Object.entries(cli.modeModels ?? {}).map(([id, stored]) => [id, toOverrides(stored)])), ...cur })),
+      () => {},
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -64,6 +89,22 @@ export function useSelection(): SelectionApi {
 
   const modes = modeList(roles, pipelines);
   const modeId = currentModeId({ mode, role, pipelineId });
+  const overrides = overridesByMode[modeId] ?? NO_OVERRIDES;
+
+  /** Sets the model choice of the mode in effect and keeps it for the next sessions. */
+  const pickOverrides = (next: SessionOverrides) => {
+    const id = modeId;
+    setOverridesByMode((cur) => ({ ...cur, [id]: next }));
+    void getCliSettings()
+      .then((cli) => {
+        const modeModels = { ...cli.modeModels };
+        const stored = toStored(next);
+        if (Object.keys(stored).length > 0) modeModels[id] = stored;
+        else delete modeModels[id];
+        return setCliSettings({ ...cli, modeModels });
+      })
+      .catch(() => {});
+  };
 
   const cycleMode = (step: 1 | -1) => {
     const next = stepMode(modes, modeId, step);
@@ -93,13 +134,14 @@ export function useSelection(): SelectionApi {
     cycleMode,
     pickRole,
     pickPipeline,
-    pickOverrides: setOverrides,
+    pickOverrides,
     toggleSkipAuth,
     resetTo: (next) => {
       setMode(next);
       setRole(null);
       setPipelineId(null);
-      setOverrides({});
+      // A resumed session follows its own run: the chosen agents of the modes are not applied to it (they stay saved).
+      setOverridesByMode((cur) => ({ ...cur, [next]: {} }));
     },
     reload: () => setVersion((v) => v + 1),
   };

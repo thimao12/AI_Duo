@@ -58,12 +58,12 @@ try {
   const ask = await runToEnd({ mode: 'code', roleId: 'ask', prompt: 'What does main do?', cwd: plain });
   assert.equal(ask.status, 'done', ask.error);
   assert.equal(ask.final, 'The answer.');
-  assert.deepEqual(calls.map((c) => [c.agent, c.role, c.permission, c.model]), [['claude', 'thinker', 'read', 'haiku']]);
+  assert.deepEqual(calls.map((c) => [c.agent, c.role, c.permission, c.model]), [['claude', 'thinker', 'read', 'claude-haiku-5-5']]);
   assert.match(calls[0].prompt, /What does main do\?/);
   // The role is resolved by the keyword rules alone (no model call): Ask is a light, read-only question.
   assert.equal(ask.config.route?.source, 'rules');
-  assert.match(ask.config.route?.reason ?? '', /Ask: model haiku/);
-  assert.deepEqual(ask.config.roleRoutes, { ask: { agent: 'claude', model: 'haiku' } });
+  assert.match(ask.config.route?.reason ?? '', /Ask: model claude-haiku-5-5/);
+  assert.deepEqual(ask.config.roleRoutes, { ask: { agent: 'claude', model: 'claude-haiku-5-5' } });
   assert.equal((await listRuns()).find((r) => r.id === ask.id)?.agent, 'claude');
 
   // ---- Precedence: explicit request fields > role > router.
@@ -80,12 +80,12 @@ try {
   const coded = await runToEnd({ mode: 'code', roleId: 'code', prompt: 'add a thing', cwd: repo });
   assert.equal(coded.status, 'done', coded.error);
   // The factory Code role is "auto": a light task gets the cheapest model, a heavy one the strongest.
-  assert.deepEqual([calls[0].role, calls[0].permission, calls[0].model, calls[0].effort], ['coder', 'edit', 'haiku', undefined]);
+  assert.deepEqual([calls[0].role, calls[0].permission, calls[0].model, calls[0].effort], ['coder', 'edit', 'claude-haiku-5-5', undefined]);
   calls.length = 0;
   const heavy = await runToEnd({ mode: 'code', roleId: 'code', prompt: 'Refactor toàn bộ module auth, tách file và migrate sang kiến trúc mới', cwd: repo });
   assert.equal(heavy.status, 'done', heavy.error);
-  assert.deepEqual([calls[0].agent, calls[0].model, calls[0].effort], ['claude', 'opus', 'high']);
-  assert.match(heavy.config.route?.reason ?? '', /Code: model opus\/high \(mức heavy\)/);
+  assert.deepEqual([calls[0].agent, calls[0].model, calls[0].effort], ['claude', 'claude-opus-5-5', 'high']);
+  assert.match(heavy.config.route?.reason ?? '', /Code: model claude-opus-5-5\/high \(mức heavy\)/);
   calls.length = 0;
   const pinned = await runToEnd({ mode: 'code', roleId: 'code', prompt: 'add a thing', cwd: repo, models: { claude: 'sonnet' } });
   assert.equal(pinned.status, 'done', pinned.error);
@@ -97,7 +97,7 @@ try {
   calls.length = 0;
   const review = await runToEnd({ mode: 'code', roleId: 'review', prompt: 'Review the change', cwd: plain });
   assert.equal(review.status, 'done', review.error);
-  assert.deepEqual([calls[0].agent, calls[0].model], ['claude', 'sonnet'], 'Review falls back from Codex to Claude');
+  assert.deepEqual([calls[0].agent, calls[0].model], ['claude', 'claude-sonnet-5-5'], 'Review falls back from Codex to Claude');
   assert.match(review.config.route?.reason ?? '', /Review: Codex không dùng được → Claude/);
   assert.equal(review.config.roleRoutes?.review?.agent, 'claude');
   calls.length = 0;
